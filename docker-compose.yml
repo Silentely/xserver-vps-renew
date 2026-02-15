@@ -1,0 +1,32 @@
+services:
+  xserver-renew:
+    build: .
+    container_name: xserver-vps-renew
+    env_file: .env
+    environment:
+      - TZ=Asia/Tokyo
+    volumes:
+      # 持久化 Chrome 用户数据（保留登录 Cookie，减少重复登录）
+      - chrome-data:/data/chrome-profile
+    # Chrome 渲染需要较大共享内存
+    shm_size: "2gb"
+    restart: "no"
+
+  # 定时模式：容器持续运行，内置 cron 调度
+  # 使用方式：docker compose up -d xserver-renew-cron
+  xserver-renew-cron:
+    build: .
+    container_name: xserver-vps-renew-cron
+    env_file: .env
+    environment:
+      - TZ=Asia/Tokyo
+      # 每天 UTC 23:00（东京时间 08:00）执行
+      - CRON_SCHEDULE=0 23 * * *
+    volumes:
+      - chrome-data-cron:/data/chrome-profile
+    shm_size: "2gb"
+    restart: unless-stopped
+
+volumes:
+  chrome-data:
+  chrome-data-cron:

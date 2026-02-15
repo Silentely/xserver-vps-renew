@@ -1,0 +1,14 @@
+{
+  "name": "xserver-vps-renew",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Xserver VPS 自动续期 - Playwright CDP 版本",
+  "scripts": {
+    "start": "node xserver-vps-renew.mjs",
+    "start:launch": "node xserver-vps-renew.mjs --launch"
+  },
+  "dependencies": {
+    "playwright": "^1.52.0"
+  }
+}
