@@ -9,7 +9,7 @@
 - 支持验证码自动识别（调用外部 API）
 - 支持 Cloudflare Turnstile 人机验证自动处理
 - 可选 Telegram 通知，续期结果即时推送
-- 支持 Docker 部署，内置 cron 定时调度
+- Docker 部署，内置 cron 定时调度，开箱即用
 - 附带油猴脚本版本，可在浏览器中手动触发
 
 ## 工作流程
@@ -22,29 +22,49 @@
 
 ### Docker 部署（推荐）
 
-1. 克隆仓库并配置环境变量：
+1. 创建配置文件：
 
 ```bash
-git clone https://github.com/Silentely/xserver-vps-renew.git
-cd xserver-vps-renew
-cp .env.example .env
-```
+mkdir xserver-vps-renew && cd xserver-vps-renew
 
-2. 编辑 `.env` 填入 Xserver 登录凭据：
+# 创建 docker-compose.yml
+curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
-```env
+# 创建环境变量文件
+cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
+EOF
 ```
 
-3. 运行：
+2. 启动容器（每天东京时间 08:00 自动执行续期）：
 
 ```bash
-# 单次执行
-docker compose run --rm xserver-renew
+docker compose up -d
+```
 
-# 定时模式（每天东京时间 08:00 自动执行）
-docker compose up -d xserver-renew-cron
+3. 查看日志：
+
+```bash
+docker logs -f xserver-vps-renew
+```
+
+#### 自定义定时规则
+
+在 `.env` 中添加 `CRON_SCHEDULE` 可覆盖默认的执行时间：
+
+```env
+# 每天东京时间 12:00 执行
+CRON_SCHEDULE=0 3 * * *
+```
+
+#### 可选：Telegram 通知
+
+在 `.env` 中添加以下变量，续期结果将推送到 Telegram：
+
+```env
+TG_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TG_CHAT_ID=123456789
 ```
 
 ### 本地运行
@@ -52,6 +72,8 @@ docker compose up -d xserver-renew-cron
 需要 Node.js 22+ 和 Chrome 浏览器。
 
 ```bash
+git clone https://github.com/Silentely/xserver-vps-renew.git
+cd xserver-vps-renew
 npm install
 
 # 方式 A：先手动启动 Chrome，再运行脚本
@@ -76,21 +98,29 @@ node xserver-vps-renew.mjs --launch
 | `CDP_URL` | 否 | `http://127.0.0.1:9222` | Chrome CDP 调试地址 |
 | `TG_BOT_TOKEN` | 否 | - | Telegram Bot Token（启用通知） |
 | `TG_CHAT_ID` | 否 | - | Telegram Chat ID（启用通知） |
-| `CRON_SCHEDULE` | 否 | - | Cron 表达式，设置后启用定时模式 |
+| `CRON_SCHEDULE` | 否 | `0 23 * * *` | Cron 表达式（UTC 时间） |
 | `TZ` | 否 | `Asia/Tokyo` | 时区 |
-| `CHROME_PATH` | 否 | 自动检测 | Chrome 可执行文件路径 |
-| `CHROME_USER_DATA` | 否 | `/tmp/xserver-chrome-profile` | Chrome 用户数据目录 |
 
 ## 项目结构
 
 ```
-├── xserver-vps-renew.mjs  # 主脚本（Playwright CDP 版）
-├── xserver-renews.js      # 油猴脚本版（浏览器端）
-├── Dockerfile             # 容器构建文件
-├── docker-compose.yml     # 编排配置（单次 / 定时两种模式）
-├── entrypoint.sh          # 容器入口（管理 Chrome 和 cron 生命周期）
-├── .env.example           # 环境变量模板
-└── package.json           # 依赖声明
+├── xserver-vps-renew.mjs          # 主脚本（Playwright CDP 版）
+├── xserver-renews.js              # 油猴脚本版（浏览器端）
+├── Dockerfile                     # 容器构建文件
+├── docker-compose.yml             # 编排配置（定时模式）
+├── entrypoint.sh                  # 容器入口（管理 Chrome 和 cron）
+├── .env.example                   # 环境变量模板
+├── .github/workflows/
+│   └── docker-publish.yml         # CI：自动构建并推送 Docker 镜像
+└── package.json                   # 依赖声明
+```
+
+## Docker 镜像
+
+镜像托管在 Docker Hub，每次推送到 `main` 分支时自动构建：
+
+```
+cosrbackup/xserver-vps-renew:latest
 ```
 
 ## 许可证
