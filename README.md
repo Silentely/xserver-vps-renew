@@ -120,7 +120,7 @@ node xserver-vps-renew.mjs --launch
 镜像托管在 Docker Hub，每次推送到 `main` 分支时自动构建：
 
 ```
-cosrbackup/xserver-vps-renew:latest
+debug502/xserver-vps-renew:latest
 ```
 
 ## 许可证

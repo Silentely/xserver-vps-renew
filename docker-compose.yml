@@ -1,6 +1,6 @@
 services:
   xserver-renew:
-    image: cosrbackup/xserver-vps-renew:latest
+    image: debug502/xserver-vps-renew:latest
     container_name: xserver-vps-renew
     env_file: .env
     environment:
