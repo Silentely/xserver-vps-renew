@@ -29,3 +29,30 @@ jobs:
           tags: debug502/xserver-vps-renew:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Cleanup old workflow runs (retain 5 days)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          repo="$GITHUB_REPOSITORY"
+          base="https://api.github.com/repos/$repo"
+          cutoff=$(( $(date +%s) - 5*24*3600 ))
+          page=1
+          while :; do
+            runs=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$base/actions/runs?per_page=100&page=$page")
+            count=$(echo "$runs" | jq '.workflow_runs | length')
+            [ "$count" -gt 0 ] || break
+            echo "$runs" | jq -r \
+              --argjson cutoff "$cutoff" \
+              '.workflow_runs[] | select(.status=="completed") | select((.created_at | fromdateiso8601) < $cutoff) | .id' \
+              | while read -r id; do
+                  echo "Deleting run $id"
+                  curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$base/actions/runs/$id" -o /dev/null -w "%{http_code}\n" | grep -E "^(204|404)$" >/dev/null || true
+                done
+            page=$((page+1))
+          done
