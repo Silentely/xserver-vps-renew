@@ -26,6 +26,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: cosrbackup/xserver-vps-renew:latest
+          tags: debug502/xserver-vps-renew:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
