@@ -675,37 +675,59 @@ async function waitForTurnstile(page) {
         await page.setUserAgent(result.userAgent);
       }
 
-      // 注入 token 到页面
-      const success = await injectTurnstileToken(page, result.token);
-      if (!success) {
-        err('token 注入失败：未找到 cf-turnstile-response 元素');
-        return false;
+      // 按官方推荐：优先通过 callback 传递 token（最可靠的方式）
+      // 然后再注入 input 作为补充
+      const callbackResult = await page.evaluate((tkn) => {
+        // 方法 1：使用拦截器捕获的 callback（官方推荐）
+        if (typeof window.__turnstileCallback === 'function') {
+          window.__turnstileCallback(tkn);
+          return 'intercepted_callback';
+        }
+        // 方法 2：全局 cfCallback（2Captcha 官方示例中的命名）
+        if (typeof window.cfCallback === 'function') {
+          window.cfCallback(tkn);
+          return 'cfCallback';
+        }
+        // 方法 3：全局 tsCallback
+        if (typeof window.tsCallback === 'function') {
+          window.tsCallback(tkn);
+          return 'tsCallback';
+        }
+        return null;
+      }, result.token);
+
+      if (callbackResult) {
+        log(`Turnstile token 已通过 callback 传递: ${callbackResult}`);
+      } else {
+        log('未找到 Turnstile callback，尝试注入 input 元素...');
       }
 
-      // 等待一小段时间让页面处理 token
-      await sleep(1500);
+      // 补充：注入 token 到 input 元素（确保表单包含 token 值）
+      await injectTurnstileToken(page, result.token);
 
-      // 验证注入是否生效
+      // 等待页面处理 token
+      await sleep(2000);
+
+      // 验证 token 是否生效
       const verifyToken = await page
         .$eval('[name="cf-turnstile-response"]', (el) => el.value)
         .catch(() => '');
 
       if (verifyToken) {
-        log(`Turnstile token 注入验证成功！token 长度: ${verifyToken.length}`);
-
-        // 截图诊断：求解后状态
-        try {
-          await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
-          log('已保存求解后截图: /tmp/turnstile-after-solve.png');
-        } catch (e) {
-          log(`截图失败: ${e.message}`);
-        }
-
-        return true;
+        log(`Turnstile token 验证成功！token 长度: ${verifyToken.length}`);
+      } else {
+        log('cf-turnstile-response 元素无值，但 callback 可能已处理 token');
       }
 
-      err('token 注入后验证失败：cf-turnstile-response 值为空');
-      return false;
+      // 截图诊断：求解后状态
+      try {
+        await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
+        log('已保存求解后截图: /tmp/turnstile-after-solve.png');
+      } catch (e) {
+        log(`截图失败: ${e.message}`);
+      }
+
+      return true;
     } catch (e) {
       err(`API 求解失败: ${e.message}，尝试降级点击模式...`);
       await clickTurnstileFallback(page);
@@ -869,10 +891,14 @@ async function main() {
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // 拦截 turnstile.render 调用，捕获 action/cData/chlPageData 等参数
-    // 使用 Object.defineProperty 劫持 window.turnstile 赋值，确保在 render 调用前完成拦截
+    // 关键：必须阻止原始 render 执行！cData/chlPageData 是一次性参数，
+    // 如果 widget 先渲染了，2Captcha 再用这些参数就会失效。
+    // 参考 2Captcha 官方示例：https://2captcha.com/blog/bypassing-cloudflare-challenge-with-puppeteer-and-2captcha
     await page.evaluateOnNewDocument(() => {
       window.__turnstileParams = null;
       window.__turnstileCallback = null;
+      // 同时阻止 Cloudflare 清空 console
+      console.clear = () => console.log('Console was cleared');
       let _turnstile = undefined;
       Object.defineProperty(window, 'turnstile', {
         configurable: true,
@@ -890,6 +916,12 @@ async function main() {
               if (typeof params.callback === 'function') {
                 window.__turnstileCallback = params.callback;
               }
+              // 如果有 API 密钥，阻止原始 render 执行（保留一次性参数给 API）
+              // 如果无 API 密钥，让 widget 正常渲染（降级点击模式）
+              if (window.__blockTurnstileRender) {
+                console.log('intercepted-params:' + JSON.stringify(window.__turnstileParams));
+                return '';  // 返回假 widgetId，阻止 widget 渲染
+              }
               return originalRender.call(this, container, params);
             };
           }
@@ -898,6 +930,14 @@ async function main() {
       });
     });
     log('已注册 turnstile.render 拦截器（Object.defineProperty）');
+
+    // 如果有 API 密钥，标记阻止 Turnstile 原始渲染
+    if (getTurnstileProvider()) {
+      await page.evaluateOnNewDocument(() => {
+        window.__blockTurnstileRender = true;
+      });
+      log('已标记阻止 Turnstile 原始渲染（API 模式）');
+    }
 
     // 步骤 1：登录
     await handleLogin(page);
