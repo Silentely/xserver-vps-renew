@@ -31,7 +31,14 @@ start_chrome() {
         &>/dev/null &
     CHROME_PID=$!
     echo "$LOG_PREFIX 等待 Chrome 就绪..."
-    sleep 4
+    # 轮询等待 CDP 端口可用，最多 15 秒
+    for i in $(seq 1 30); do
+        if curl -s -o /dev/null http://127.0.0.1:9222/json/version 2>/dev/null; then
+            echo "$LOG_PREFIX Chrome CDP 已就绪（等待 ${i}×0.5s）"
+            break
+        fi
+        sleep 0.5
+    done
 }
 
 # ============================================================
@@ -76,7 +83,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
 
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
-    env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_)' > "$ENV_FILE"
+    env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_)' > "$ENV_FILE"
 
     # 创建 cron 执行脚本
     cat > /app/cron-run.sh <<'CRONSCRIPT'

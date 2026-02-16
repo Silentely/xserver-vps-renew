@@ -66,6 +66,11 @@ const ts = () => new Date().toISOString();
 const log = (msg) => console.log(`[VPS续期] ${ts()} ${msg}`);
 const err = (msg) => console.error(`[VPS续期] ${ts()} ❌ ${msg}`);
 
+/** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ============================================================
 // Telegram 通知
 // ============================================================
@@ -469,7 +474,7 @@ async function main() {
     await page.close();
   } catch (e) {
     err(`流程异常终止: ${e.message}`);
-    await notify(`❌ <b>Xserver VPS 续期失败</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n💥 错误: <code>${e.message}</code>`);
+    await notify(`❌ <b>Xserver VPS 续期失败</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n💥 错误: <code>${escapeHtml(e.message)}</code>`);
     process.exitCode = 1;
   } finally {
     // 断开 CDP（不关闭浏览器）

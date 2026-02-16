@@ -5,8 +5,8 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
-      # 每天 UTC 23:00（东京时间 08:00）执行，可通过 .env 中 CRON_SCHEDULE 覆盖
-      - CRON_SCHEDULE=0 23 * * *
+      # 定时规则，在 .env 中通过 CRON_SCHEDULE 配置
+      # 默认：0 23 * * *（东京时间 08:00）
     volumes:
       # 持久化 Chrome 用户数据（保留登录 Cookie，减少重复登录）
       - chrome-data:/data/chrome-profile
