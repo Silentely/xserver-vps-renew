@@ -10,9 +10,25 @@ LOG_PREFIX="[entrypoint]"
 # ============================================================
 echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
 rm -f /tmp/.X99-lock 2>/dev/null || true
-Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 XVFB_PID=$!
 sleep 1
+
+# 配置 fluxbox 去除 Chrome 窗口装饰（无标题栏），
+# 使 viewport 坐标 = 窗口坐标 = 屏幕坐标，方便 xdotool 精确点击
+mkdir -p /root/.fluxbox
+cat > /root/.fluxbox/apps <<'FBAPPS'
+[app] (name=google-chrome)
+  [Deco]  {NONE}
+  [Dimensions] {1280 900}
+  [Position] (UPPERLEFT) {0 0}
+[end]
+[app] (name=chromium)
+  [Deco]  {NONE}
+  [Dimensions] {1280 900}
+  [Position] (UPPERLEFT) {0 0}
+[end]
+FBAPPS
 
 echo "$LOG_PREFIX 启动 fluxbox 窗口管理器..."
 DISPLAY=:99 fluxbox &

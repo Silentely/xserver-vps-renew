@@ -666,10 +666,11 @@ async function clickTurnstileWithCDP(page) {
       });
       const win = JSON.parse(winInfo.result.value);
       // Chrome 窗口在屏幕上的位置 + 标题栏/工具栏高度
-      windowOffsetX = win.screenX;
-      // outerH - innerH 为负或零时说明无窗口装饰，偏移量设为0
+      // fluxbox [Deco] {NONE} 配置下标题栏高度为0，viewport 坐标 ≈ 屏幕坐标
       const titleBarHeight = Math.max(0, win.outerH - win.innerH);
-      windowOffsetY = win.screenY + titleBarHeight;
+      // screenY 可能为负（窗口超出屏幕顶部），取 max(0) 保护
+      windowOffsetX = Math.max(0, win.screenX);
+      windowOffsetY = Math.max(0, win.screenY) + titleBarHeight;
       log(`Chrome 窗口偏移: screenX=${win.screenX}, screenY=${win.screenY}, 标题栏高度=${titleBarHeight}, 最终偏移: (${windowOffsetX}, ${windowOffsetY})`);
     } catch (e) {
       log(`获取窗口偏移失败，假设无偏移: ${e.message}`);
@@ -756,6 +757,15 @@ async function waitForTurnstile(page) {
   const clicked = await clickTurnstileWithCDP(page);
   if (clicked) {
     log('CDP 穿透点击完成，等待令牌生成...');
+
+    // 点击后截图诊断：观察 Turnstile 是否变成 spinner 或 checkmark
+    await sleep(2000);
+    try {
+      await page.screenshot({ path: '/tmp/turnstile-after-click.png', fullPage: false });
+      log('已保存点击后截图: /tmp/turnstile-after-click.png');
+    } catch (e) {
+      log(`点击后截图失败: ${e.message}`);
+    }
   }
 
   // 轮询等待令牌生成
