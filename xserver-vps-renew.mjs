@@ -69,8 +69,9 @@ const CONFIG = {
 // 常量
 // ============================================================
 
-// 固定为常见 Windows 家用电脑 UA，避免 Docker 中 Linux UA 与 Turnstile token 绑定的 UA 不匹配
-const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// 固定为常见 Windows 家用电脑 UA
+// 版本号与 2Captcha 当前求解环境（Chrome 140）保持一致，避免 UA 不匹配导致 token 失效
+const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
 // ============================================================
 // Chrome 路径检测
@@ -669,10 +670,16 @@ async function waitForTurnstile(page) {
       const currentURL = page.url();
       const result = await solveTurnstileViaAPI(currentURL, params);
 
-      // 按官方文档：用 API 返回的 userAgent 设置浏览器，确保与 token 绑定一致
+      // 如果 API 返回的 UA 与当前不同，更新浏览器 UA 以匹配 token 绑定
       if (result.userAgent) {
-        log(`使用 API 返回的 UA 更新浏览器: ${result.userAgent.substring(0, 60)}...`);
-        await page.setUserAgent(result.userAgent);
+        const currentUA = await page.evaluate(() => navigator.userAgent);
+        if (currentUA !== result.userAgent) {
+          log(`UA 不匹配！当前: ${currentUA.substring(0, 40)}... → API: ${result.userAgent.substring(0, 40)}...`);
+          log('更新浏览器 UA 以匹配 API 返回值');
+          await page.setUserAgent(result.userAgent);
+        } else {
+          log('浏览器 UA 与 API 返回值一致，无需更新');
+        }
       }
 
       // 按官方推荐：优先通过 callback 传递 token（最可靠的方式）
@@ -891,13 +898,13 @@ async function main() {
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // 拦截 turnstile.render 调用，捕获 action/cData/chlPageData 等参数
-    // 关键：必须阻止原始 render 执行！cData/chlPageData 是一次性参数，
-    // 如果 widget 先渲染了，2Captcha 再用这些参数就会失效。
+    // 对于 Challenge Page（含 cData/chlPageData）：阻止原始 render，保留一次性参数给 API
+    // 对于 Standalone Captcha（仅 sitekey）：正常渲染，API 只需 sitekey 即可求解
     // 参考 2Captcha 官方示例：https://2captcha.com/blog/bypassing-cloudflare-challenge-with-puppeteer-and-2captcha
     await page.evaluateOnNewDocument(() => {
       window.__turnstileParams = null;
       window.__turnstileCallback = null;
-      // 同时阻止 Cloudflare 清空 console
+      // 阻止 Cloudflare 清空 console
       console.clear = () => console.log('Console was cleared');
       let _turnstile = undefined;
       Object.defineProperty(window, 'turnstile', {
@@ -916,11 +923,12 @@ async function main() {
               if (typeof params.callback === 'function') {
                 window.__turnstileCallback = params.callback;
               }
-              // 如果有 API 密钥，阻止原始 render 执行（保留一次性参数给 API）
-              // 如果无 API 密钥，让 widget 正常渲染（降级点击模式）
-              if (window.__blockTurnstileRender) {
+              // Challenge Page 检测：含 cData 或 chlPageData 时才阻止渲染
+              // Standalone Captcha 只有 sitekey，正常渲染即可
+              const isChallengePage = !!(params.cData || params.chlPageData);
+              if (window.__blockTurnstileRender && isChallengePage) {
                 console.log('intercepted-params:' + JSON.stringify(window.__turnstileParams));
-                return '';  // 返回假 widgetId，阻止 widget 渲染
+                return '';  // 阻止 widget 渲染，保留一次性参数
               }
               return originalRender.call(this, container, params);
             };
@@ -931,12 +939,12 @@ async function main() {
     });
     log('已注册 turnstile.render 拦截器（Object.defineProperty）');
 
-    // 如果有 API 密钥，标记阻止 Turnstile 原始渲染
+    // 如果有 API 密钥，标记可阻止 Turnstile 渲染（仅 Challenge Page 会实际生效）
     if (getTurnstileProvider()) {
       await page.evaluateOnNewDocument(() => {
         window.__blockTurnstileRender = true;
       });
-      log('已标记阻止 Turnstile 原始渲染（API 模式）');
+      log('已标记 Turnstile 渲染控制（Challenge Page 阻止，Standalone 放行）');
     }
 
     // 步骤 1：登录
