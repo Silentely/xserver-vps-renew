@@ -7,6 +7,7 @@ LOG_PREFIX="[entrypoint]"
 # 启动虚拟显示器（Xvfb）
 # ============================================================
 echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
+rm -f /tmp/.X99-lock 2>/dev/null || true
 Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
 XVFB_PID=$!
 sleep 1
@@ -15,6 +16,11 @@ sleep 1
 # 启动 Chrome（带 CDP 调试端口）
 # ============================================================
 start_chrome() {
+    # 清理上次残留的锁文件，避免 "profile in use" 错误
+    rm -f /data/chrome-profile/SingletonLock \
+          /data/chrome-profile/SingletonSocket \
+          /data/chrome-profile/SingletonCookie 2>/dev/null || true
+
     echo "$LOG_PREFIX 启动 Chrome..."
     google-chrome-stable \
         --remote-debugging-port=9222 \
