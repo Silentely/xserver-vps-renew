@@ -642,6 +642,23 @@ async function clickTurnstileWithCDP(page) {
     // xdotool 需要屏幕坐标，需加上 Chrome 窗口位置和标题栏偏移
     let windowOffsetX = 0;
     let windowOffsetY = 0;
+    let chromeWindowId = null;
+    try {
+      // 查找 Chrome 窗口 ID 并聚焦
+      const winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "." | head -1', { timeout: 3000, encoding: 'utf-8' }).trim();
+      if (winIdOutput) {
+        chromeWindowId = winIdOutput;
+        log(`找到 Chrome 窗口 ID: ${chromeWindowId}`);
+        execSync(`DISPLAY=:99 xdotool windowactivate --sync ${chromeWindowId}`, { timeout: 3000 });
+        execSync(`DISPLAY=:99 xdotool windowfocus --sync ${chromeWindowId}`, { timeout: 3000 });
+        log('Chrome 窗口已聚焦');
+      } else {
+        log('未找到 Chrome 窗口 ID，将尝试直接点击');
+      }
+    } catch (e) {
+      log(`窗口聚焦失败: ${e.message}`);
+    }
+
     try {
       const winInfo = await client.send('Runtime.evaluate', {
         expression: 'JSON.stringify({ screenX: window.screenX, screenY: window.screenY, outerW: window.outerWidth, outerH: window.outerHeight, innerW: window.innerWidth, innerH: window.innerHeight })',
@@ -650,8 +667,10 @@ async function clickTurnstileWithCDP(page) {
       const win = JSON.parse(winInfo.result.value);
       // Chrome 窗口在屏幕上的位置 + 标题栏/工具栏高度
       windowOffsetX = win.screenX;
-      windowOffsetY = win.screenY + (win.outerH - win.innerH);
-      log(`Chrome 窗口偏移: screenX=${win.screenX}, screenY=${win.screenY}, 标题栏高度=${win.outerH - win.innerH}, 最终偏移: (${windowOffsetX}, ${windowOffsetY})`);
+      // outerH - innerH 为负或零时说明无窗口装饰，偏移量设为0
+      const titleBarHeight = Math.max(0, win.outerH - win.innerH);
+      windowOffsetY = win.screenY + titleBarHeight;
+      log(`Chrome 窗口偏移: screenX=${win.screenX}, screenY=${win.screenY}, 标题栏高度=${titleBarHeight}, 最终偏移: (${windowOffsetX}, ${windowOffsetY})`);
     } catch (e) {
       log(`获取窗口偏移失败，假设无偏移: ${e.message}`);
     }

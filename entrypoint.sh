@@ -4,12 +4,19 @@ set -e
 LOG_PREFIX="[entrypoint]"
 
 # ============================================================
-# 启动虚拟显示器（Xvfb）— puppeteer headless:false 需要
+# 启动虚拟显示器（Xvfb）+ 窗口管理器（fluxbox）
+# Xvfb 提供虚拟 X11 显示，fluxbox 管理窗口焦点
+# xdotool 需要窗口管理器才能正确路由鼠标事件到 Chrome 窗口
 # ============================================================
 echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
 rm -f /tmp/.X99-lock 2>/dev/null || true
 Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
 XVFB_PID=$!
+sleep 1
+
+echo "$LOG_PREFIX 启动 fluxbox 窗口管理器..."
+DISPLAY=:99 fluxbox &
+FLUXBOX_PID=$!
 sleep 1
 
 # ============================================================
@@ -26,6 +33,7 @@ run_renew() {
 # ============================================================
 cleanup() {
     echo "$LOG_PREFIX 收到退出信号，正在清理..."
+    [ -n "$FLUXBOX_PID" ] && kill "$FLUXBOX_PID" 2>/dev/null || true
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
     exit 0
 }
