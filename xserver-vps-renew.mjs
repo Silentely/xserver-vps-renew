@@ -294,35 +294,40 @@ async function recognizeCaptcha(imgSrc) {
  * 通过 cf-clearance-scraper 服务获取 Turnstile token
  */
 async function solveTurnstileViaCfSolver(pageUrl, siteKey) {
-  log(`正在调用 cf-solver 获取 Turnstile token (siteKey: ${siteKey})...`);
+  // 先尝试轻量模式，失败再用完整页面加载模式
+  for (const mode of ['turnstile-min', 'turnstile-max']) {
+    log(`正在调用 cf-solver 获取 Turnstile token (mode: ${mode}, siteKey: ${siteKey})...`);
 
-  try {
-    const res = await fetch(CONFIG.CF_SOLVER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: pageUrl,
-        siteKey,
-        mode: 'turnstile-min',
-      }),
-    });
+    try {
+      const res = await fetch(CONFIG.CF_SOLVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: pageUrl,
+          siteKey,
+          mode,
+        }),
+      });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`cf-solver 响应 ${res.status}: ${body}`);
+      if (!res.ok) {
+        const body = await res.text();
+        err(`cf-solver (${mode}) 响应 ${res.status}: ${body}`);
+        continue;
+      }
+
+      const data = await res.json();
+      if (data.code === 200 && data.token) {
+        log(`cf-solver (${mode}) 成功获取 token（长度: ${data.token.length}）`);
+        return data.token;
+      }
+
+      err(`cf-solver (${mode}) 返回异常: ${JSON.stringify(data).substring(0, 200)}`);
+    } catch (e) {
+      err(`cf-solver (${mode}) 调用失败: ${e.message}`);
     }
-
-    const data = await res.json();
-    if (data.code === 200 && data.token) {
-      log(`cf-solver 成功获取 token（长度: ${data.token.length}）`);
-      return data.token;
-    }
-
-    throw new Error(`cf-solver 返回异常: ${JSON.stringify(data)}`);
-  } catch (e) {
-    err(`cf-solver 调用失败: ${e.message}`);
-    return null;
   }
+
+  return null;
 }
 
 async function waitForTurnstile(page) {
@@ -450,14 +455,22 @@ async function handleCaptchaPage(page) {
   const pageText = await page.evaluate(() => document.body.innerText);
   const currentUrl = page.url();
 
-  const errorPatterns = ['エラー', '失敗', '認証に失敗', '不正', 'もう一度'];
-  const hasError = errorPatterns.some((pat) => pageText.includes(pat));
-
-  if (hasError || currentUrl.includes('/conf')) {
-    const snippet = pageText.substring(0, 300).replace(/\s+/g, ' ').trim();
-    throw new Error(`续期提交失败（Turnstile 验证未通过）: ${snippet}`);
+  // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
+  if (currentUrl.includes('/conf')) {
+    const hasAuthFail = pageText.includes('認証に失敗');
+    const reason = hasAuthFail ? 'Turnstile 认证失败' : '页面未跳转，可能验证码或 token 无效';
+    throw new Error(`续期提交失败（${reason}）`);
   }
 
+  // 检查是否有明确错误
+  const errorPatterns = ['エラー', '失敗', '不正', 'もう一度'];
+  const hasError = errorPatterns.some((pat) => pageText.includes(pat));
+  if (hasError) {
+    const snippet = pageText.substring(0, 300).replace(/\s+/g, ' ').trim();
+    throw new Error(`续期提交后出现错误: ${snippet}`);
+  }
+
+  // 检查是否包含成功关键词
   const successPatterns = ['完了', '延長', '更新'];
   const isSuccess = successPatterns.some((pat) => pageText.includes(pat));
   if (isSuccess) {
