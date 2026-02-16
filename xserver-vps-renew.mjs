@@ -328,34 +328,36 @@ function getTurnstileProvider() {
 }
 
 /**
- * 从页面提取 Turnstile sitekey
- * 策略：优先读取 .cf-turnstile[data-sitekey]，降级正则匹配页面源码
+ * 从页面提取 Turnstile 参数（sitekey + render 调用参数）
+ * 返回 { sitekey, action, cData, chlPageData } 或 null
  */
-async function extractTurnstileSitekey(page) {
-  // 方法 1：直接读取 data-sitekey 属性
+async function extractTurnstileParams(page) {
+  // 优先从拦截器获取完整参数
+  const intercepted = await page.evaluate(() => window.__turnstileParams).catch(() => null);
+  if (intercepted && intercepted.sitekey) {
+    log(`Turnstile 参数提取成功（render 拦截器）: sitekey=${intercepted.sitekey}, ` +
+      `action=${intercepted.action || '(空)'}, cData=${intercepted.cData ? '(有值)' : '(空)'}, ` +
+      `chlPageData=${intercepted.chlPageData ? '(有值)' : '(空)'}`);
+    return intercepted;
+  }
+
+  // 降级：从 data-sitekey 属性获取（仅 sitekey，其他参数为空）
   const sitekey = await page.evaluate(() => {
     const el = document.querySelector('.cf-turnstile[data-sitekey]');
     return el ? el.getAttribute('data-sitekey') : null;
   });
 
   if (sitekey) {
-    log(`Turnstile sitekey 提取成功（data-sitekey）: ${sitekey}`);
-    return sitekey;
+    log(`Turnstile sitekey 提取成功（data-sitekey）: ${sitekey}（无 render 参数）`);
+    return { sitekey, action: '', cData: '', chlPageData: '' };
   }
 
-  // 方法 2：正则匹配页面 HTML 源码中的 sitekey
+  // 最终降级：正则匹配页面源码
   const html = await page.content();
   const match = html.match(/data-sitekey=["']([0-9a-zA-Z_-]+)["']/);
   if (match) {
     log(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
-    return match[1];
-  }
-
-  // 方法 3：匹配 turnstile.render 调用中的 sitekey 参数
-  const renderMatch = html.match(/sitekey\s*[:=]\s*["']([0-9a-zA-Z_-]+)["']/);
-  if (renderMatch) {
-    log(`Turnstile sitekey 提取成功（render 参数）: ${renderMatch[1]}`);
-    return renderMatch[1];
+    return { sitekey: match[1], action: '', cData: '', chlPageData: '' };
   }
 
   return null;
@@ -364,14 +366,41 @@ async function extractTurnstileSitekey(page) {
 /**
  * 通过 CapSolver / 2Captcha API 求解 Turnstile token
  *
- * 流程：createTask → 轮询 getTaskResult → 返回 token
+ * 流程：createTask → 轮询 getTaskResult → 返回 { token, userAgent }
  * 使用原生 fetch()，不引入额外依赖
+ *
+ * @param {string} websiteURL - 目标页面 URL
+ * @param {object} params - { sitekey, action, cData, chlPageData }
+ * @returns {{ token: string, userAgent: string|null }}
  */
-async function solveTurnstileViaAPI(websiteURL, websiteKey) {
+async function solveTurnstileViaAPI(websiteURL, params) {
   const provider = getTurnstileProvider();
   if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
 
-  log(`使用 ${provider.name} 求解 Turnstile (sitekey=${websiteKey.substring(0, 12)}...)`);
+  log(`使用 ${provider.name} 求解 Turnstile (sitekey=${params.sitekey.substring(0, 12)}...)`);
+
+  // 构建任务参数
+  const task = {
+    type: provider.taskType,
+    websiteURL,
+    websiteKey: params.sitekey,
+  };
+
+  // CapSolver 使用 metadata 传递 action/cdata
+  if (provider.name === 'CapSolver') {
+    if (params.action || params.cData) {
+      task.metadata = {};
+      if (params.action) task.metadata.action = params.action;
+      if (params.cData) task.metadata.cdata = params.cData;
+    }
+  } else {
+    // 2Captcha 使用顶层 action/data/pagedata
+    if (params.action) task.action = params.action;
+    if (params.cData) task.data = params.cData;
+    if (params.chlPageData) task.pagedata = params.chlPageData;
+  }
+
+  log(`${provider.name} 任务参数: ${JSON.stringify(task)}`);
 
   // 创建求解任务
   const createRes = await fetch(`${provider.apiBase}/createTask`, {
@@ -379,11 +408,7 @@ async function solveTurnstileViaAPI(websiteURL, websiteKey) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       clientKey: provider.clientKey,
-      task: {
-        type: provider.taskType,
-        websiteURL,
-        websiteKey,
-      },
+      task,
     }),
   });
 
@@ -441,8 +466,10 @@ async function solveTurnstileViaAPI(websiteURL, websiteKey) {
       if (!token) {
         throw new Error(`${provider.name} 返回 ready 但 solution.token 为空`);
       }
-      log(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}`);
-      return token;
+      const userAgent = resultData.solution.userAgent || null;
+      log(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
+        (userAgent ? `，UA: ${userAgent.substring(0, 50)}...` : ''));
+      return { token, userAgent };
     }
 
     // 任务仍在处理中
@@ -497,7 +524,15 @@ async function injectTurnstileToken(page, token) {
     } catch (_) { /* 忽略回调异常 */ }
 
     try {
-      // 方法 2：检查全局 tsCallback（2Captcha 文档推荐的拦截方式）
+      // 方法 2：检查拦截器捕获的 callback（最可靠的方式）
+      if (!callbackCalled && typeof window.__turnstileCallback === 'function') {
+        window.__turnstileCallback(tkn);
+        callbackCalled = true;
+      }
+    } catch (_) { /* 忽略 */ }
+
+    try {
+      // 方法 3：检查全局 tsCallback（2Captcha 文档推荐的拦截方式）
       if (!callbackCalled && typeof window.tsCallback === 'function') {
         window.tsCallback(tkn);
         callbackCalled = true;
@@ -590,10 +625,10 @@ async function waitForTurnstile(page) {
     // ========== API 求解模式 ==========
     log(`Turnstile API 模式：使用 ${provider.name}`);
 
-    // 提取 sitekey
-    const sitekey = await extractTurnstileSitekey(page);
-    if (!sitekey) {
-      err('无法提取 Turnstile sitekey，尝试降级点击模式...');
+    // 提取 sitekey 及 render 参数
+    const params = await extractTurnstileParams(page);
+    if (!params) {
+      err('无法提取 Turnstile 参数，尝试降级点击模式...');
       await clickTurnstileFallback(page);
       return waitForTurnstileToken(page);
     }
@@ -601,10 +636,16 @@ async function waitForTurnstile(page) {
     // 调用 API 求解
     try {
       const currentURL = page.url();
-      const token = await solveTurnstileViaAPI(currentURL, sitekey);
+      const result = await solveTurnstileViaAPI(currentURL, params);
+
+      // 如果 API 返回了 userAgent，设置浏览器 UA 以匹配 token 绑定
+      if (result.userAgent) {
+        log(`设置浏览器 UA 为 API 返回值: ${result.userAgent.substring(0, 60)}...`);
+        await page.setUserAgent(result.userAgent);
+      }
 
       // 注入 token 到页面
-      const success = await injectTurnstileToken(page, token);
+      const success = await injectTurnstileToken(page, result.token);
       if (!success) {
         err('token 注入失败：未找到 cf-turnstile-response 元素');
         return false;
@@ -792,6 +833,34 @@ async function main() {
 
     const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
+
+    // 拦截 turnstile.render 调用，捕获 action/cData/chlPageData 等参数
+    // 这些参数对 Cloudflare Challenge page 类型的 Turnstile 是必须的
+    await page.evaluateOnNewDocument(() => {
+      window.__turnstileParams = null;
+      const waitForTurnstile = setInterval(() => {
+        if (window.turnstile) {
+          clearInterval(waitForTurnstile);
+          const originalRender = window.turnstile.render;
+          window.turnstile.render = function (container, params) {
+            window.__turnstileParams = {
+              sitekey: params.sitekey || '',
+              action: params.action || '',
+              cData: params.cData || '',
+              chlPageData: params.chlPageData || '',
+            };
+            // 保存原始 callback 供后续调用
+            if (typeof params.callback === 'function') {
+              window.__turnstileCallback = params.callback;
+            }
+            return originalRender.call(this, container, params);
+          };
+        }
+      }, 50);
+      // 10 秒后停止等待
+      setTimeout(() => clearInterval(waitForTurnstile), 10000);
+    });
+    log('已注册 turnstile.render 拦截器（evaluateOnNewDocument）');
 
     // 步骤 1：登录
     await handleLogin(page);
