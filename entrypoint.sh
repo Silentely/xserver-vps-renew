@@ -27,18 +27,28 @@ start_chrome() {
         --no-sandbox \
         --disable-dev-shm-usage \
         --disable-gpu \
+        --headless=new \
         --window-size=1280,900 \
-        &>/dev/null &
+        &>/tmp/chrome.log &
     CHROME_PID=$!
+    echo "$LOG_PREFIX Chrome PID: $CHROME_PID"
     echo "$LOG_PREFIX 等待 Chrome 就绪..."
     # 轮询等待 CDP 端口可用，最多 15 秒
     for i in $(seq 1 30); do
+        if ! kill -0 "$CHROME_PID" 2>/dev/null; then
+            echo "$LOG_PREFIX Chrome 进程已退出！日志："
+            cat /tmp/chrome.log 2>/dev/null || true
+            return 1
+        fi
         if curl -s -o /dev/null http://127.0.0.1:9222/json/version 2>/dev/null; then
             echo "$LOG_PREFIX Chrome CDP 已就绪（等待 ${i}×0.5s）"
-            break
+            return 0
         fi
         sleep 0.5
     done
+    echo "$LOG_PREFIX Chrome CDP 等待超时！Chrome 日志："
+    cat /tmp/chrome.log 2>/dev/null || true
+    return 1
 }
 
 # ============================================================
