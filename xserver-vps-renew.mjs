@@ -53,10 +53,24 @@ const CONFIG = {
   CAPSOLVER_API_KEY: process.env.CAPSOLVER_API_KEY || '',
   TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',
 
+  // 住宅代理（可选，用于 2Captcha TurnstileTask 带代理求解）
+  PROXY_TYPE: process.env.PROXY_TYPE || '',           // http | socks4 | socks5
+  PROXY_ADDRESS: process.env.PROXY_ADDRESS || '',     // IP 或域名
+  PROXY_PORT: process.env.PROXY_PORT || '',            // 端口
+  PROXY_LOGIN: process.env.PROXY_LOGIN || '',          // 用户名（可选）
+  PROXY_PASSWORD: process.env.PROXY_PASSWORD || '',    // 密码（可选）
+
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
 };
+
+// ============================================================
+// 常量
+// ============================================================
+
+// 固定为常见 Windows 家用电脑 UA，避免 Docker 中 Linux UA 与 Turnstile token 绑定的 UA 不匹配
+const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 // ============================================================
 // Chrome 路径检测
@@ -308,12 +322,15 @@ async function recognizeCaptcha(imgSrc) {
  * 优先使用 CapSolver，备选 2Captcha，均无密钥则返回 null
  */
 function getTurnstileProvider() {
+  const hasProxy = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
+
   if (CONFIG.CAPSOLVER_API_KEY) {
     return {
       name: 'CapSolver',
       apiBase: 'https://api.capsolver.com',
       clientKey: CONFIG.CAPSOLVER_API_KEY,
-      taskType: 'AntiTurnstileTaskProxyLess',
+      taskType: 'AntiTurnstileTaskProxyLess', // CapSolver 不支持代理
+      supportsProxy: false,
     };
   }
   if (CONFIG.TWOCAPTCHA_API_KEY) {
@@ -321,7 +338,8 @@ function getTurnstileProvider() {
       name: '2Captcha',
       apiBase: 'https://api.2captcha.com',
       clientKey: CONFIG.TWOCAPTCHA_API_KEY,
-      taskType: 'TurnstileTaskProxyless',
+      taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
+      supportsProxy: hasProxy,
     };
   }
   return null;
@@ -385,6 +403,19 @@ async function solveTurnstileViaAPI(websiteURL, params) {
     websiteURL,
     websiteKey: params.sitekey,
   };
+
+  // 传递浏览器 UA 给 API（仅 2Captcha 支持，CapSolver 会忽略）
+  task.userAgent = WINDOWS_UA;
+
+  // 2Captcha 带代理模式：添加住宅代理参数
+  if (provider.supportsProxy) {
+    task.proxyType = CONFIG.PROXY_TYPE;
+    task.proxyAddress = CONFIG.PROXY_ADDRESS;
+    task.proxyPort = parseInt(CONFIG.PROXY_PORT, 10);
+    if (CONFIG.PROXY_LOGIN) task.proxyLogin = CONFIG.PROXY_LOGIN;
+    if (CONFIG.PROXY_PASSWORD) task.proxyPassword = CONFIG.PROXY_PASSWORD;
+    log(`${provider.name} 使用住宅代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
+  }
 
   // CapSolver 使用 metadata 传递 action/cdata
   if (provider.name === 'CapSolver') {
@@ -638,9 +669,9 @@ async function waitForTurnstile(page) {
       const currentURL = page.url();
       const result = await solveTurnstileViaAPI(currentURL, params);
 
-      // 如果 API 返回了 userAgent，设置浏览器 UA 以匹配 token 绑定
+      // 按官方文档：用 API 返回的 userAgent 设置浏览器，确保与 token 绑定一致
       if (result.userAgent) {
-        log(`设置浏览器 UA 为 API 返回值: ${result.userAgent.substring(0, 60)}...`);
+        log(`使用 API 返回的 UA 更新浏览器: ${result.userAgent.substring(0, 60)}...`);
         await page.setUserAgent(result.userAgent);
       }
 
@@ -832,35 +863,41 @@ async function main() {
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
     const page = await browser.newPage();
+    // 启动后立即设置 Windows UA，确保整个生命周期与 Turnstile token 绑定的 UA 一致
+    await page.setUserAgent(WINDOWS_UA);
+    log(`浏览器 UA 已设置: ${WINDOWS_UA.substring(0, 60)}...`);
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // 拦截 turnstile.render 调用，捕获 action/cData/chlPageData 等参数
-    // 这些参数对 Cloudflare Challenge page 类型的 Turnstile 是必须的
+    // 使用 Object.defineProperty 劫持 window.turnstile 赋值，确保在 render 调用前完成拦截
     await page.evaluateOnNewDocument(() => {
       window.__turnstileParams = null;
-      const waitForTurnstile = setInterval(() => {
-        if (window.turnstile) {
-          clearInterval(waitForTurnstile);
-          const originalRender = window.turnstile.render;
-          window.turnstile.render = function (container, params) {
-            window.__turnstileParams = {
-              sitekey: params.sitekey || '',
-              action: params.action || '',
-              cData: params.cData || '',
-              chlPageData: params.chlPageData || '',
+      window.__turnstileCallback = null;
+      let _turnstile = undefined;
+      Object.defineProperty(window, 'turnstile', {
+        configurable: true,
+        get() { return _turnstile; },
+        set(val) {
+          if (val && typeof val.render === 'function') {
+            const originalRender = val.render;
+            val.render = function (container, params) {
+              window.__turnstileParams = {
+                sitekey: params.sitekey || '',
+                action: params.action || '',
+                cData: params.cData || '',
+                chlPageData: params.chlPageData || '',
+              };
+              if (typeof params.callback === 'function') {
+                window.__turnstileCallback = params.callback;
+              }
+              return originalRender.call(this, container, params);
             };
-            // 保存原始 callback 供后续调用
-            if (typeof params.callback === 'function') {
-              window.__turnstileCallback = params.callback;
-            }
-            return originalRender.call(this, container, params);
-          };
-        }
-      }, 50);
-      // 10 秒后停止等待
-      setTimeout(() => clearInterval(waitForTurnstile), 10000);
+          }
+          _turnstile = val;
+        },
+      });
     });
-    log('已注册 turnstile.render 拦截器（evaluateOnNewDocument）');
+    log('已注册 turnstile.render 拦截器（Object.defineProperty）');
 
     // 步骤 1：登录
     await handleLogin(page);

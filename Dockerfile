@@ -39,6 +39,11 @@ ENV TZ=Asia/Tokyo \
     CDP_URL=http://127.0.0.1:9222 \
     CAPSOLVER_API_KEY= \
     TWOCAPTCHA_API_KEY= \
+    PROXY_TYPE= \
+    PROXY_ADDRESS= \
+    PROXY_PORT= \
+    PROXY_LOGIN= \
+    PROXY_PASSWORD= \
     DISPLAY=:99
 
 ENTRYPOINT ["./entrypoint.sh"]
