@@ -9,7 +9,7 @@
     "start:launch": "node xserver-vps-renew.mjs --launch"
   },
   "dependencies": {
-    "puppeteer-core": "^24.2.0",
+    "rebrowser-puppeteer-core": "^24.8.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   }

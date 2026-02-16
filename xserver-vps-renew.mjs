@@ -3,7 +3,7 @@
 /**
  * Xserver VPS 自动续期脚本 - Puppeteer Stealth 版本
  *
- * 通过 puppeteer.launch() 启动 Chrome，Stealth 插件完整注入反检测补丁：
+ * 通过 rebrowser-puppeteer-core + puppeteer-extra Stealth 启动 Chrome，修复 CDP 泄露检测：
  * 登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交
  *
  * 环境变量：
@@ -16,12 +16,15 @@
  *   TG_CHAT_ID         - Telegram Chat ID（可选，启用通知）
  */
 
-import puppeteer from 'puppeteer-extra';
+import { addExtra } from 'puppeteer-extra';
+import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
 import { existsSync, rmSync } from 'fs';
 
-// 启用 Stealth 插件，隐藏自动化特征
+// 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
+// rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
+const puppeteer = addExtra(rebrowserPuppeteer);
 puppeteer.use(StealthPlugin());
 
 // ============================================================
@@ -853,8 +856,8 @@ async function main() {
     // 清理锁文件
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
 
-    // 通过 puppeteer.launch() 启动 Chrome，Stealth 插件才能完整注入
-    log(`正在启动 Chrome（Stealth launch 模式）: ${CONFIG.CHROME_PATH}`);
+    // rebrowser-puppeteer-core + Stealth 插件启动，修复 Runtime.Enable 泄露
+    log(`正在启动 Chrome（rebrowser + Stealth 模式）: ${CONFIG.CHROME_PATH}`);
     browser = await puppeteer.launch({
       executablePath: CONFIG.CHROME_PATH,
       userDataDir: CONFIG.CHROME_USER_DATA,
