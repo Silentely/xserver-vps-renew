@@ -492,144 +492,111 @@ async function clickTurnstileWithCDP(page) {
 
         // 创建独立的 CDP session 连接到 Turnstile iframe 进程
         const iframeClient = await turnstileTarget.createCDPSession();
+        await iframeClient.send('DOM.enable');
         await iframeClient.send('Runtime.enable');
 
-        // 在 Turnstile iframe 内注入 hook 并查找 checkbox
-        const hookAndFindScript = `
-          (function() {
-            if (window.__checkboxRatio) return JSON.stringify(window.__checkboxRatio);
+        // ===== 方法1：直接用 CDP DOM API 穿透 closed shadow root 获取 checkbox 坐标 =====
+        // CDP DOM.getDocument(pierce:true) 能穿透 closed shadow DOM
+        // 这是 Runtime.evaluate (JS) 做不到的！
+        try {
+          const { root } = await iframeClient.send('DOM.getDocument', {
+            depth: -1,
+            pierce: true,
+          });
 
-            // 注入 attachShadow hook（拦截新建的 closed shadow DOM）
-            if (!window.__hookInstalled) {
-              window.__hookInstalled = true;
-              try {
-                const orig = Element.prototype.attachShadow;
-                Element.prototype.attachShadow = function(...args) {
-                  const sr = orig.apply(this, args);
-                  if (sr) {
-                    const cb = sr.querySelector('input[type="checkbox"]');
-                    if (cb) { window.__foundCheckbox = cb; }
-                    else {
-                      new MutationObserver((_, o) => {
-                        const c = sr.querySelector('input[type="checkbox"]');
-                        if (c) { window.__foundCheckbox = c; o.disconnect(); }
-                      }).observe(sr, { childList: true, subtree: true });
-                    }
-                  }
-                  return sr;
-                };
-              } catch(e) {}
-            }
-
-            // 直接遍历查找（覆盖 open shadow root 情况）
-            if (!window.__foundCheckbox) {
-              function findInShadows(root) {
-                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-                let node;
-                while (node = walker.nextNode()) {
-                  if (node.tagName === 'INPUT' && node.type === 'checkbox') return node;
-                  if (node.shadowRoot) {
-                    const f = findInShadows(node.shadowRoot);
-                    if (f) return f;
-                  }
+          // 递归查找 INPUT[type=checkbox] 节点
+          let checkboxNodeId = null;
+          function findCheckboxNode(node) {
+            if (checkboxNodeId) return;
+            if (node.nodeName === 'INPUT') {
+              const attrs = node.attributes || [];
+              for (let i = 0; i < attrs.length; i += 2) {
+                if (attrs[i] === 'type' && attrs[i + 1] === 'checkbox') {
+                  checkboxNodeId = node.nodeId;
+                  return;
                 }
-                return null;
-              }
-              const found = findInShadows(document);
-              if (found) window.__foundCheckbox = found;
-            }
-
-            if (window.__foundCheckbox) {
-              const rect = window.__foundCheckbox.getBoundingClientRect();
-              const w = window.innerWidth;
-              const h = window.innerHeight;
-              if (w > 0 && h > 0 && rect.width > 0) {
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                window.__checkboxRatio = { x: cx / w, y: cy / h, w: rect.width, h: rect.height };
-                return JSON.stringify(window.__checkboxRatio);
               }
             }
-            return 'null';
-          })()
-        `;
-
-        const result = await iframeClient.send('Runtime.evaluate', {
-          expression: hookAndFindScript,
-          returnByValue: true,
-        });
-
-        if (result?.result?.value && result.result.value !== 'null') {
-          const ratio = JSON.parse(result.result.value);
-          xRatio = ratio.x;
-          yRatio = ratio.y;
-          log(`✅ OOPIF 内找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}, 尺寸: ${ratio.w}x${ratio.h}`);
-        } else {
-          log('OOPIF 内首次未找到 checkbox，等待 2 秒后重试...');
-          await sleep(2000);
-
-          const retry = await iframeClient.send('Runtime.evaluate', {
-            expression: hookAndFindScript,
-            returnByValue: true,
-          }).catch(() => null);
-
-          if (retry?.result?.value && retry.result.value !== 'null') {
-            const ratio = JSON.parse(retry.result.value);
-            xRatio = ratio.x;
-            yRatio = ratio.y;
-            log(`✅ 重试后找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
-          } else {
-            // 诊断：用 CDP DOM 穿透查看 iframe 内部完整结构
-            const diagResult = await iframeClient.send('DOM.getDocument', {
-              depth: -1,
-              pierce: true,
-            }).catch(() => null);
-
-            if (diagResult?.root) {
-              // 递归收集所有节点信息
-              function collectNodeInfo(node, depth = 0) {
-                const info = [];
-                const tag = node.nodeName || '';
-                const attrs = (node.attributes || []).filter((_, i) => i % 2 === 0);
-                const attrStr = attrs.join(',');
-                if (tag !== '#text' && tag !== '#comment') {
-                  info.push(`${'  '.repeat(depth)}${tag}${attrStr ? `[${attrStr}]` : ''}`);
-                }
-                for (const child of (node.children || [])) {
-                  info.push(...collectNodeInfo(child, depth + 1));
-                }
-                if (node.contentDocument) {
-                  info.push(`${'  '.repeat(depth + 1)}#document (contentDocument)`);
-                  info.push(...collectNodeInfo(node.contentDocument, depth + 2));
-                }
-                if (node.shadowRoots?.length) {
-                  for (const sr of node.shadowRoots) {
-                    info.push(`${'  '.repeat(depth + 1)}#shadow-root (${sr.shadowRootType})`);
-                    info.push(...collectNodeInfo(sr, depth + 2));
-                  }
-                }
-                return info;
+            // 穿透 shadow root
+            if (node.shadowRoots) {
+              for (const sr of node.shadowRoots) {
+                findCheckboxNode(sr);
               }
-              const treeInfo = collectNodeInfo(diagResult.root);
-              log(`OOPIF DOM 树结构 (${treeInfo.length} 行):\n${treeInfo.slice(0, 40).join('\n')}`);
-            } else {
-              // 降级诊断
-              const simpleDiag = await iframeClient.send('Runtime.evaluate', {
-                expression: `JSON.stringify({
-                  url: location.href,
-                  bodyHTML: document.body ? document.body.innerHTML.substring(0, 500) : 'no body',
-                  allInputs: Array.from(document.querySelectorAll('input')).map(i => ({type:i.type, name:i.name})),
-                  allElements: document.querySelectorAll('*').length,
-                  hasShadowHosts: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
-                })`,
-                returnByValue: true,
-              }).catch(() => null);
-
-              if (simpleDiag?.result?.value) {
-                log(`OOPIF 诊断: ${simpleDiag.result.value}`);
-              }
+            }
+            // 穿透 contentDocument（嵌套 iframe）
+            if (node.contentDocument) {
+              findCheckboxNode(node.contentDocument);
+            }
+            // 遍历子节点
+            for (const child of (node.children || [])) {
+              findCheckboxNode(child);
             }
           }
+          findCheckboxNode(root);
+
+          if (checkboxNodeId) {
+            log(`✅ CDP 穿透找到 checkbox nodeId: ${checkboxNodeId}`);
+
+            // 获取 checkbox 在 OOPIF viewport 中的位置
+            const { model: cbModel } = await iframeClient.send('DOM.getBoxModel', {
+              nodeId: checkboxNodeId,
+            });
+
+            const [cbX1, cbY1, , , cbX2, cbY2] = cbModel.content;
+            const cbWidth = cbX2 - cbX1;
+            const cbHeight = cbY2 - cbY1;
+            const cbCenterX = cbX1 + cbWidth / 2;
+            const cbCenterY = cbY1 + cbHeight / 2;
+
+            log(`checkbox 在 iframe 内位置: (${cbX1.toFixed(1)},${cbY1.toFixed(1)}) 尺寸: ${cbWidth.toFixed(0)}x${cbHeight.toFixed(0)} 中心: (${cbCenterX.toFixed(1)},${cbCenterY.toFixed(1)})`);
+
+            // 获取 iframe 自身的尺寸来计算比例
+            const iframeViewport = await iframeClient.send('Runtime.evaluate', {
+              expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight })',
+              returnByValue: true,
+            });
+            const ivp = JSON.parse(iframeViewport.result.value);
+            log(`iframe 内部视口: ${ivp.w}x${ivp.h}`);
+
+            if (ivp.w > 0 && ivp.h > 0) {
+              xRatio = cbCenterX / ivp.w;
+              yRatio = cbCenterY / ivp.h;
+              log(`✅ 精确 checkbox 坐标比例: x=${xRatio.toFixed(4)}, y=${yRatio.toFixed(4)}`);
+            }
+          } else {
+            log('CDP DOM 穿透未找到 checkbox INPUT 节点');
+
+            // 输出 DOM 树诊断
+            const treeInfo = [];
+            function collectNodeInfo(node, depth = 0) {
+              const tag = node.nodeName || '';
+              const attrs = (node.attributes || []);
+              const attrPairs = [];
+              for (let i = 0; i < attrs.length; i += 2) {
+                attrPairs.push(attrs[i]);
+              }
+              if (tag !== '#text' && tag !== '#comment') {
+                treeInfo.push(`${'  '.repeat(depth)}${tag}${attrPairs.length ? `[${attrPairs.join(',')}]` : ''}`);
+              }
+              if (node.shadowRoots) {
+                for (const sr of node.shadowRoots) {
+                  treeInfo.push(`${'  '.repeat(depth + 1)}#shadow-root (${sr.shadowRootType})`);
+                  collectNodeInfo(sr, depth + 2);
+                }
+              }
+              if (node.contentDocument) {
+                treeInfo.push(`${'  '.repeat(depth + 1)}#document (contentDocument)`);
+                collectNodeInfo(node.contentDocument, depth + 2);
+              }
+              for (const child of (node.children || [])) {
+                collectNodeInfo(child, depth + 1);
+              }
+            }
+            collectNodeInfo(root);
+            log(`OOPIF DOM 树结构 (${treeInfo.length} 行):\n${treeInfo.slice(0, 40).join('\n')}`);
+          }
+        } catch (e) {
+          log(`CDP DOM 穿透查找失败: ${e.message}`);
         }
 
         await iframeClient.detach().catch(() => {});
