@@ -23,6 +23,8 @@ import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
 import { existsSync, rmSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
@@ -569,12 +571,32 @@ async function injectTurnstileToken(page, token) {
 }
 
 /**
- * 简化版点击降级：当无 API 密钥时尝试直接点击 Turnstile checkbox
- * 成功率较低，仅作为最后手段
+ * 模拟人类鼠标移动轨迹（贝塞尔曲线 + 随机抖动）
+ * Cloudflare Turnstile 会分析鼠标移动模式来判定是否为自动化
+ */
+async function humanMouseMove(page, fromX, fromY, toX, toY) {
+  const steps = 15 + Math.floor(Math.random() * 10); // 15-25 步
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    // 简单的缓动函数（ease-in-out）
+    const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    const x = fromX + (toX - fromX) * ease + (Math.random() - 0.5) * 2;
+    const y = fromY + (toY - fromY) * ease + (Math.random() - 0.5) * 2;
+    await page.mouse.move(x, y);
+    // 人类鼠标移动间隔不是完全均匀的
+    await sleep(5 + Math.floor(Math.random() * 15));
+  }
+}
+
+/**
+ * 点击 Turnstile checkbox：模拟真实人类行为
+ * 1. 找到 Turnstile iframe 的位置
+ * 2. 模拟鼠标从随机起点移动到 checkbox 位置
+ * 3. 短暂停留后点击
  */
 async function clickTurnstileFallback(page) {
   try {
-    log('降级模式：尝试直接点击 Turnstile checkbox...');
+    log('尝试点击 Turnstile checkbox...');
     const frames = page.frames();
     const turnstileFrame = frames.find((f) =>
       f.url().includes('challenges.cloudflare.com'),
@@ -585,20 +607,40 @@ async function clickTurnstileFallback(page) {
       if (frameHandle) {
         const box = await frameHandle.boundingBox();
         if (box && box.width > 10 && box.height > 10) {
-          const clickX = box.x + 30;
-          const clickY = box.y + box.height / 2;
-          log(`Turnstile iframe 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
-            `${box.width.toFixed(0)}x${box.height.toFixed(0)}, 点击: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+          // checkbox 在 iframe 内的偏移位置（左侧约 30px 处）
+          const clickX = box.x + 28 + Math.random() * 6;
+          const clickY = box.y + box.height / 2 + (Math.random() - 0.5) * 8;
+
+          // 模拟人类行为：从页面随机位置移动到目标
+          const startX = 200 + Math.random() * 400;
+          const startY = 300 + Math.random() * 200;
+
+          log(`Turnstile iframe: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
+            `${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
+          log(`鼠标轨迹: (${startX.toFixed(0)},${startY.toFixed(0)}) → (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+
+          // 移动鼠标到起始位置
+          await page.mouse.move(startX, startY);
+          await sleep(200 + Math.random() * 300);
+
+          // 模拟人类鼠标移动轨迹
+          await humanMouseMove(page, startX, startY, clickX, clickY);
+
+          // 短暂停留（人类反应时间）
+          await sleep(50 + Math.random() * 150);
+
+          // 点击
           await page.mouse.click(clickX, clickY);
+          log('Turnstile checkbox 已点击');
           return true;
         }
       }
     }
 
-    log('未找到 Turnstile iframe，降级点击失败');
+    log('未找到 Turnstile iframe，点击失败');
     return false;
   } catch (e) {
-    err(`降级点击异常: ${e.message}`);
+    err(`点击异常: ${e.message}`);
     return false;
   }
 }
@@ -879,6 +921,19 @@ async function main() {
       '--window-size=1280,900',
       '--window-position=0,0',
     ];
+
+    // 加载 turnstile-patch 扩展
+    // 修复 CDP Input.dispatchMouseEvent 产生的 MouseEvent.screenX/screenY 异常
+    // Cloudflare Turnstile 通过检测 screenX === clientX 判定自动化（Chromium bug #40280325）
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const extensionPath = resolve(__dirname, 'turnstile-patch');
+    if (existsSync(extensionPath)) {
+      chromeArgs.push(`--disable-extensions-except=${extensionPath}`);
+      chromeArgs.push(`--load-extension=${extensionPath}`);
+      log(`已加载 turnstile-patch 扩展: ${extensionPath}`);
+    } else {
+      log(`turnstile-patch 扩展不存在: ${extensionPath}，跳过`);
+    }
 
     // 当配置了代理时，让浏览器也走同一代理
     // 确保浏览器提交表单的出口 IP 与 2Captcha 工人求解 token 时的 IP 一致
