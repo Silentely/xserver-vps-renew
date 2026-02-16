@@ -634,21 +634,42 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
+  // ========== 策略 1：先尝试点击 Turnstile checkbox 让其自行通过 ==========
+  // rebrowser + Stealth 模式下，部分场景可直接通过 Turnstile 验证
+  // 优势：无需 API、无 IP 绑定问题、最快速
+  log('策略 1：尝试点击 Turnstile checkbox 自行通过...');
+  await clickTurnstileFallback(page);
+
+  // 等待 Turnstile 自行验证通过（最多 15 秒）
+  const clickWaitStart = Date.now();
+  const clickWaitTimeout = 15_000;
+  while (Date.now() - clickWaitStart < clickWaitTimeout) {
+    const token = await page
+      .$eval('[name="cf-turnstile-response"]', (el) => el.value)
+      .catch(() => '');
+
+    if (token) {
+      log(`Turnstile 自行通过！耗时 ${Date.now() - clickWaitStart}ms，token 长度: ${token.length}`);
+      return true;
+    }
+    await sleep(1000);
+  }
+
+  log(`Turnstile 点击后 ${clickWaitTimeout}ms 内未通过，检查是否有 API 密钥...`);
+
+  // ========== 策略 2：API 求解模式 ==========
   const provider = getTurnstileProvider();
 
   if (provider) {
-    // ========== API 求解模式 ==========
-    log(`Turnstile API 模式：使用 ${provider.name}`);
+    log(`策略 2：使用 ${provider.name} API 求解 Turnstile`);
 
-    // 提取 sitekey 及 render 参数
+    // 提取 sitekey 及参数
     const params = await extractTurnstileParams(page);
     if (!params) {
-      err('无法提取 Turnstile 参数，尝试降级点击模式...');
-      await clickTurnstileFallback(page);
-      return waitForTurnstileToken(page);
+      err('无法提取 Turnstile 参数');
+      return false;
     }
 
-    // 调用 API 求解
     try {
       const currentURL = page.url();
       const result = await solveTurnstileViaAPI(currentURL, params);
@@ -667,7 +688,6 @@ async function waitForTurnstile(page) {
 
       // 通过 data-callback 属性名查找全局回调函数，传递 token
       const callbackResult = await page.evaluate((tkn) => {
-        // 方法 1：从 .cf-turnstile 的 data-callback 属性获取回调函数名
         const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
         if (cfDiv) {
           const callbackName = cfDiv.getAttribute('data-callback');
@@ -676,9 +696,7 @@ async function waitForTurnstile(page) {
             return `data-callback:${callbackName}`;
           }
         }
-        // 方法 2：检查 Turnstile API 是否已加载，尝试通过 widgetId 触发回调
         if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
-          // Turnstile 已正常加载，token 注入到 input 后表单提交即可
           return 'turnstile_loaded';
         }
         return null;
@@ -687,10 +705,10 @@ async function waitForTurnstile(page) {
       if (callbackResult) {
         log(`Turnstile token 已通过 callback 传递: ${callbackResult}`);
       } else {
-        log('未找到 Turnstile callback，尝试注入 input 元素...');
+        log('未找到 Turnstile callback，注入 input 元素...');
       }
 
-      // 补充：注入 token 到 input 元素（确保表单包含 token 值）
+      // 注入 token 到 input 元素
       await injectTurnstileToken(page, result.token);
 
       // 等待页面处理 token
@@ -707,7 +725,7 @@ async function waitForTurnstile(page) {
         log('cf-turnstile-response 元素无值，但 callback 可能已处理 token');
       }
 
-      // 截图诊断：求解后状态
+      // 截图诊断
       try {
         await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
         log('已保存求解后截图: /tmp/turnstile-after-solve.png');
@@ -717,14 +735,12 @@ async function waitForTurnstile(page) {
 
       return true;
     } catch (e) {
-      err(`API 求解失败: ${e.message}，尝试降级点击模式...`);
-      await clickTurnstileFallback(page);
-      return waitForTurnstileToken(page);
+      err(`API 求解失败: ${e.message}`);
+      return false;
     }
   } else {
-    // ========== 降级点击模式（无 API 密钥） ==========
-    log('未配置 Turnstile API 密钥，使用降级点击模式...');
-    await clickTurnstileFallback(page);
+    // 无 API 密钥，继续等待点击生效
+    log('未配置 API 密钥，继续等待 Turnstile 自行通过...');
     return waitForTurnstileToken(page);
   }
 }
@@ -850,29 +866,52 @@ async function main() {
     // 清理锁文件
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
 
+    // 构建 Chrome 启动参数
+    const chromeArgs = [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--window-size=1280,900',
+      '--window-position=0,0',
+    ];
+
+    // 当配置了代理时，让浏览器也走同一代理
+    // 确保浏览器提交表单的出口 IP 与 2Captcha 工人求解 token 时的 IP 一致
+    const hasProxy = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
+    if (hasProxy) {
+      const proxyScheme = CONFIG.PROXY_TYPE === 'socks5' ? 'socks5' :
+        CONFIG.PROXY_TYPE === 'socks4' ? 'socks4' : 'http';
+      chromeArgs.push(`--proxy-server=${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
+      log(`浏览器代理已配置: ${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
+    }
+
     // rebrowser-puppeteer-core + Stealth 插件启动，修复 Runtime.Enable 泄露
     log(`正在启动 Chrome（rebrowser + Stealth 模式）: ${CONFIG.CHROME_PATH}`);
     browser = await puppeteer.launch({
       executablePath: CONFIG.CHROME_PATH,
       userDataDir: CONFIG.CHROME_USER_DATA,
       headless: false,
-      args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--window-size=1280,900',
-        '--window-position=0,0',
-      ],
+      args: chromeArgs,
       defaultViewport: { width: 1280, height: 900 },
     });
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
     const page = await browser.newPage();
+
+    // 代理需要认证时，通过 page.authenticate 传递凭据
+    if (hasProxy && CONFIG.PROXY_LOGIN) {
+      await page.authenticate({
+        username: CONFIG.PROXY_LOGIN,
+        password: CONFIG.PROXY_PASSWORD,
+      });
+      log('浏览器代理认证已设置');
+    }
+
     // 启动后立即设置 Windows UA，确保整个生命周期与 Turnstile token 绑定的 UA 一致
     await page.setUserAgent(WINDOWS_UA);
     log(`浏览器 UA 已设置: ${WINDOWS_UA.substring(0, 60)}...`);
