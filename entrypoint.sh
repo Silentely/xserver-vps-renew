@@ -41,7 +41,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
 
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
-    env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_)' > "$ENV_FILE"
+    env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_|CAPSOLVER_|TWOCAPTCHA_)' > "$ENV_FILE"
 
     # 创建 cron 执行脚本
     cat > /app/cron-run.sh <<'CRONSCRIPT'

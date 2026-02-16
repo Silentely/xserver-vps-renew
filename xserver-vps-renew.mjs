@@ -10,6 +10,8 @@
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
  *   CAPTCHA_API        - 验证码识别API地址
+ *   CAPSOLVER_API_KEY  - CapSolver API 密钥（Turnstile 求解，与 2Captcha 二选一）
+ *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 求解备选）
  *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
  *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
@@ -41,10 +43,15 @@ const CONFIG = {
 
   NAVIGATION_TIMEOUT: 30_000,
   TURNSTILE_TIMEOUT: 60_000,
+  TURNSTILE_API_TIMEOUT: 120_000, // Turnstile API 求解超时（轮询上限）
   CAPTCHA_MAX_RETRY: 3,
 
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
+
+  // Turnstile API 求解（CapSolver 或 2Captcha，优先 CapSolver）
+  CAPSOLVER_API_KEY: process.env.CAPSOLVER_API_KEY || '',
+  TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',
 
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
@@ -287,236 +294,263 @@ async function recognizeCaptcha(imgSrc) {
 }
 
 // ============================================================
-// 步骤 5：Turnstile 处理（Chrome 扩展修复 screenX/screenY + page.mouse.click）
+// 步骤 5：Turnstile 处理（CapSolver / 2Captcha API 令牌求解）
 // ============================================================
 // 核心思路：
-//   1. Chrome 扩展（turnstile-patch/）在 MAIN world 修复 MouseEvent.screenX/screenY
-//      使 CDP Input.dispatchMouseEvent 产生的鼠标事件携带正确的屏幕坐标
-//   2. 通过 page.frames() 枚举找到 challenges.cloudflare.com 的 Turnstile iframe
-//   3. 获取 iframe DOM element 的 boundingBox，在 checkbox 区域用 page.mouse.click() 点击
-//   4. 降级方案：查找页面中 300x65 左右的 iframe 元素
+//   1. 从页面 .cf-turnstile[data-sitekey] 提取 Turnstile sitekey
+//   2. 调用 CapSolver 或 2Captcha API 的 createTask 创建求解任务
+//   3. 轮询 getTaskResult 获取 token
+//   4. 将 token 注入到 input[name="cf-turnstile-response"] 并触发回调
+//   5. 无 API 密钥时降级为简单点击尝试
 
 /**
- * 模拟人类鼠标移动 + 点击（避免直接 click 被 Turnstile 检测为机器行为）
+ * 获取 Turnstile 求解服务商配置
+ * 优先使用 CapSolver，备选 2Captcha，均无密钥则返回 null
  */
-async function humanClick(page, targetX, targetY) {
-  // 从随机偏移位置开始移动
-  const startX = targetX - 50 + Math.random() * 30;
-  const startY = targetY - 20 - Math.random() * 30;
-  await page.mouse.move(startX, startY);
-  await sleep(80 + Math.random() * 150);
-  // 带 steps 的移动模拟人类手部轨迹
-  await page.mouse.move(targetX, targetY, { steps: 8 + Math.floor(Math.random() * 8) });
-  await sleep(40 + Math.random() * 80);
-  // 分离 mousedown/mouseup 模拟真实按压时长
-  await page.mouse.down();
-  await sleep(30 + Math.random() * 60);
-  await page.mouse.up();
+function getTurnstileProvider() {
+  if (CONFIG.CAPSOLVER_API_KEY) {
+    return {
+      name: 'CapSolver',
+      apiBase: 'https://api.capsolver.com',
+      clientKey: CONFIG.CAPSOLVER_API_KEY,
+      taskType: 'AntiTurnstileTaskProxyLess',
+    };
+  }
+  if (CONFIG.TWOCAPTCHA_API_KEY) {
+    return {
+      name: '2Captcha',
+      apiBase: 'https://api.2captcha.com',
+      clientKey: CONFIG.TWOCAPTCHA_API_KEY,
+      taskType: 'TurnstileTaskProxyless',
+    };
+  }
+  return null;
 }
 
 /**
- * 在主页面层面定位并点击 Turnstile widget
- *
- * Turnstile 的 DOM 结构：
- *   .cf-turnstile → closed shadow root → iframe[src*="challenges.cloudflare.com"]
- * checkbox 位于 iframe 左侧约 30px、垂直居中处
- *
- * 策略优先级：
- *   1. page.frames() 枚举 → 找 challenges.cloudflare.com frame → frameElement boundingBox
- *   2. 主页面查询所有 iframe → 按 src 或尺寸匹配 Turnstile widget
- *   3. 扫描页面中 290-310px 宽的 div（最后降级手段）
+ * 从页面提取 Turnstile sitekey
+ * 策略：优先读取 .cf-turnstile[data-sitekey]，降级正则匹配页面源码
  */
-async function clickTurnstile(page) {
+async function extractTurnstileSitekey(page) {
+  // 方法 1：直接读取 data-sitekey 属性
+  const sitekey = await page.evaluate(() => {
+    const el = document.querySelector('.cf-turnstile[data-sitekey]');
+    return el ? el.getAttribute('data-sitekey') : null;
+  });
+
+  if (sitekey) {
+    log(`Turnstile sitekey 提取成功（data-sitekey）: ${sitekey}`);
+    return sitekey;
+  }
+
+  // 方法 2：正则匹配页面 HTML 源码中的 sitekey
+  const html = await page.content();
+  const match = html.match(/data-sitekey=["']([0-9a-zA-Z_-]+)["']/);
+  if (match) {
+    log(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
+    return match[1];
+  }
+
+  // 方法 3：匹配 turnstile.render 调用中的 sitekey 参数
+  const renderMatch = html.match(/sitekey\s*[:=]\s*["']([0-9a-zA-Z_-]+)["']/);
+  if (renderMatch) {
+    log(`Turnstile sitekey 提取成功（render 参数）: ${renderMatch[1]}`);
+    return renderMatch[1];
+  }
+
+  return null;
+}
+
+/**
+ * 通过 CapSolver / 2Captcha API 求解 Turnstile token
+ *
+ * 流程：createTask → 轮询 getTaskResult → 返回 token
+ * 使用原生 fetch()，不引入额外依赖
+ */
+async function solveTurnstileViaAPI(websiteURL, websiteKey) {
+  const provider = getTurnstileProvider();
+  if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
+
+  log(`使用 ${provider.name} 求解 Turnstile (sitekey=${websiteKey.substring(0, 12)}...)`);
+
+  // 创建求解任务
+  const createRes = await fetch(`${provider.apiBase}/createTask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientKey: provider.clientKey,
+      task: {
+        type: provider.taskType,
+        websiteURL,
+        websiteKey,
+      },
+    }),
+  });
+
+  if (!createRes.ok) {
+    throw new Error(`${provider.name} createTask HTTP 错误: ${createRes.status}`);
+  }
+
+  const createData = await createRes.json();
+  if (createData.errorId && createData.errorId !== 0) {
+    throw new Error(`${provider.name} createTask 错误: ${createData.errorDescription || createData.errorCode || JSON.stringify(createData)}`);
+  }
+
+  const taskId = createData.taskId;
+  if (!taskId) {
+    throw new Error(`${provider.name} createTask 未返回 taskId: ${JSON.stringify(createData)}`);
+  }
+
+  log(`${provider.name} 任务已创建: taskId=${taskId}`);
+
+  // 轮询获取结果（间隔 3 秒，最多轮询 TURNSTILE_API_TIMEOUT 毫秒）
+  const startTime = Date.now();
+  const pollInterval = 3000;
+  const maxPolls = Math.ceil(CONFIG.TURNSTILE_API_TIMEOUT / pollInterval);
+
+  for (let i = 1; i <= maxPolls; i++) {
+    await sleep(pollInterval);
+
+    const elapsed = Date.now() - startTime;
+    if (elapsed > CONFIG.TURNSTILE_API_TIMEOUT) {
+      throw new Error(`${provider.name} 求解超时（${CONFIG.TURNSTILE_API_TIMEOUT}ms）`);
+    }
+
+    const resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientKey: provider.clientKey,
+        taskId,
+      }),
+    });
+
+    if (!resultRes.ok) {
+      log(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
+      continue;
+    }
+
+    const resultData = await resultRes.json();
+
+    if (resultData.errorId && resultData.errorId !== 0) {
+      throw new Error(`${provider.name} getTaskResult 错误: ${resultData.errorDescription || resultData.errorCode}`);
+    }
+
+    if (resultData.status === 'ready' && resultData.solution) {
+      const token = resultData.solution.token;
+      if (!token) {
+        throw new Error(`${provider.name} 返回 ready 但 solution.token 为空`);
+      }
+      log(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}`);
+      return token;
+    }
+
+    // 任务仍在处理中
+    log(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
+  }
+
+  throw new Error(`${provider.name} 轮询次数耗尽，求解失败`);
+}
+
+/**
+ * 将 Turnstile token 注入页面并触发回调
+ *
+ * 注入目标：input[name="cf-turnstile-response"] 或同名 textarea
+ * 触发回调：通过 window.turnstile API 或 widgetId 调用 callback
+ */
+async function injectTurnstileToken(page, token) {
+  const injected = await page.evaluate((tkn) => {
+    // 注入 token 到所有匹配的 input/textarea 元素
+    const selectors = [
+      'input[name="cf-turnstile-response"]',
+      'textarea[name="cf-turnstile-response"]',
+      'input[name="g-recaptcha-response"]', // Turnstile reCAPTCHA 兼容模式
+    ];
+
+    let injectedCount = 0;
+    for (const sel of selectors) {
+      const els = document.querySelectorAll(sel);
+      els.forEach((el) => {
+        el.value = tkn;
+        // 触发事件通知表单框架 token 已变更
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        injectedCount++;
+      });
+    }
+
+    // 尝试调用 Turnstile 回调函数
+    let callbackCalled = false;
+    try {
+      // 方法 1：通过 window.turnstile 获取 widget 的 callback
+      if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
+        // 检查是否有全局注册的 callback
+        const cfDiv = document.querySelector('.cf-turnstile');
+        if (cfDiv) {
+          const callbackName = cfDiv.getAttribute('data-callback');
+          if (callbackName && typeof window[callbackName] === 'function') {
+            window[callbackName](tkn);
+            callbackCalled = true;
+          }
+        }
+      }
+    } catch (_) { /* 忽略回调异常 */ }
+
+    try {
+      // 方法 2：检查全局 tsCallback（2Captcha 文档推荐的拦截方式）
+      if (!callbackCalled && typeof window.tsCallback === 'function') {
+        window.tsCallback(tkn);
+        callbackCalled = true;
+      }
+    } catch (_) { /* 忽略 */ }
+
+    // 方法 3：启用提交按钮（某些表单在 token 注入前禁用提交）
+    const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
+    if (submitBtn && submitBtn.disabled) {
+      submitBtn.disabled = false;
+      submitBtn.removeAttribute('disabled');
+    }
+
+    return { injectedCount, callbackCalled };
+  }, token);
+
+  log(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
+  return injected.injectedCount > 0;
+}
+
+/**
+ * 简化版点击降级：当无 API 密钥时尝试直接点击 Turnstile checkbox
+ * 成功率较低，仅作为最后手段
+ */
+async function clickTurnstileFallback(page) {
   try {
-    // 方法1：通过 page.frames() 找到 Turnstile iframe 并获取其屏幕位置
-    log('方法1：通过 page.frames() 查找 Turnstile iframe...');
+    log('降级模式：尝试直接点击 Turnstile checkbox...');
     const frames = page.frames();
-    const turnstileFrames = frames.filter((f) =>
+    const turnstileFrame = frames.find((f) =>
       f.url().includes('challenges.cloudflare.com'),
     );
-    log(`发现 ${turnstileFrames.length} 个 Turnstile frame（共 ${frames.length} 个 frame）`);
 
-    for (const frame of turnstileFrames) {
-      try {
-        // 获取 iframe 对应的 DOM element（frameElement），再获取其在主页面中的 boundingBox
-        const frameHandle = await frame.frameElement();
-        if (!frameHandle) continue;
-
+    if (turnstileFrame) {
+      const frameHandle = await turnstileFrame.frameElement();
+      if (frameHandle) {
         const box = await frameHandle.boundingBox();
-        if (!box || box.width < 10 || box.height < 10) {
-          log(`Turnstile iframe boundingBox 无效: ${JSON.stringify(box)}`);
-          continue;
+        if (box && box.width > 10 && box.height > 10) {
+          const clickX = box.x + 30;
+          const clickY = box.y + box.height / 2;
+          log(`Turnstile iframe 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
+            `${box.width.toFixed(0)}x${box.height.toFixed(0)}, 点击: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+          await page.mouse.click(clickX, clickY);
+          return true;
         }
-
-        // checkbox 位于 iframe 左侧偏移约 30px、垂直居中
-        const clickX = box.x + 30;
-        const clickY = box.y + box.height / 2;
-        log(`Turnstile iframe 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
-          `尺寸: ${box.width.toFixed(0)}x${box.height.toFixed(0)}, ` +
-          `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-
-        // 诊断：检查扩展是否成功注入 Turnstile iframe（screenX getter 是否被修改）
-        try {
-          const patchStatus = await frame.evaluate(() => {
-            const desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
-            return {
-              hasCustomGetter: desc && desc.get && !desc.get.toString().includes('native code'),
-              getterSource: desc && desc.get ? desc.get.toString().substring(0, 80) : 'N/A',
-            };
-          });
-          log(`Turnstile iframe 扩展注入状态: customGetter=${patchStatus.hasCustomGetter}, ` +
-            `getter=${patchStatus.getterSource}`);
-        } catch (e) {
-          log(`无法检查 iframe 扩展状态（跨域限制）: ${e.message}`);
-        }
-
-        // 模拟人类鼠标移动轨迹：从随机起点移动到目标，再点击
-        await humanClick(page, clickX, clickY);
-        return true;
-      } catch (e) {
-        log(`通过 frame.frameElement() 点击失败: ${e.message}`);
       }
     }
 
-    // 方法2：在主页面中查询所有 iframe，按 src 或尺寸特征匹配 Turnstile widget
-    log('方法2：查找页面中的 Turnstile iframe 元素...');
-    const iframeBoxes = await page.evaluate(() => {
-      const results = [];
-      document.querySelectorAll('iframe').forEach((iframe) => {
-        try {
-          const src = iframe.src || '';
-          const rect = iframe.getBoundingClientRect();
-          // Turnstile iframe 特征：src 包含 cloudflare 或尺寸约 300x65
-          const isCfSrc = src.includes('challenges.cloudflare.com') || src.includes('turnstile');
-          const isCfSize = rect.width > 250 && rect.width <= 350 && rect.height > 50 && rect.height <= 80;
-          if (isCfSrc || isCfSize) {
-            results.push({
-              x: rect.x, y: rect.y, w: rect.width, h: rect.height,
-              src: src.substring(0, 80),
-              match: isCfSrc ? 'src' : 'size',
-            });
-          }
-        } catch (_) { /* 忽略 */ }
-      });
-      return results;
-    });
-
-    if (iframeBoxes.length > 0) {
-      // 优先选择 src 匹配的，其次选尺寸匹配的
-      iframeBoxes.sort((a, b) => (a.match === 'src' ? -1 : 1) - (b.match === 'src' ? -1 : 1));
-      for (const item of iframeBoxes) {
-        const clickX = item.x + 30;
-        const clickY = item.y + item.h / 2;
-        log(`找到候选 iframe [${item.match}]: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
-          `${item.w.toFixed(0)}x${item.h.toFixed(0)} src=${item.src}, ` +
-          `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-        await humanClick(page, clickX, clickY);
-        return true;
-      }
-    }
-
-    // 方法3（最终降级）：扫描主页面 div，寻找 Turnstile widget 壳层特征
-    // Turnstile 外层 div 通常是 290-310px 宽、50-80px 高
-    log('方法3（降级）：扫描页面 div 定位 Turnstile widget...');
-    const divBoxes = await page.evaluate(() => {
-      const coords = [];
-      document.querySelectorAll('div').forEach((item) => {
-        try {
-          const rect = item.getBoundingClientRect();
-          if (
-            rect.width > 290 && rect.width <= 310 &&
-            rect.height > 50 && rect.height <= 80
-          ) {
-            coords.push({ x: rect.x, y: rect.y, w: rect.width, h: rect.height });
-          }
-        } catch (_) { /* 忽略 */ }
-      });
-      return coords;
-    });
-
-    if (divBoxes.length > 0) {
-      for (const item of divBoxes) {
-        const clickX = item.x + 30;
-        const clickY = item.y + item.h / 2;
-        log(`降级定位到候选 div: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
-          `${item.w.toFixed(0)}x${item.h.toFixed(0)}, 点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-        await humanClick(page, clickX, clickY);
-      }
-      return true;
-    }
-
-    log('未找到 Turnstile widget 可点击区域');
+    log('未找到 Turnstile iframe，降级点击失败');
     return false;
   } catch (e) {
-    err(`Turnstile 点击异常: ${e.message}`);
+    err(`降级点击异常: ${e.message}`);
     return false;
   }
-}
-
-// ============================================================
-// screenX/screenY 补丁：通过 CDP 注入到 Turnstile iframe
-// ============================================================
-// Chrome 扩展（turnstile-patch/）的 content_scripts 无法注入到
-// closed shadow root 内动态创建的 iframe 中。
-// 改用 Puppeteer frame.evaluate() 直接在 Turnstile iframe 执行修复代码。
-
-/** screenX/screenY 修复脚本（与 turnstile-patch/content.js 相同逻辑） */
-const SCREEN_PATCH_SCRIPT = `(() => {
-  const origXDesc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
-  const origYDesc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenY');
-  if (!origXDesc || !origXDesc.get) return;
-  const cache = new WeakMap();
-  function patched(event) {
-    if (cache.has(event)) return cache.get(event);
-    const cx = event.clientX || 0, cy = event.clientY || 0;
-    const r = {
-      screenX: cx + (window.screenX || 0) + Math.floor(Math.random() * 3) - 1,
-      screenY: cy + (window.screenY || 0) + Math.floor(Math.random() * 3) - 1,
-    };
-    cache.set(event, r);
-    return r;
-  }
-  function suspicious(orig, client) { return orig === 0 || orig === client; }
-  Object.defineProperties(MouseEvent.prototype, {
-    screenX: { configurable: true, enumerable: true,
-      get() { const o = origXDesc.get.call(this); return suspicious(o, this.clientX) ? patched(this).screenX : o; }},
-    screenY: { configurable: true, enumerable: true,
-      get() { const o = origYDesc.get.call(this); return suspicious(o, this.clientY) ? patched(this).screenY : o; }},
-  });
-})()`;
-
-/**
- * 在所有 Turnstile iframe 中注入 screenX/screenY 修复补丁
- * 同时也注入到主页面和所有子 frame（确保全覆盖）
- */
-async function injectScreenPatchToTurnstileFrames(page) {
-  const frames = page.frames();
-  let injected = 0;
-
-  for (const frame of frames) {
-    try {
-      // 检查是否已经注入过（避免重复）
-      const alreadyPatched = await frame.evaluate(() => {
-        const desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
-        return desc && desc.get && !desc.get.toString().includes('native code');
-      }).catch(() => false);
-
-      if (alreadyPatched) {
-        log(`frame [${frame.url().substring(0, 60)}] 已有补丁，跳过`);
-        continue;
-      }
-
-      await frame.evaluate(SCREEN_PATCH_SCRIPT);
-      injected++;
-      const isTurnstile = frame.url().includes('challenges.cloudflare.com');
-      log(`已注入 screenX/screenY 补丁到 frame${isTurnstile ? '（Turnstile ✓）' : ''}: ${frame.url().substring(0, 60)}`);
-    } catch (e) {
-      // 某些 frame 可能无法执行（如 about:blank 或已卸载）
-      log(`无法注入补丁到 frame [${frame.url().substring(0, 40)}]: ${e.message}`);
-    }
-  }
-
-  log(`screenX/screenY 补丁注入完成：${injected}/${frames.length} 个 frame`);
 }
 
 async function waitForTurnstile(page) {
@@ -538,40 +572,86 @@ async function waitForTurnstile(page) {
     return true;
   }
 
-  // 等待 Turnstile widget 渲染和 iframe 加载
+  // 等待 Turnstile widget 渲染
   log('等待 Turnstile 渲染...');
-  await sleep(5000);
-
-  // 关键步骤：通过 CDP 直接在 Turnstile iframe 中注入 screenX/screenY 修复补丁
-  // 双重保险：evaluateOnNewDocument 可能对 OOPIF 不生效（取决于 Chrome 版本），
-  // 所以同时通过 frame.evaluate() 补注入，确保覆盖
-  await injectScreenPatchToTurnstileFrames(page);
+  await sleep(3000);
 
   // 截图诊断：确认 Turnstile 的视觉状态
   try {
-    await page.screenshot({ path: '/tmp/turnstile-before-click.png', fullPage: false });
-    log('已保存点击前截图: /tmp/turnstile-before-click.png');
+    await page.screenshot({ path: '/tmp/turnstile-before-solve.png', fullPage: false });
+    log('已保存求解前截图: /tmp/turnstile-before-solve.png');
   } catch (e) {
     log(`截图失败: ${e.message}`);
   }
 
-  // 用 page.mouse.click() 点击 Turnstile checkbox
-  log('尝试点击 Turnstile...');
-  const clicked = await clickTurnstile(page);
-  if (clicked) {
-    log('Turnstile 点击完成，等待令牌生成...');
+  const provider = getTurnstileProvider();
 
-    // 点击后截图诊断：观察 Turnstile 是否变成 spinner 或 checkmark
-    await sleep(2000);
-    try {
-      await page.screenshot({ path: '/tmp/turnstile-after-click.png', fullPage: false });
-      log('已保存点击后截图: /tmp/turnstile-after-click.png');
-    } catch (e) {
-      log(`点击后截图失败: ${e.message}`);
+  if (provider) {
+    // ========== API 求解模式 ==========
+    log(`Turnstile API 模式：使用 ${provider.name}`);
+
+    // 提取 sitekey
+    const sitekey = await extractTurnstileSitekey(page);
+    if (!sitekey) {
+      err('无法提取 Turnstile sitekey，尝试降级点击模式...');
+      await clickTurnstileFallback(page);
+      return waitForTurnstileToken(page);
     }
-  }
 
-  // 轮询等待令牌生成
+    // 调用 API 求解
+    try {
+      const currentURL = page.url();
+      const token = await solveTurnstileViaAPI(currentURL, sitekey);
+
+      // 注入 token 到页面
+      const success = await injectTurnstileToken(page, token);
+      if (!success) {
+        err('token 注入失败：未找到 cf-turnstile-response 元素');
+        return false;
+      }
+
+      // 等待一小段时间让页面处理 token
+      await sleep(1500);
+
+      // 验证注入是否生效
+      const verifyToken = await page
+        .$eval('[name="cf-turnstile-response"]', (el) => el.value)
+        .catch(() => '');
+
+      if (verifyToken) {
+        log(`Turnstile token 注入验证成功！token 长度: ${verifyToken.length}`);
+
+        // 截图诊断：求解后状态
+        try {
+          await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
+          log('已保存求解后截图: /tmp/turnstile-after-solve.png');
+        } catch (e) {
+          log(`截图失败: ${e.message}`);
+        }
+
+        return true;
+      }
+
+      err('token 注入后验证失败：cf-turnstile-response 值为空');
+      return false;
+    } catch (e) {
+      err(`API 求解失败: ${e.message}，尝试降级点击模式...`);
+      await clickTurnstileFallback(page);
+      return waitForTurnstileToken(page);
+    }
+  } else {
+    // ========== 降级点击模式（无 API 密钥） ==========
+    log('未配置 Turnstile API 密钥，使用降级点击模式...');
+    await clickTurnstileFallback(page);
+    return waitForTurnstileToken(page);
+  }
+}
+
+/**
+ * 轮询等待 Turnstile token 生成（降级模式专用）
+ * 用于点击方式后等待 Turnstile 自行生成 token
+ */
+async function waitForTurnstileToken(page) {
   const startTime = Date.now();
   while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
     const token = await page
@@ -583,13 +663,11 @@ async function waitForTurnstile(page) {
       return true;
     }
 
-    // 每 8 秒重试点击一次
+    // 每 10 秒重试点击一次
     const elapsed = Date.now() - startTime;
-    if (elapsed > 8000 && elapsed % 8000 < 1000) {
-      log(`令牌未生成，第 ${Math.floor(elapsed / 8000)} 次重试点击...`);
-      // 重新注入补丁（Turnstile 可能重新加载 iframe）
-      await injectScreenPatchToTurnstileFrames(page);
-      await clickTurnstile(page);
+    if (elapsed > 10000 && elapsed % 10000 < 1000) {
+      log(`令牌未生成，第 ${Math.floor(elapsed / 10000)} 次重试点击...`);
+      await clickTurnstileFallback(page);
     }
 
     await sleep(1000);
@@ -707,9 +785,6 @@ async function main() {
         '--disable-renderer-backgrounding',
         '--window-size=1280,900',
         '--window-position=0,0',
-        // Chrome 扩展：修复 CDP MouseEvent.screenX/screenY 异常（Turnstile 检测绕过）
-        '--load-extension=/app/turnstile-patch',
-        '--disable-extensions-except=/app/turnstile-patch',
       ],
       defaultViewport: { width: 1280, height: 900 },
     });
@@ -717,12 +792,6 @@ async function main() {
 
     const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
-
-    // 关键：在所有新 frame/document 创建时自动注入 screenX/screenY 补丁
-    // evaluateOnNewDocument 在 document_start 时机执行，确保在 Turnstile 脚本之前完成修补
-    // 这比 frame.evaluate() 更可靠，因为后者可能在 Turnstile 已经缓存原始 getter 之后才执行
-    await page.evaluateOnNewDocument(SCREEN_PATCH_SCRIPT);
-    log('已注册 screenX/screenY 补丁（evaluateOnNewDocument，所有新 frame 自动注入）');
 
     // 步骤 1：登录
     await handleLogin(page);

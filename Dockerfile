@@ -37,6 +37,8 @@ ENV TZ=Asia/Tokyo \
     CHROME_PATH=/usr/bin/google-chrome-stable \
     CHROME_USER_DATA=/data/chrome-profile \
     CDP_URL=http://127.0.0.1:9222 \
+    CAPSOLVER_API_KEY= \
+    TWOCAPTCHA_API_KEY= \
     DISPLAY=:99
 
 ENTRYPOINT ["./entrypoint.sh"]
