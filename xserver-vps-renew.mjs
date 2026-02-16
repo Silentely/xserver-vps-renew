@@ -47,7 +47,7 @@ const CONFIG = {
   LOGIN_PATH: '/xapanel/login/xvps/',
 
   NAVIGATION_TIMEOUT: 30_000,
-  TURNSTILE_TIMEOUT: 30_000,
+  TURNSTILE_TIMEOUT: 60_000,
   CAPTCHA_MAX_RETRY: 3,
 
   AUTO_LAUNCH: process.argv.includes('--launch'),
@@ -427,6 +427,30 @@ async function handleCaptchaPage(page) {
   ]);
 
   log(`提交完成，当前页面: ${page.url()}`);
+
+  // 验证续期是否真正成功
+  await sleep(2000);
+  const pageText = await page.evaluate(() => document.body.innerText);
+  const currentUrl = page.url();
+
+  // 检查是否有错误信息
+  const errorPatterns = ['エラー', 'error', '失敗', 'トークン', '不正', 'もう一度'];
+  const hasError = errorPatterns.some((pat) => pageText.toLowerCase().includes(pat.toLowerCase()));
+
+  if (hasError || currentUrl.includes('/conf')) {
+    // 还在确认页或出现错误，说明提交失败
+    const snippet = pageText.substring(0, 300).replace(/\s+/g, ' ').trim();
+    throw new Error(`续期提交后页面异常（可能 Turnstile 验证未通过）: ${snippet}`);
+  }
+
+  // 检查是否包含成功关键词
+  const successPatterns = ['完了', '延長', '更新'];
+  const isSuccess = successPatterns.some((pat) => pageText.includes(pat));
+  if (isSuccess) {
+    log('页面确认续期成功！');
+  } else {
+    log(`页面未检测到明确的成功标识，请人工确认。URL: ${currentUrl}`);
+  }
 }
 
 // ============================================================
