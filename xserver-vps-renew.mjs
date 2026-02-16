@@ -446,154 +446,140 @@ async function clickTurnstileWithCDP(page) {
 
     log(`Turnstile iframe 位置: (${x1},${y1}) 尺寸: ${iframeWidth}x${iframeHeight}`);
 
-    // ========== 核心：在 Turnstile iframe 执行上下文中注入 hook ==========
-
-    // 获取帧树，找到 Turnstile iframe 的 frameId
-    const { frameTree } = await client.send('Page.getFrameTree');
-    let turnstileFrameId = null;
-
-    function findTurnstileFrame(tree) {
-      if (tree.frame?.url?.includes('challenges.cloudflare.com')) {
-        turnstileFrameId = tree.frame.id;
-        return;
-      }
-      for (const child of (tree.childFrames || [])) {
-        findTurnstileFrame(child);
-        if (turnstileFrameId) return;
-      }
-    }
-    findTurnstileFrame(frameTree);
-
-    if (!turnstileFrameId) {
-      log('未在帧树中找到 Turnstile frame，使用标准坐标点击。');
-    } else {
-      log(`找到 Turnstile frameId: ${turnstileFrameId}`);
-    }
-
-    // 获取 Turnstile iframe 的执行上下文 ID
-    let turnstileContextId = null;
-
-    if (turnstileFrameId) {
-      // 通过创建隔离世界（isolated world）获取可靠的执行上下文
-      try {
-        const { executionContextId } = await client.send('Page.createIsolatedWorld', {
-          frameId: turnstileFrameId,
-          worldName: 'turnstile_hook',
-          grantUniveralAccess: true,
-        });
-        turnstileContextId = executionContextId;
-        log(`创建 Turnstile iframe 隔离执行上下文: ${turnstileContextId}`);
-      } catch (e) {
-        log(`创建隔离世界失败: ${e.message}`);
-      }
-    }
+    // ========== 核心：通过 OOPIF Target 进入 Turnstile iframe ==========
+    // Turnstile iframe 是跨域的（challenges.cloudflare.com），Chrome 会将其
+    // 放入独立进程（OOPIF），主页面的 getFrameTree 看不到它。
+    // 需要用 browser.targets() 找到该 target，attach 后在其中执行 JS。
 
     let xRatio = null;
     let yRatio = null;
 
-    if (turnstileContextId) {
-      // 在 Turnstile iframe 内注入 attachShadow hook 并获取 checkbox 坐标
-      const hookAndFindScript = `
-        (function() {
-          // 如果已找到坐标，直接返回
-          if (window.__checkboxRatio) return JSON.stringify(window.__checkboxRatio);
+    // 方法1：通过 Puppeteer 的 browser.targets() 查找 OOPIF target
+    try {
+      const browser = page.browser();
+      const targets = browser.targets();
+      const turnstileTarget = targets.find(
+        (t) => t.url().includes('challenges.cloudflare.com')
+      );
 
-          // 注入 attachShadow hook
-          if (!window.__hookInstalled) {
-            window.__hookInstalled = true;
-            try {
-              const origAttachShadow = Element.prototype.attachShadow;
-              Element.prototype.attachShadow = function(...args) {
-                const sr = origAttachShadow.apply(this, args);
-                if (sr) {
-                  const check = sr.querySelector('input[type="checkbox"]');
-                  if (check) {
-                    window.__foundCheckbox = check;
-                  } else {
-                    new MutationObserver((_, o) => {
-                      const cb = sr.querySelector('input[type="checkbox"]');
-                      if (cb) { window.__foundCheckbox = cb; o.disconnect(); }
-                    }).observe(sr, { childList: true, subtree: true });
+      if (turnstileTarget) {
+        log(`找到 Turnstile OOPIF target: ${turnstileTarget.url().substring(0, 80)}...`);
+
+        // 创建独立的 CDP session 连接到 Turnstile iframe 进程
+        const iframeClient = await turnstileTarget.createCDPSession();
+        await iframeClient.send('Runtime.enable');
+
+        // 在 Turnstile iframe 内注入 hook 并查找 checkbox
+        const hookAndFindScript = `
+          (function() {
+            if (window.__checkboxRatio) return JSON.stringify(window.__checkboxRatio);
+
+            // 注入 attachShadow hook（拦截新建的 closed shadow DOM）
+            if (!window.__hookInstalled) {
+              window.__hookInstalled = true;
+              try {
+                const orig = Element.prototype.attachShadow;
+                Element.prototype.attachShadow = function(...args) {
+                  const sr = orig.apply(this, args);
+                  if (sr) {
+                    const cb = sr.querySelector('input[type="checkbox"]');
+                    if (cb) { window.__foundCheckbox = cb; }
+                    else {
+                      new MutationObserver((_, o) => {
+                        const c = sr.querySelector('input[type="checkbox"]');
+                        if (c) { window.__foundCheckbox = c; o.disconnect(); }
+                      }).observe(sr, { childList: true, subtree: true });
+                    }
+                  }
+                  return sr;
+                };
+              } catch(e) {}
+            }
+
+            // 直接遍历查找（覆盖 open shadow root 情况）
+            if (!window.__foundCheckbox) {
+              function findInShadows(root) {
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                let node;
+                while (node = walker.nextNode()) {
+                  if (node.tagName === 'INPUT' && node.type === 'checkbox') return node;
+                  if (node.shadowRoot) {
+                    const f = findInShadows(node.shadowRoot);
+                    if (f) return f;
                   }
                 }
-                return sr;
-              };
-            } catch(e) {}
-          }
-
-          // 尝试直接遍历 DOM 树查找 checkbox（不依赖 hook）
-          if (!window.__foundCheckbox) {
-            // 方法1：穿透所有 shadow root 查找
-            function findInShadows(root) {
-              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-              let node;
-              while (node = walker.nextNode()) {
-                if (node.tagName === 'INPUT' && node.type === 'checkbox') return node;
-                if (node.shadowRoot) {
-                  const found = findInShadows(node.shadowRoot);
-                  if (found) return found;
-                }
+                return null;
               }
-              return null;
+              const found = findInShadows(document);
+              if (found) window.__foundCheckbox = found;
             }
-            const found = findInShadows(document);
-            if (found) window.__foundCheckbox = found;
-          }
 
-          // 计算坐标比例
-          if (window.__foundCheckbox) {
-            const rect = window.__foundCheckbox.getBoundingClientRect();
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-            if (w > 0 && h > 0 && rect.width > 0) {
-              const cx = rect.left + rect.width / 2;
-              const cy = rect.top + rect.height / 2;
-              window.__checkboxRatio = { x: cx / w, y: cy / h, w: rect.width, h: rect.height };
-              return JSON.stringify(window.__checkboxRatio);
+            if (window.__foundCheckbox) {
+              const rect = window.__foundCheckbox.getBoundingClientRect();
+              const w = window.innerWidth;
+              const h = window.innerHeight;
+              if (w > 0 && h > 0 && rect.width > 0) {
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                window.__checkboxRatio = { x: cx / w, y: cy / h, w: rect.width, h: rect.height };
+                return JSON.stringify(window.__checkboxRatio);
+              }
             }
-          }
+            return 'null';
+          })()
+        `;
 
-          return 'null';
-        })()
-      `;
-
-      try {
-        const result = await client.send('Runtime.evaluate', {
+        const result = await iframeClient.send('Runtime.evaluate', {
           expression: hookAndFindScript,
-          contextId: turnstileContextId,
           returnByValue: true,
         });
 
         if (result?.result?.value && result.result.value !== 'null') {
           const ratio = JSON.parse(result.result.value);
-          if (ratio) {
-            xRatio = ratio.x;
-            yRatio = ratio.y;
-            log(`✅ iframe 内找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}, 尺寸: ${ratio.w}x${ratio.h}`);
-          }
+          xRatio = ratio.x;
+          yRatio = ratio.y;
+          log(`✅ OOPIF 内找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}, 尺寸: ${ratio.w}x${ratio.h}`);
         } else {
-          log('iframe 内未找到 checkbox（shadow root 可能是 closed 且已创建）');
-
-          // 等一会再试一次（hook 可能需要时间捕获新创建的 shadow root）
+          log('OOPIF 内首次未找到 checkbox，等待 2 秒后重试...');
           await sleep(2000);
-          const retry = await client.send('Runtime.evaluate', {
+
+          const retry = await iframeClient.send('Runtime.evaluate', {
             expression: hookAndFindScript,
-            contextId: turnstileContextId,
             returnByValue: true,
           }).catch(() => null);
 
           if (retry?.result?.value && retry.result.value !== 'null') {
             const ratio = JSON.parse(retry.result.value);
-            if (ratio) {
-              xRatio = ratio.x;
-              yRatio = ratio.y;
-              log(`✅ 重试后找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
+            xRatio = ratio.x;
+            yRatio = ratio.y;
+            log(`✅ 重试后找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
+          } else {
+            // 诊断：列出 iframe 内所有元素信息
+            const diagResult = await iframeClient.send('Runtime.evaluate', {
+              expression: `JSON.stringify({
+                url: location.href,
+                bodyHTML: document.body ? document.body.innerHTML.substring(0, 500) : 'no body',
+                allInputs: Array.from(document.querySelectorAll('input')).map(i => ({type:i.type, name:i.name})),
+                allElements: document.querySelectorAll('*').length,
+                hasShadowHosts: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
+              })`,
+              returnByValue: true,
+            }).catch(() => null);
+
+            if (diagResult?.result?.value) {
+              log(`OOPIF 诊断: ${diagResult.result.value}`);
             }
           }
         }
-      } catch (e) {
-        log(`iframe 内执行脚本失败: ${e.message}`);
+
+        await iframeClient.detach().catch(() => {});
+      } else {
+        // 列出所有 targets 供诊断
+        const targetInfo = targets.map((t) => `${t.type()}:${t.url().substring(0, 60)}`).join(' | ');
+        log(`未找到 Turnstile OOPIF target。所有 targets: ${targetInfo}`);
       }
+    } catch (e) {
+      log(`OOPIF 方式查找失败: ${e.message}`);
     }
 
     // 降级：使用标准 checkbox 坐标
