@@ -446,6 +446,31 @@ async function clickTurnstileWithCDP(page) {
 
     log(`Turnstile iframe 位置: (${x1},${y1}) 尺寸: ${iframeWidth}x${iframeHeight}`);
 
+    // 获取页面滚动偏移量，修正坐标
+    const scrollInfo = await client.send('Runtime.evaluate', {
+      expression: 'JSON.stringify({ scrollX: window.scrollX, scrollY: window.scrollY, innerW: window.innerWidth, innerH: window.innerHeight })',
+      returnByValue: true,
+    });
+    const scroll = JSON.parse(scrollInfo.result.value);
+    log(`页面滚动: scrollY=${scroll.scrollY}, 视口: ${scroll.innerW}x${scroll.innerH}`);
+
+    // 如果 Turnstile widget 不在可视区域内，先滚动到它
+    if (y1 > scroll.innerH || y1 < 0) {
+      log('Turnstile widget 不在可视区域，正在滚动...');
+      await client.send('Runtime.evaluate', {
+        expression: `window.scrollTo(0, ${Math.max(0, y1 - 300)})`,
+      });
+      await sleep(500);
+
+      // 重新获取坐标
+      const { model: newModel } = await client.send('DOM.getBoxModel', {
+        nodeId: iframeNode.nodeId,
+      });
+      const [nx1, ny1, , , nx2, ny2] = newModel.content;
+      log(`滚动后 iframe 位置: (${nx1},${ny1})`);
+      // 更新坐标（后续使用 viewport 坐标）
+    }
+
     // ========== 核心：通过 OOPIF Target 进入 Turnstile iframe ==========
     // Turnstile iframe 是跨域的（challenges.cloudflare.com），Chrome 会将其
     // 放入独立进程（OOPIF），主页面的 getFrameTree 看不到它。
@@ -554,20 +579,55 @@ async function clickTurnstileWithCDP(page) {
             yRatio = ratio.y;
             log(`✅ 重试后找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
           } else {
-            // 诊断：列出 iframe 内所有元素信息
-            const diagResult = await iframeClient.send('Runtime.evaluate', {
-              expression: `JSON.stringify({
-                url: location.href,
-                bodyHTML: document.body ? document.body.innerHTML.substring(0, 500) : 'no body',
-                allInputs: Array.from(document.querySelectorAll('input')).map(i => ({type:i.type, name:i.name})),
-                allElements: document.querySelectorAll('*').length,
-                hasShadowHosts: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
-              })`,
-              returnByValue: true,
+            // 诊断：用 CDP DOM 穿透查看 iframe 内部完整结构
+            const diagResult = await iframeClient.send('DOM.getDocument', {
+              depth: -1,
+              pierce: true,
             }).catch(() => null);
 
-            if (diagResult?.result?.value) {
-              log(`OOPIF 诊断: ${diagResult.result.value}`);
+            if (diagResult?.root) {
+              // 递归收集所有节点信息
+              function collectNodeInfo(node, depth = 0) {
+                const info = [];
+                const tag = node.nodeName || '';
+                const attrs = (node.attributes || []).filter((_, i) => i % 2 === 0);
+                const attrStr = attrs.join(',');
+                if (tag !== '#text' && tag !== '#comment') {
+                  info.push(`${'  '.repeat(depth)}${tag}${attrStr ? `[${attrStr}]` : ''}`);
+                }
+                for (const child of (node.children || [])) {
+                  info.push(...collectNodeInfo(child, depth + 1));
+                }
+                if (node.contentDocument) {
+                  info.push(`${'  '.repeat(depth + 1)}#document (contentDocument)`);
+                  info.push(...collectNodeInfo(node.contentDocument, depth + 2));
+                }
+                if (node.shadowRoots?.length) {
+                  for (const sr of node.shadowRoots) {
+                    info.push(`${'  '.repeat(depth + 1)}#shadow-root (${sr.shadowRootType})`);
+                    info.push(...collectNodeInfo(sr, depth + 2));
+                  }
+                }
+                return info;
+              }
+              const treeInfo = collectNodeInfo(diagResult.root);
+              log(`OOPIF DOM 树结构 (${treeInfo.length} 行):\n${treeInfo.slice(0, 40).join('\n')}`);
+            } else {
+              // 降级诊断
+              const simpleDiag = await iframeClient.send('Runtime.evaluate', {
+                expression: `JSON.stringify({
+                  url: location.href,
+                  bodyHTML: document.body ? document.body.innerHTML.substring(0, 500) : 'no body',
+                  allInputs: Array.from(document.querySelectorAll('input')).map(i => ({type:i.type, name:i.name})),
+                  allElements: document.querySelectorAll('*').length,
+                  hasShadowHosts: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
+                })`,
+                returnByValue: true,
+              }).catch(() => null);
+
+              if (simpleDiag?.result?.value) {
+                log(`OOPIF 诊断: ${simpleDiag.result.value}`);
+              }
             }
           }
         }
@@ -589,11 +649,31 @@ async function clickTurnstileWithCDP(page) {
       log(`降级使用标准 checkbox 坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
     }
 
-    // 计算绝对点击坐标
-    const clickX = x1 + iframeWidth * xRatio;
-    const clickY = y1 + iframeHeight * yRatio;
+    // 重新获取最新的 iframe 位置（滚动可能已改变）
+    let finalX1 = x1;
+    let finalY1 = y1;
+    let finalWidth = iframeWidth;
+    let finalHeight = iframeHeight;
 
-    log(`CDP 精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
+    try {
+      const { model: freshModel } = await client.send('DOM.getBoxModel', {
+        nodeId: iframeNode.nodeId,
+      });
+      [finalX1, finalY1, , , ] = freshModel.content;
+      const freshX2 = freshModel.content[4];
+      const freshY2 = freshModel.content[5];
+      finalWidth = freshX2 - finalX1;
+      finalHeight = freshY2 - finalY1;
+    } catch (e) {
+      log(`重新获取 iframe 位置失败: ${e.message}`);
+    }
+
+    // DOM.getBoxModel 返回的是视口坐标（CSS pixels relative to viewport）
+    // Input.dispatchMouseEvent 也使用视口坐标，所以无需额外转换
+    const clickX = finalX1 + finalWidth * xRatio;
+    const clickY = finalY1 + finalHeight * yRatio;
+
+    log(`CDP 精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)}) [iframe: (${finalX1.toFixed(0)},${finalY1.toFixed(0)}) ${finalWidth}x${finalHeight}]`);
 
     // 模拟人类鼠标移动轨迹（从页面随机位置出发）
     const startX = clickX - 80 - Math.random() * 150;
