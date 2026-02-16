@@ -292,55 +292,105 @@ async function recognizeCaptcha(imgSrc) {
 // 核心思路：
 //   1. Chrome 扩展（turnstile-patch/）在 MAIN world 修复 MouseEvent.screenX/screenY
 //      使 CDP Input.dispatchMouseEvent 产生的鼠标事件携带正确的屏幕坐标
-//   2. 在主页面找到 cf-turnstile-response 输入框的父元素 boundingBox
-//   3. 用 page.mouse.click() 点击 widget 的 checkbox 区域（偏移 x+30, y+height/2）
-//   4. 降级方案：扫描主页面 div，找 290-310px 宽度的无子元素 div
+//   2. 通过 page.frames() 枚举找到 challenges.cloudflare.com 的 Turnstile iframe
+//   3. 获取 iframe DOM element 的 boundingBox，在 checkbox 区域用 page.mouse.click() 点击
+//   4. 降级方案：查找页面中 300x65 左右的 iframe 元素
 
 /**
  * 在主页面层面定位并点击 Turnstile widget
- * 参考 puppeteer-real-browser 的 checkTurnstile 实现
+ *
+ * Turnstile 的 DOM 结构：
+ *   .cf-turnstile → closed shadow root → iframe[src*="challenges.cloudflare.com"]
+ * checkbox 位于 iframe 左侧约 30px、垂直居中处
+ *
+ * 策略优先级：
+ *   1. page.frames() 枚举 → 找 challenges.cloudflare.com frame → frameElement boundingBox
+ *   2. 主页面查询所有 iframe → 按 src 或尺寸匹配 Turnstile widget
+ *   3. 扫描页面中 290-310px 宽的 div（最后降级手段）
  */
 async function clickTurnstile(page) {
   try {
-    // 方法1：通过 cf-turnstile-response 隐藏输入框定位 widget
-    const elements = await page.$$('[name="cf-turnstile-response"]');
+    // 方法1：通过 page.frames() 找到 Turnstile iframe 并获取其屏幕位置
+    log('方法1：通过 page.frames() 查找 Turnstile iframe...');
+    const frames = page.frames();
+    const turnstileFrames = frames.filter((f) =>
+      f.url().includes('challenges.cloudflare.com'),
+    );
+    log(`发现 ${turnstileFrames.length} 个 Turnstile frame（共 ${frames.length} 个 frame）`);
 
-    if (elements.length > 0) {
-      for (const element of elements) {
-        try {
-          const parentElement = await element.evaluateHandle((el) => el.parentElement);
-          const box = await parentElement.boundingBox();
-          if (box) {
-            // checkbox 位于 widget 左侧偏移约 30px 处，垂直居中
-            const clickX = box.x + 30;
-            const clickY = box.y + box.height / 2;
-            log(`Turnstile widget 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
-              `尺寸: ${box.width.toFixed(0)}x${box.height.toFixed(0)}, ` +
-              `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-            await page.mouse.click(clickX, clickY);
-            return true;
-          }
-        } catch (e) {
-          log(`通过 cf-turnstile-response 点击失败: ${e.message}`);
+    for (const frame of turnstileFrames) {
+      try {
+        // 获取 iframe 对应的 DOM element（frameElement），再获取其在主页面中的 boundingBox
+        const frameHandle = await frame.frameElement();
+        if (!frameHandle) continue;
+
+        const box = await frameHandle.boundingBox();
+        if (!box || box.width < 10 || box.height < 10) {
+          log(`Turnstile iframe boundingBox 无效: ${JSON.stringify(box)}`);
+          continue;
         }
+
+        // checkbox 位于 iframe 左侧偏移约 30px、垂直居中
+        const clickX = box.x + 30;
+        const clickY = box.y + box.height / 2;
+        log(`Turnstile iframe 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
+          `尺寸: ${box.width.toFixed(0)}x${box.height.toFixed(0)}, ` +
+          `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+        await page.mouse.click(clickX, clickY);
+        return true;
+      } catch (e) {
+        log(`通过 frame.frameElement() 点击失败: ${e.message}`);
       }
     }
 
-    // 方法2（降级）：扫描主页面 div，寻找 Turnstile widget 特征
-    // Turnstile widget 通常是 290-310px 宽、无子元素、margin=0 padding=0 的 div
-    log('降级方式：扫描页面 div 定位 Turnstile widget...');
-    const coordinates = await page.evaluate(() => {
+    // 方法2：在主页面中查询所有 iframe，按 src 或尺寸特征匹配 Turnstile widget
+    log('方法2：查找页面中的 Turnstile iframe 元素...');
+    const iframeBoxes = await page.evaluate(() => {
+      const results = [];
+      document.querySelectorAll('iframe').forEach((iframe) => {
+        try {
+          const src = iframe.src || '';
+          const rect = iframe.getBoundingClientRect();
+          // Turnstile iframe 特征：src 包含 cloudflare 或尺寸约 300x65
+          const isCfSrc = src.includes('challenges.cloudflare.com') || src.includes('turnstile');
+          const isCfSize = rect.width > 250 && rect.width <= 350 && rect.height > 50 && rect.height <= 80;
+          if (isCfSrc || isCfSize) {
+            results.push({
+              x: rect.x, y: rect.y, w: rect.width, h: rect.height,
+              src: src.substring(0, 80),
+              match: isCfSrc ? 'src' : 'size',
+            });
+          }
+        } catch (_) { /* 忽略 */ }
+      });
+      return results;
+    });
+
+    if (iframeBoxes.length > 0) {
+      // 优先选择 src 匹配的，其次选尺寸匹配的
+      iframeBoxes.sort((a, b) => (a.match === 'src' ? -1 : 1) - (b.match === 'src' ? -1 : 1));
+      for (const item of iframeBoxes) {
+        const clickX = item.x + 30;
+        const clickY = item.y + item.h / 2;
+        log(`找到候选 iframe [${item.match}]: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
+          `${item.w.toFixed(0)}x${item.h.toFixed(0)} src=${item.src}, ` +
+          `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+        await page.mouse.click(clickX, clickY);
+        return true;
+      }
+    }
+
+    // 方法3（最终降级）：扫描主页面 div，寻找 Turnstile widget 壳层特征
+    // Turnstile 外层 div 通常是 290-310px 宽、50-80px 高
+    log('方法3（降级）：扫描页面 div 定位 Turnstile widget...');
+    const divBoxes = await page.evaluate(() => {
       const coords = [];
       document.querySelectorAll('div').forEach((item) => {
         try {
           const rect = item.getBoundingClientRect();
-          const css = window.getComputedStyle(item);
           if (
-            css.margin === '0px' &&
-            css.padding === '0px' &&
-            rect.width > 290 &&
-            rect.width <= 310 &&
-            !item.querySelector('*')
+            rect.width > 290 && rect.width <= 310 &&
+            rect.height > 50 && rect.height <= 80
           ) {
             coords.push({ x: rect.x, y: rect.y, w: rect.width, h: rect.height });
           }
@@ -349,10 +399,13 @@ async function clickTurnstile(page) {
       return coords;
     });
 
-    if (coordinates.length > 0) {
-      for (const item of coordinates) {
-        log(`降级定位到候选 widget: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ${item.w.toFixed(0)}x${item.h.toFixed(0)}`);
-        await page.mouse.click(item.x + 30, item.y + item.h / 2);
+    if (divBoxes.length > 0) {
+      for (const item of divBoxes) {
+        const clickX = item.x + 30;
+        const clickY = item.y + item.h / 2;
+        log(`降级定位到候选 div: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
+          `${item.w.toFixed(0)}x${item.h.toFixed(0)}, 点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+        await page.mouse.click(clickX, clickY);
       }
       return true;
     }
