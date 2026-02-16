@@ -453,6 +453,72 @@ async function clickTurnstile(page) {
   }
 }
 
+// ============================================================
+// screenX/screenY 补丁：通过 CDP 注入到 Turnstile iframe
+// ============================================================
+// Chrome 扩展（turnstile-patch/）的 content_scripts 无法注入到
+// closed shadow root 内动态创建的 iframe 中。
+// 改用 Puppeteer frame.evaluate() 直接在 Turnstile iframe 执行修复代码。
+
+/** screenX/screenY 修复脚本（与 turnstile-patch/content.js 相同逻辑） */
+const SCREEN_PATCH_SCRIPT = `(() => {
+  const origXDesc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
+  const origYDesc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenY');
+  if (!origXDesc || !origXDesc.get) return;
+  const cache = new WeakMap();
+  function patched(event) {
+    if (cache.has(event)) return cache.get(event);
+    const cx = event.clientX || 0, cy = event.clientY || 0;
+    const r = {
+      screenX: cx + (window.screenX || 0) + Math.floor(Math.random() * 3) - 1,
+      screenY: cy + (window.screenY || 0) + Math.floor(Math.random() * 3) - 1,
+    };
+    cache.set(event, r);
+    return r;
+  }
+  function suspicious(orig, client) { return orig === 0 || orig === client; }
+  Object.defineProperties(MouseEvent.prototype, {
+    screenX: { configurable: true, enumerable: true,
+      get() { const o = origXDesc.get.call(this); return suspicious(o, this.clientX) ? patched(this).screenX : o; }},
+    screenY: { configurable: true, enumerable: true,
+      get() { const o = origYDesc.get.call(this); return suspicious(o, this.clientY) ? patched(this).screenY : o; }},
+  });
+})()`;
+
+/**
+ * 在所有 Turnstile iframe 中注入 screenX/screenY 修复补丁
+ * 同时也注入到主页面和所有子 frame（确保全覆盖）
+ */
+async function injectScreenPatchToTurnstileFrames(page) {
+  const frames = page.frames();
+  let injected = 0;
+
+  for (const frame of frames) {
+    try {
+      // 检查是否已经注入过（避免重复）
+      const alreadyPatched = await frame.evaluate(() => {
+        const desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
+        return desc && desc.get && !desc.get.toString().includes('native code');
+      }).catch(() => false);
+
+      if (alreadyPatched) {
+        log(`frame [${frame.url().substring(0, 60)}] 已有补丁，跳过`);
+        continue;
+      }
+
+      await frame.evaluate(SCREEN_PATCH_SCRIPT);
+      injected++;
+      const isTurnstile = frame.url().includes('challenges.cloudflare.com');
+      log(`已注入 screenX/screenY 补丁到 frame${isTurnstile ? '（Turnstile ✓）' : ''}: ${frame.url().substring(0, 60)}`);
+    } catch (e) {
+      // 某些 frame 可能无法执行（如 about:blank 或已卸载）
+      log(`无法注入补丁到 frame [${frame.url().substring(0, 40)}]: ${e.message}`);
+    }
+  }
+
+  log(`screenX/screenY 补丁注入完成：${injected}/${frames.length} 个 frame`);
+}
+
 async function waitForTurnstile(page) {
   log('正在处理 Cloudflare Turnstile...');
 
@@ -475,6 +541,11 @@ async function waitForTurnstile(page) {
   // 等待 Turnstile widget 渲染和 iframe 加载
   log('等待 Turnstile 渲染...');
   await sleep(5000);
+
+  // 关键步骤：通过 CDP 直接在 Turnstile iframe 中注入 screenX/screenY 修复补丁
+  // Chrome 扩展无法注入 closed shadow root 内动态创建的 iframe，
+  // 但 Puppeteer 的 frame.evaluate() 通过 CDP 绕过同源策略可以直接执行
+  await injectScreenPatchToTurnstileFrames(page);
 
   // 截图诊断：确认 Turnstile 的视觉状态
   try {
@@ -516,6 +587,8 @@ async function waitForTurnstile(page) {
     const elapsed = Date.now() - startTime;
     if (elapsed > 8000 && elapsed % 8000 < 1000) {
       log(`令牌未生成，第 ${Math.floor(elapsed / 8000)} 次重试点击...`);
+      // 重新注入补丁（Turnstile 可能重新加载 iframe）
+      await injectScreenPatchToTurnstileFrames(page);
       await clickTurnstile(page);
     }
 
