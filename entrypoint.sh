@@ -33,7 +33,6 @@ start_chrome() {
         --no-sandbox \
         --disable-dev-shm-usage \
         --disable-gpu \
-        --headless=new \
         --window-size=1280,900 \
         &>/tmp/chrome.log &
     CHROME_PID=$!

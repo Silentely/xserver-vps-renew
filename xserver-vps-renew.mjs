@@ -407,6 +407,15 @@ async function handleCaptchaPage(page) {
 
   // 提交表单
   log('正在提交表单...');
+  // Turnstile 超时时按钮可能仍为 disabled，用 JS 强制移除限制并提交
+  await page.evaluate(() => {
+    const btn = document.querySelector('input[type="submit"], button[type="submit"]');
+    if (btn) {
+      btn.disabled = false;
+      btn.removeAttribute('disabled');
+    }
+  });
+
   const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
   if (!submitBtn) throw new Error('未找到提交按钮。');
 
