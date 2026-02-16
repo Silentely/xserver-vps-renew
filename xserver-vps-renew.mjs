@@ -33,9 +33,6 @@ const CONFIG = {
   PASSWORD: process.env.XSERVER_PASSWORD || '',
   CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',
 
-  // cf-clearance-scraper 服务地址（用于获取 Turnstile token）
-  CF_SOLVER_URL: process.env.CF_SOLVER_URL || 'http://cf-solver:3000/cf-clearance-scraper',
-
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
 
@@ -287,47 +284,129 @@ async function recognizeCaptcha(imgSrc) {
 }
 
 // ============================================================
-// 步骤 5：等待 Cloudflare Turnstile 通过
+// 步骤 5：等待 Cloudflare Turnstile 通过（CDP 精确点击方案）
 // ============================================================
 
 /**
- * 通过 cf-clearance-scraper 服务获取 Turnstile token
+ * 通过 CDP 在 Turnstile iframe 内精确点击 checkbox
+ * 原理参考 cf-autoclick：注入脚本找到 shadow DOM 中的 checkbox 坐标，
+ * 再用 CDP Input.dispatchMouseEvent 模拟真人点击
  */
-async function solveTurnstileViaCfSolver(pageUrl, siteKey) {
-  // 先尝试轻量模式，失败再用完整页面加载模式
-  for (const mode of ['turnstile-min', 'turnstile-max']) {
-    log(`正在调用 cf-solver 获取 Turnstile token (mode: ${mode}, siteKey: ${siteKey})...`);
-
-    try {
-      const res = await fetch(CONFIG.CF_SOLVER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: pageUrl,
-          siteKey,
-          mode,
-        }),
-      });
-
-      if (!res.ok) {
-        const body = await res.text();
-        err(`cf-solver (${mode}) 响应 ${res.status}: ${body}`);
-        continue;
-      }
-
-      const data = await res.json();
-      if (data.code === 200 && data.token) {
-        log(`cf-solver (${mode}) 成功获取 token（长度: ${data.token.length}）`);
-        return data.token;
-      }
-
-      err(`cf-solver (${mode}) 返回异常: ${JSON.stringify(data).substring(0, 200)}`);
-    } catch (e) {
-      err(`cf-solver (${mode}) 调用失败: ${e.message}`);
-    }
+async function clickTurnstileCheckbox(page) {
+  const frames = page.frames();
+  const cfFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
+  if (!cfFrame) {
+    log('未找到 Turnstile iframe。');
+    return false;
   }
 
-  return null;
+  log('已找到 Turnstile iframe，正在注入点击脚本...');
+
+  // 在 Turnstile iframe 中注入脚本，hook attachShadow 并找到 checkbox 位置
+  const position = await cfFrame.evaluate(() => {
+    return new Promise((resolve) => {
+      let attempts = 0;
+      const maxAttempts = 50;
+
+      function tryFind() {
+        attempts++;
+
+        // 尝试在所有 shadow root 中找到 checkbox
+        const allElements = document.querySelectorAll('*');
+        for (const el of allElements) {
+          if (el.shadowRoot) {
+            const checkbox = el.shadowRoot.querySelector('input[type="checkbox"]');
+            if (checkbox) {
+              const rect = checkbox.getBoundingClientRect();
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              resolve({ x: centerX, y: centerY, found: true });
+              return;
+            }
+          }
+        }
+
+        // 也尝试直接查找（某些版本可能没有 shadow DOM）
+        const directCheckbox = document.querySelector('input[type="checkbox"]');
+        if (directCheckbox) {
+          const rect = directCheckbox.getBoundingClientRect();
+          resolve({
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+            found: true,
+          });
+          return;
+        }
+
+        if (attempts < maxAttempts) {
+          setTimeout(tryFind, 200);
+        } else {
+          resolve({ found: false });
+        }
+      }
+
+      tryFind();
+    });
+  }).catch(() => ({ found: false }));
+
+  if (!position.found) {
+    log('未在 Turnstile iframe 中找到 checkbox。');
+    return false;
+  }
+
+  log(`找到 Turnstile checkbox 位置: (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`);
+
+  // 计算 checkbox 在主页面中的绝对坐标
+  const iframeElement = await page.$('iframe[src*="challenges.cloudflare.com"]');
+  if (!iframeElement) {
+    log('未找到 Turnstile iframe 元素。');
+    return false;
+  }
+
+  const iframeBox = await iframeElement.boundingBox();
+  if (!iframeBox) {
+    log('无法获取 Turnstile iframe 的边界框。');
+    return false;
+  }
+
+  const absoluteX = iframeBox.x + position.x;
+  const absoluteY = iframeBox.y + position.y;
+
+  log(`计算绝对点击坐标: (${absoluteX.toFixed(1)}, ${absoluteY.toFixed(1)})`);
+
+  // 使用 CDP 发送精确鼠标事件（和真人点击无区别）
+  const client = await page.createCDPSession();
+
+  // 模拟鼠标移动到目标位置
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: absoluteX,
+    y: absoluteY,
+  });
+  await sleep(100 + Math.random() * 200);
+
+  // 鼠标按下
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: absoluteX,
+    y: absoluteY,
+    button: 'left',
+    clickCount: 1,
+  });
+  await sleep(50 + Math.random() * 100);
+
+  // 鼠标释放
+  await client.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: absoluteX,
+    y: absoluteY,
+    button: 'left',
+    clickCount: 1,
+  });
+
+  await client.detach();
+  log('CDP 鼠标点击已发送。');
+  return true;
 }
 
 async function waitForTurnstile(page) {
@@ -349,61 +428,38 @@ async function waitForTurnstile(page) {
     return true;
   }
 
-  // 第一阶段：等待 Stealth 模式自动通过（15 秒）
-  log('等待 Turnstile 自动验证（Stealth 模式，15s）...');
-  const quickTimeout = 15_000;
-  const startTime = Date.now();
+  // 等待 Turnstile iframe 加载
+  log('等待 Turnstile iframe 加载...');
+  await sleep(3000);
 
-  while (Date.now() - startTime < quickTimeout) {
+  // 尝试通过 CDP 精确点击 checkbox
+  const clicked = await clickTurnstileCheckbox(page);
+  if (clicked) {
+    log('CDP 点击完成，等待 Turnstile 令牌生成...');
+  }
+
+  // 轮询等待令牌生成
+  const startTime = Date.now();
+  while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
     const token = await page
       .$eval('[name="cf-turnstile-response"]', (el) => el.value)
       .catch(() => '');
 
     if (token) {
-      log(`Turnstile 令牌已自动生成！（耗时 ${Date.now() - startTime}ms）`);
+      log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
       return true;
     }
+
+    // 每 5 秒重试点击一次
+    if ((Date.now() - startTime) % 5000 < 1000 && Date.now() - startTime > 5000) {
+      await clickTurnstileCheckbox(page);
+    }
+
     await sleep(1000);
   }
 
-  // 第二阶段：调用 cf-solver 获取 token 并注入
-  log('Stealth 自动通过失败，切换到 cf-solver...');
-
-  // 提取 siteKey
-  const siteKey = await page
-    .$eval('.cf-turnstile', (el) => el.getAttribute('data-sitekey'))
-    .catch(() => null);
-
-  if (!siteKey) {
-    err('未找到 Turnstile siteKey，无法调用 cf-solver。');
-    return false;
-  }
-
-  const token = await solveTurnstileViaCfSolver(page.url(), siteKey);
-  if (!token) {
-    err('cf-solver 未返回有效 token。');
-    return false;
-  }
-
-  // 将 token 注入页面
-  await page.evaluate((t) => {
-    const el = document.querySelector('[name="cf-turnstile-response"]');
-    if (el) {
-      el.value = t;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    // 同时设置隐藏的 callback（部分 Turnstile 实现会检查）
-    if (typeof window.turnstileCallback === 'function') {
-      window.turnstileCallback(t);
-    }
-  }, token);
-
-  log('cf-solver token 已注入页面。');
-
-  // 等待按钮启用
-  await sleep(1000);
-  return true;
+  err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），将尝试强制提交。`);
+  return false;
 }
 
 // ============================================================

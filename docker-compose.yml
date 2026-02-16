@@ -1,25 +1,10 @@
 services:
-  # Cloudflare Turnstile token 解析服务
-  cf-solver:
-    image: zfcsoftware/cf-clearance-scraper:latest
-    container_name: cf-solver
-    environment:
-      - PORT=3000
-      - browserLimit=5
-      - timeOut=60000
-    shm_size: "2gb"
-    restart: unless-stopped
-
   xserver-renew:
     image: debug502/xserver-vps-renew:latest
     container_name: xserver-vps-renew
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
-      # cf-solver 地址，脚本用它获取 Turnstile token
-      - CF_SOLVER_URL=http://cf-solver:3000/cf-clearance-scraper
-    depends_on:
-      - cf-solver
     volumes:
       - chrome-data:/data/chrome-profile
     shm_size: "2gb"
