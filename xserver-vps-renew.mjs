@@ -21,6 +21,7 @@ import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
 import { existsSync, rmSync } from 'fs';
+import { execSync } from 'child_process';
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
@@ -287,15 +288,14 @@ async function recognizeCaptcha(imgSrc) {
 }
 
 // ============================================================
-// 步骤 5：Turnstile 处理（attachShadow hook + CDP 精确点击）
+// 步骤 5：Turnstile 处理（CDP DOM 穿透定位 + xdotool 真实点击）
 // ============================================================
-// 灵感来源：cf-autoclick (lindacipo/cf-autoclick)
 // 核心思路：
-//   1. 在所有 frame 的 document_start 注入 attachShadow hook
-//   2. hook 拦截 closed shadow DOM 创建，用 MutationObserver 捕获 checkbox
-//   3. 计算 checkbox 在 iframe 内的坐标比例
-//   4. 通过 CDP DOM.getFlattenedDocument(pierce:true) 获取 iframe 绝对位置
-//   5. 结合比例计算精确坐标，用 CDP Input.dispatchMouseEvent 点击
+//   1. 通过 browser.targets() 找到 Turnstile OOPIF target
+//   2. 用 CDP DOM.getDocument({pierce:true}) 穿透 closed shadow root
+//   3. 递归查找 INPUT[type=checkbox] 获取 nodeId
+//   4. 用 DOM.getBoxModel 获取 checkbox 精确坐标
+//   5. 通过 xdotool 发送真实 X11 鼠标事件（避免 screenX/screenY 检测）
 
 /**
  * 注入 attachShadow hook 到所有 frame（在 document_start 阶段执行）
@@ -639,59 +639,59 @@ async function clickTurnstileWithCDP(page) {
     }
 
     // DOM.getBoxModel 返回的是视口坐标（CSS pixels relative to viewport）
-    // Input.dispatchMouseEvent 也使用视口坐标，所以无需额外转换
-    const clickX = finalX1 + finalWidth * xRatio;
-    const clickY = finalY1 + finalHeight * yRatio;
+    // xdotool 需要屏幕坐标，需加上 Chrome 窗口位置和标题栏偏移
+    let windowOffsetX = 0;
+    let windowOffsetY = 0;
+    try {
+      const winInfo = await client.send('Runtime.evaluate', {
+        expression: 'JSON.stringify({ screenX: window.screenX, screenY: window.screenY, outerW: window.outerWidth, outerH: window.outerHeight, innerW: window.innerWidth, innerH: window.innerHeight })',
+        returnByValue: true,
+      });
+      const win = JSON.parse(winInfo.result.value);
+      // Chrome 窗口在屏幕上的位置 + 标题栏/工具栏高度
+      windowOffsetX = win.screenX;
+      windowOffsetY = win.screenY + (win.outerH - win.innerH);
+      log(`Chrome 窗口偏移: screenX=${win.screenX}, screenY=${win.screenY}, 标题栏高度=${win.outerH - win.innerH}, 最终偏移: (${windowOffsetX}, ${windowOffsetY})`);
+    } catch (e) {
+      log(`获取窗口偏移失败，假设无偏移: ${e.message}`);
+    }
 
-    log(`CDP 精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)}) [iframe: (${finalX1.toFixed(0)},${finalY1.toFixed(0)}) ${finalWidth}x${finalHeight}]`);
+    const clickX = finalX1 + finalWidth * xRatio + windowOffsetX;
+    const clickY = finalY1 + finalHeight * yRatio + windowOffsetY;
 
-    // 模拟人类鼠标移动轨迹（从页面随机位置出发）
-    const startX = clickX - 80 - Math.random() * 150;
-    const startY = clickY - 40 - Math.random() * 80;
+    log(`精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)}) [iframe: (${finalX1.toFixed(0)},${finalY1.toFixed(0)}) ${finalWidth}x${finalHeight}]`);
+
+    // 使用 xdotool 发送真实 X11 鼠标事件
+    // CDP Input.dispatchMouseEvent 的 screenX/screenY 相对于 iframe（<100），
+    // 会被 Cloudflare Turnstile 检测为自动化行为。
+    // xdotool 产生真正的 X11 事件，screenX/screenY 是屏幕绝对坐标（几百以上），不会触发检测。
+    const intX = Math.round(clickX);
+    const intY = Math.round(clickY);
+
+    // 模拟人类鼠标移动轨迹（从随机位置出发，贝塞尔曲线移动）
+    const startX = intX - 80 - Math.floor(Math.random() * 150);
+    const startY = intY - 40 - Math.floor(Math.random() * 80);
     const steps = 8 + Math.floor(Math.random() * 8);
 
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
-      // 贝塞尔曲线模拟（非线性移动）
       const easeT = t * t * (3 - 2 * t); // smoothstep
-      const curX = startX + (clickX - startX) * easeT + (Math.random() - 0.5) * 4;
-      const curY = startY + (clickY - startY) * easeT + (Math.random() - 0.5) * 4;
-      await client.send('Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: curX,
-        y: curY,
-      });
+      const curX = Math.round(startX + (intX - startX) * easeT + (Math.random() - 0.5) * 4);
+      const curY = Math.round(startY + (intY - startY) * easeT + (Math.random() - 0.5) * 4);
+      try {
+        execSync(`DISPLAY=:99 xdotool mousemove --sync ${curX} ${curY}`, { timeout: 2000 });
+      } catch (_) { /* 忽略移动错误 */ }
       await sleep(10 + Math.random() * 25);
     }
 
     // 最终精确移动到目标
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: clickX,
-      y: clickY,
-    });
+    execSync(`DISPLAY=:99 xdotool mousemove --sync ${intX} ${intY}`, { timeout: 2000 });
     await sleep(80 + Math.random() * 120);
 
-    // 鼠标按下
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: clickX,
-      y: clickY,
-      button: 'left',
-      clickCount: 1,
-    });
-    await sleep(40 + Math.random() * 80);
+    // 真实鼠标点击
+    execSync(`DISPLAY=:99 xdotool click 1`, { timeout: 2000 });
 
-    // 鼠标释放
-    await client.send('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x: clickX,
-      y: clickY,
-      button: 'left',
-      clickCount: 1,
-    });
-
-    log('CDP 精确点击已完成！');
+    log('xdotool 真实鼠标点击已完成！');
     return true;
   } catch (e) {
     err(`CDP 点击异常: ${e.message}`);
@@ -872,6 +872,7 @@ async function main() {
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
         '--window-size=1280,900',
+        '--window-position=0,0',
       ],
       defaultViewport: { width: 1280, height: 900 },
     });
