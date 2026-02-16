@@ -8,7 +8,7 @@ LABEL description="Xserver VPS 自动续期 - Puppeteer Stealth"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        wget gnupg2 ca-certificates fonts-liberation \
-       xvfb dbus cron procps curl xdotool fluxbox \
+       xvfb dbus cron procps curl \
     && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
        | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] \
@@ -29,6 +29,7 @@ RUN npm install --omit=dev && npm cache clean --force
 
 # 复制项目文件
 COPY xserver-vps-renew.mjs .
+COPY turnstile-patch/ turnstile-patch/
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 

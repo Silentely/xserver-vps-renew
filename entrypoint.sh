@@ -4,35 +4,13 @@ set -e
 LOG_PREFIX="[entrypoint]"
 
 # ============================================================
-# 启动虚拟显示器（Xvfb）+ 窗口管理器（fluxbox）
-# Xvfb 提供虚拟 X11 显示，fluxbox 管理窗口焦点
-# xdotool 需要窗口管理器才能正确路由鼠标事件到 Chrome 窗口
+# 启动虚拟显示器（Xvfb）
+# Xvfb 提供虚拟 X11 显示（headless:false 模式需要）
 # ============================================================
 echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
 rm -f /tmp/.X99-lock 2>/dev/null || true
 Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 XVFB_PID=$!
-sleep 1
-
-# 配置 fluxbox 去除 Chrome 窗口装饰（无标题栏），
-# 使 viewport 坐标 = 窗口坐标 = 屏幕坐标，方便 xdotool 精确点击
-mkdir -p /root/.fluxbox
-cat > /root/.fluxbox/apps <<'FBAPPS'
-[app] (name=google-chrome)
-  [Deco]  {NONE}
-  [Dimensions] {1280 900}
-  [Position] (UPPERLEFT) {0 0}
-[end]
-[app] (name=chromium)
-  [Deco]  {NONE}
-  [Dimensions] {1280 900}
-  [Position] (UPPERLEFT) {0 0}
-[end]
-FBAPPS
-
-echo "$LOG_PREFIX 启动 fluxbox 窗口管理器..."
-DISPLAY=:99 fluxbox &
-FLUXBOX_PID=$!
 sleep 1
 
 # ============================================================
@@ -49,7 +27,6 @@ run_renew() {
 # ============================================================
 cleanup() {
     echo "$LOG_PREFIX 收到退出信号，正在清理..."
-    [ -n "$FLUXBOX_PID" ] && kill "$FLUXBOX_PID" 2>/dev/null || true
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
     exit 0
 }

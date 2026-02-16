@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "MouseEvent screenX/screenY Patcher",
+  "version": "1.0",
+  "description": "修复 CDP Input.dispatchMouseEvent 产生的 MouseEvent.screenX/screenY 异常",
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ]
+}

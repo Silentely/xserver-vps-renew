@@ -21,7 +21,6 @@ import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
 import { existsSync, rmSync } from 'fs';
-import { execSync } from 'child_process';
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
@@ -288,469 +287,81 @@ async function recognizeCaptcha(imgSrc) {
 }
 
 // ============================================================
-// 步骤 5：Turnstile 处理（CDP DOM 穿透定位 + xdotool 真实点击）
+// 步骤 5：Turnstile 处理（Chrome 扩展修复 screenX/screenY + page.mouse.click）
 // ============================================================
 // 核心思路：
-//   1. 通过 browser.targets() 找到 Turnstile OOPIF target
-//   2. 用 CDP DOM.getDocument({pierce:true}) 穿透 closed shadow root
-//   3. 递归查找 INPUT[type=checkbox] 获取 nodeId
-//   4. 用 DOM.getBoxModel 获取 checkbox 精确坐标
-//   5. 通过 xdotool 发送真实 X11 鼠标事件（避免 screenX/screenY 检测）
+//   1. Chrome 扩展（turnstile-patch/）在 MAIN world 修复 MouseEvent.screenX/screenY
+//      使 CDP Input.dispatchMouseEvent 产生的鼠标事件携带正确的屏幕坐标
+//   2. 在主页面找到 cf-turnstile-response 输入框的父元素 boundingBox
+//   3. 用 page.mouse.click() 点击 widget 的 checkbox 区域（偏移 x+30, y+height/2）
+//   4. 降级方案：扫描主页面 div，找 290-310px 宽度的无子元素 div
 
 /**
- * 注入 attachShadow hook 到所有 frame（在 document_start 阶段执行）
- * 这个脚本会在 Turnstile iframe 内运行，拦截 closed shadow DOM，
- * 捕获 checkbox 位置并通过全局变量暴露坐标比例
+ * 在主页面层面定位并点击 Turnstile widget
+ * 参考 puppeteer-real-browser 的 checkTurnstile 实现
  */
-function getTurnstileHookScript() {
-  return `
-    (function() {
-      // 仅在 Turnstile iframe 内执行
-      if (window.top === window.self) return;
-      if (!window.location.href.includes('challenges.cloudflare.com')) return;
-
-      // 防止重复注入
-      if (window.__turnstileHooked) return;
-      window.__turnstileHooked = true;
-
-      // 随机化 MouseEvent 的 screenX/screenY，模拟真实环境
-      const screenX = 800 + Math.floor(Math.random() * 400);
-      const screenY = 400 + Math.floor(Math.random() * 200);
-      try {
-        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
-        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
-      } catch(e) {}
-
-      function runHook() {
-        try {
-          // 通过隐藏 iframe 获取原生 attachShadow，避免被其他 hook 干扰
-          let nativeAttachShadow;
-          try {
-            const tmpFrame = document.createElement('iframe');
-            tmpFrame.style.display = 'none';
-            document.body.appendChild(tmpFrame);
-            nativeAttachShadow = tmpFrame.contentWindow.Element.prototype.attachShadow;
-            document.body.removeChild(tmpFrame);
-          } catch(e) {
-            nativeAttachShadow = Element.prototype.attachShadow;
-          }
-
-          if (!nativeAttachShadow) return;
-
-          // Hook attachShadow：拦截所有 shadow root 创建
-          Element.prototype.attachShadow = function(...args) {
-            const shadowRoot = nativeAttachShadow.apply(this, args);
-            if (shadowRoot) {
-              // 立即检查是否已有 checkbox
-              const existing = shadowRoot.querySelector('input[type="checkbox"]');
-              if (existing) {
-                window.__turnstileCheckbox = existing;
-              } else {
-                // 用 MutationObserver 等待 checkbox 出现
-                const obs = new MutationObserver((_, o) => {
-                  const cb = shadowRoot.querySelector('input[type="checkbox"]');
-                  if (cb) {
-                    window.__turnstileCheckbox = cb;
-                    o.disconnect();
-                  }
-                });
-                obs.observe(shadowRoot, { childList: true, subtree: true });
-              }
-            }
-            return shadowRoot;
-          };
-        } catch(e) {}
-      }
-
-      // 确保 body 存在后再执行 hook
-      if (document.body) {
-        runHook();
-      } else {
-        const obs = new MutationObserver(() => {
-          if (document.body) { runHook(); obs.disconnect(); }
-        });
-        obs.observe(document.documentElement, { childList: true });
-      }
-
-      // 轮询检测 checkbox 并计算坐标比例，存入全局变量
-      (function pollCheckbox() {
-        if (window.__turnstileCheckbox) {
-          const cb = window.__turnstileCheckbox;
-          const rect = cb.getBoundingClientRect();
-          const w = window.innerWidth;
-          const h = window.innerHeight;
-          if (w > 0 && h > 0 && rect.width > 0) {
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + rect.height / 2;
-            window.__checkboxRatio = { x: cx / w, y: cy / h };
-          }
-          try { delete window.__turnstileCheckbox; } catch(e) {}
-        } else {
-          setTimeout(pollCheckbox, 200);
-        }
-      })();
-    })();
-  `;
-}
-
-/**
- * 通过 CDP 在 Turnstile iframe 的执行上下文中注入 attachShadow hook，
- * 获取 checkbox 的精确坐标比例，然后结合 iframe 绝对位置进行点击
- */
-async function clickTurnstileWithCDP(page) {
-  const client = await page.createCDPSession();
-
+async function clickTurnstile(page) {
   try {
-    await client.send('DOM.enable');
-    await client.send('Page.enable');
-    await client.send('Runtime.enable');
+    // 方法1：通过 cf-turnstile-response 隐藏输入框定位 widget
+    const elements = await page.$$('[name="cf-turnstile-response"]');
 
-    // 用 getFlattenedDocument 穿透所有 shadow DOM 和 iframe
-    const { nodes } = await client.send('DOM.getFlattenedDocument', {
-      depth: -1,
-      pierce: true,
-    });
-
-    // 查找 Turnstile iframe 节点
-    const iframeNode = nodes.find((n) => {
-      if (n.nodeName !== 'IFRAME') return false;
-      const attrs = n.attributes || [];
-      for (let i = 0; i < attrs.length; i += 2) {
-        if (attrs[i] === 'src' && attrs[i + 1].includes('challenges.cloudflare.com')) {
-          return true;
-        }
-      }
-      return false;
-    });
-
-    if (!iframeNode) {
-      const allIframes = nodes.filter((n) => n.nodeName === 'IFRAME');
-      const iframeSrcs = allIframes.map((n) => {
-        const attrs = n.attributes || [];
-        for (let i = 0; i < attrs.length; i += 2) {
-          if (attrs[i] === 'src') return attrs[i + 1];
-        }
-        return '(无src)';
-      });
-      log(`CDP 穿透扫描完成，共 ${nodes.length} 个节点，${allIframes.length} 个 iframe: ${iframeSrcs.join(' | ')}`);
-      return false;
-    }
-
-    log(`CDP 找到 Turnstile iframe (nodeId: ${iframeNode.nodeId})`);
-
-    // 获取 iframe 的精确位置
-    const { model } = await client.send('DOM.getBoxModel', {
-      nodeId: iframeNode.nodeId,
-    });
-
-    const [x1, y1, , , x2, y2] = model.content;
-    const iframeWidth = x2 - x1;
-    const iframeHeight = y2 - y1;
-
-    log(`Turnstile iframe 位置: (${x1},${y1}) 尺寸: ${iframeWidth}x${iframeHeight}`);
-
-    // 获取页面滚动偏移量，修正坐标
-    const scrollInfo = await client.send('Runtime.evaluate', {
-      expression: 'JSON.stringify({ scrollX: window.scrollX, scrollY: window.scrollY, innerW: window.innerWidth, innerH: window.innerHeight })',
-      returnByValue: true,
-    });
-    const scroll = JSON.parse(scrollInfo.result.value);
-    log(`页面滚动: scrollY=${scroll.scrollY}, 视口: ${scroll.innerW}x${scroll.innerH}`);
-
-    // 如果 Turnstile widget 不在可视区域内，先滚动到它
-    if (y1 > scroll.innerH || y1 < 0) {
-      log('Turnstile widget 不在可视区域，正在滚动...');
-      await client.send('Runtime.evaluate', {
-        expression: `window.scrollTo(0, ${Math.max(0, y1 - 300)})`,
-      });
-      await sleep(500);
-
-      // 重新获取坐标
-      const { model: newModel } = await client.send('DOM.getBoxModel', {
-        nodeId: iframeNode.nodeId,
-      });
-      const [nx1, ny1, , , nx2, ny2] = newModel.content;
-      log(`滚动后 iframe 位置: (${nx1},${ny1})`);
-      // 更新坐标（后续使用 viewport 坐标）
-    }
-
-    // ========== 核心：通过 OOPIF Target 进入 Turnstile iframe ==========
-    // Turnstile iframe 是跨域的（challenges.cloudflare.com），Chrome 会将其
-    // 放入独立进程（OOPIF），主页面的 getFrameTree 看不到它。
-    // 需要用 browser.targets() 找到该 target，attach 后在其中执行 JS。
-
-    let xRatio = null;
-    let yRatio = null;
-
-    // 方法1：通过 Puppeteer 的 browser.targets() 查找 OOPIF target
-    try {
-      const browser = page.browser();
-      const targets = browser.targets();
-      const turnstileTarget = targets.find(
-        (t) => t.url().includes('challenges.cloudflare.com')
-      );
-
-      if (turnstileTarget) {
-        log(`找到 Turnstile OOPIF target: ${turnstileTarget.url().substring(0, 80)}...`);
-
-        // 创建独立的 CDP session 连接到 Turnstile iframe 进程
-        const iframeClient = await turnstileTarget.createCDPSession();
-        await iframeClient.send('DOM.enable');
-        await iframeClient.send('Runtime.enable');
-
-        // ===== 方法1：直接用 CDP DOM API 穿透 closed shadow root 获取 checkbox 坐标 =====
-        // CDP DOM.getDocument(pierce:true) 能穿透 closed shadow DOM
-        // 这是 Runtime.evaluate (JS) 做不到的！
+    if (elements.length > 0) {
+      for (const element of elements) {
         try {
-          const { root } = await iframeClient.send('DOM.getDocument', {
-            depth: -1,
-            pierce: true,
-          });
-
-          // 递归查找 INPUT[type=checkbox] 节点
-          let checkboxNodeId = null;
-          function findCheckboxNode(node) {
-            if (checkboxNodeId) return;
-            if (node.nodeName === 'INPUT') {
-              const attrs = node.attributes || [];
-              for (let i = 0; i < attrs.length; i += 2) {
-                if (attrs[i] === 'type' && attrs[i + 1] === 'checkbox') {
-                  checkboxNodeId = node.nodeId;
-                  return;
-                }
-              }
-            }
-            // 穿透 shadow root
-            if (node.shadowRoots) {
-              for (const sr of node.shadowRoots) {
-                findCheckboxNode(sr);
-              }
-            }
-            // 穿透 contentDocument（嵌套 iframe）
-            if (node.contentDocument) {
-              findCheckboxNode(node.contentDocument);
-            }
-            // 遍历子节点
-            for (const child of (node.children || [])) {
-              findCheckboxNode(child);
-            }
-          }
-          findCheckboxNode(root);
-
-          if (checkboxNodeId) {
-            log(`✅ CDP 穿透找到 checkbox nodeId: ${checkboxNodeId}`);
-
-            // 获取 checkbox 在 OOPIF viewport 中的位置
-            const { model: cbModel } = await iframeClient.send('DOM.getBoxModel', {
-              nodeId: checkboxNodeId,
-            });
-
-            const [cbX1, cbY1, , , cbX2, cbY2] = cbModel.content;
-            const cbWidth = cbX2 - cbX1;
-            const cbHeight = cbY2 - cbY1;
-            const cbCenterX = cbX1 + cbWidth / 2;
-            const cbCenterY = cbY1 + cbHeight / 2;
-
-            log(`checkbox 在 iframe 内位置: (${cbX1.toFixed(1)},${cbY1.toFixed(1)}) 尺寸: ${cbWidth.toFixed(0)}x${cbHeight.toFixed(0)} 中心: (${cbCenterX.toFixed(1)},${cbCenterY.toFixed(1)})`);
-
-            // 获取 iframe 自身的尺寸来计算比例
-            const iframeViewport = await iframeClient.send('Runtime.evaluate', {
-              expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight })',
-              returnByValue: true,
-            });
-            const ivp = JSON.parse(iframeViewport.result.value);
-            log(`iframe 内部视口: ${ivp.w}x${ivp.h}`);
-
-            if (ivp.w > 0 && ivp.h > 0) {
-              xRatio = cbCenterX / ivp.w;
-              yRatio = cbCenterY / ivp.h;
-              log(`✅ 精确 checkbox 坐标比例: x=${xRatio.toFixed(4)}, y=${yRatio.toFixed(4)}`);
-            }
-          } else {
-            log('CDP DOM 穿透未找到 checkbox INPUT 节点');
-
-            // 输出 DOM 树诊断
-            const treeInfo = [];
-            function collectNodeInfo(node, depth = 0) {
-              const tag = node.nodeName || '';
-              const attrs = (node.attributes || []);
-              const attrPairs = [];
-              for (let i = 0; i < attrs.length; i += 2) {
-                attrPairs.push(attrs[i]);
-              }
-              if (tag !== '#text' && tag !== '#comment') {
-                treeInfo.push(`${'  '.repeat(depth)}${tag}${attrPairs.length ? `[${attrPairs.join(',')}]` : ''}`);
-              }
-              if (node.shadowRoots) {
-                for (const sr of node.shadowRoots) {
-                  treeInfo.push(`${'  '.repeat(depth + 1)}#shadow-root (${sr.shadowRootType})`);
-                  collectNodeInfo(sr, depth + 2);
-                }
-              }
-              if (node.contentDocument) {
-                treeInfo.push(`${'  '.repeat(depth + 1)}#document (contentDocument)`);
-                collectNodeInfo(node.contentDocument, depth + 2);
-              }
-              for (const child of (node.children || [])) {
-                collectNodeInfo(child, depth + 1);
-              }
-            }
-            collectNodeInfo(root);
-            log(`OOPIF DOM 树结构 (${treeInfo.length} 行):\n${treeInfo.slice(0, 40).join('\n')}`);
+          const parentElement = await element.evaluateHandle((el) => el.parentElement);
+          const box = await parentElement.boundingBox();
+          if (box) {
+            // checkbox 位于 widget 左侧偏移约 30px 处，垂直居中
+            const clickX = box.x + 30;
+            const clickY = box.y + box.height / 2;
+            log(`Turnstile widget 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
+              `尺寸: ${box.width.toFixed(0)}x${box.height.toFixed(0)}, ` +
+              `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+            await page.mouse.click(clickX, clickY);
+            return true;
           }
         } catch (e) {
-          log(`CDP DOM 穿透查找失败: ${e.message}`);
+          log(`通过 cf-turnstile-response 点击失败: ${e.message}`);
         }
-
-        await iframeClient.detach().catch(() => {});
-      } else {
-        // 列出所有 targets 供诊断
-        const targetInfo = targets.map((t) => `${t.type()}:${t.url().substring(0, 60)}`).join(' | ');
-        log(`未找到 Turnstile OOPIF target。所有 targets: ${targetInfo}`);
       }
-    } catch (e) {
-      log(`OOPIF 方式查找失败: ${e.message}`);
     }
 
-    // 降级：使用标准 checkbox 坐标
-    if (xRatio === null || yRatio === null) {
-      xRatio = 0.085 + Math.random() * 0.02;
-      yRatio = 0.45 + Math.random() * 0.10;
-      log(`降级使用标准 checkbox 坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
-    }
-
-    // 重新获取最新的 iframe 位置（滚动可能已改变）
-    let finalX1 = x1;
-    let finalY1 = y1;
-    let finalWidth = iframeWidth;
-    let finalHeight = iframeHeight;
-
-    try {
-      const { model: freshModel } = await client.send('DOM.getBoxModel', {
-        nodeId: iframeNode.nodeId,
+    // 方法2（降级）：扫描主页面 div，寻找 Turnstile widget 特征
+    // Turnstile widget 通常是 290-310px 宽、无子元素、margin=0 padding=0 的 div
+    log('降级方式：扫描页面 div 定位 Turnstile widget...');
+    const coordinates = await page.evaluate(() => {
+      const coords = [];
+      document.querySelectorAll('div').forEach((item) => {
+        try {
+          const rect = item.getBoundingClientRect();
+          const css = window.getComputedStyle(item);
+          if (
+            css.margin === '0px' &&
+            css.padding === '0px' &&
+            rect.width > 290 &&
+            rect.width <= 310 &&
+            !item.querySelector('*')
+          ) {
+            coords.push({ x: rect.x, y: rect.y, w: rect.width, h: rect.height });
+          }
+        } catch (_) { /* 忽略 */ }
       });
-      [finalX1, finalY1, , , ] = freshModel.content;
-      const freshX2 = freshModel.content[4];
-      const freshY2 = freshModel.content[5];
-      finalWidth = freshX2 - finalX1;
-      finalHeight = freshY2 - finalY1;
-    } catch (e) {
-      log(`重新获取 iframe 位置失败: ${e.message}`);
-    }
+      return coords;
+    });
 
-    // DOM.getBoxModel 返回的是视口坐标（CSS pixels relative to viewport）
-    // xdotool 需要屏幕坐标，需加上 Chrome 窗口位置和标题栏偏移
-    let windowOffsetX = 0;
-    let windowOffsetY = 0;
-    let chromeWindowId = null;
-    try {
-      // 查找 Chrome 窗口 ID — 优先匹配 Chrome/Chromium 类名
-      let winIdOutput = '';
-      try {
-        winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --class chrome 2>/dev/null || DISPLAY=:99 xdotool search --onlyvisible --class chromium 2>/dev/null || echo ""', { timeout: 3000, encoding: 'utf-8' }).trim();
-      } catch (_) {}
-
-      // 如果类名搜索失败，用窗口名搜索（排除 fluxbox 自身窗口）
-      if (!winIdOutput) {
-        try {
-          winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "xserver\\|Xserver\\|Chrome\\|chrome" 2>/dev/null | head -1', { timeout: 3000, encoding: 'utf-8' }).trim();
-        } catch (_) {}
+    if (coordinates.length > 0) {
+      for (const item of coordinates) {
+        log(`降级定位到候选 widget: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ${item.w.toFixed(0)}x${item.h.toFixed(0)}`);
+        await page.mouse.click(item.x + 30, item.y + item.h / 2);
       }
-
-      // 最后兜底：搜索所有可见窗口，取最大的那个（Chrome 通常是最大窗口）
-      if (!winIdOutput) {
-        try {
-          winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "." | tail -1', { timeout: 3000, encoding: 'utf-8' }).trim();
-        } catch (_) {}
-      }
-
-      if (winIdOutput) {
-        // 可能返回多行，取第一个
-        chromeWindowId = winIdOutput.split('\n')[0].trim();
-        log(`找到 Chrome 窗口 ID: ${chromeWindowId}`);
-
-        // 诊断：获取窗口信息
-        try {
-          const winName = execSync(`DISPLAY=:99 xdotool getwindowname ${chromeWindowId}`, { timeout: 2000, encoding: 'utf-8' }).trim();
-          const winGeom = execSync(`DISPLAY=:99 xdotool getwindowgeometry ${chromeWindowId}`, { timeout: 2000, encoding: 'utf-8' }).trim();
-          log(`窗口名称: "${winName}", 窗口几何: ${winGeom}`);
-        } catch (_) {}
-
-        execSync(`DISPLAY=:99 xdotool windowactivate --sync ${chromeWindowId}`, { timeout: 3000 });
-        execSync(`DISPLAY=:99 xdotool windowfocus --sync ${chromeWindowId}`, { timeout: 3000 });
-        log('Chrome 窗口已聚焦');
-      } else {
-        log('未找到 Chrome 窗口 ID，将尝试直接点击');
-      }
-    } catch (e) {
-      log(`窗口聚焦失败: ${e.message}`);
+      return true;
     }
 
-    try {
-      const winInfo = await client.send('Runtime.evaluate', {
-        expression: 'JSON.stringify({ screenX: window.screenX, screenY: window.screenY, outerW: window.outerWidth, outerH: window.outerHeight, innerW: window.innerWidth, innerH: window.innerHeight })',
-        returnByValue: true,
-      });
-      const win = JSON.parse(winInfo.result.value);
-      // Chrome 窗口在屏幕上的位置 + 标题栏/工具栏高度
-      // fluxbox [Deco] {NONE} 配置下标题栏高度为0，viewport 坐标 ≈ 屏幕坐标
-      const titleBarHeight = Math.max(0, win.outerH - win.innerH);
-      // screenY 可能为负（窗口超出屏幕顶部），取 max(0) 保护
-      windowOffsetX = Math.max(0, win.screenX);
-      windowOffsetY = Math.max(0, win.screenY) + titleBarHeight;
-      log(`Chrome 窗口偏移: screenX=${win.screenX}, screenY=${win.screenY}, 标题栏高度=${titleBarHeight}, 最终偏移: (${windowOffsetX}, ${windowOffsetY})`);
-    } catch (e) {
-      log(`获取窗口偏移失败，假设无偏移: ${e.message}`);
-    }
-
-    const clickX = finalX1 + finalWidth * xRatio + windowOffsetX;
-    const clickY = finalY1 + finalHeight * yRatio + windowOffsetY;
-
-    log(`精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)}) [iframe: (${finalX1.toFixed(0)},${finalY1.toFixed(0)}) ${finalWidth}x${finalHeight}]`);
-
-    // 使用 xdotool 发送真实 X11 鼠标事件
-    // CDP Input.dispatchMouseEvent 的 screenX/screenY 相对于 iframe（<100），
-    // 会被 Cloudflare Turnstile 检测为自动化行为。
-    // xdotool 产生真正的 X11 事件，screenX/screenY 是屏幕绝对坐标（几百以上），不会触发检测。
-    const intX = Math.round(clickX);
-    const intY = Math.round(clickY);
-
-    // 模拟人类鼠标移动轨迹（从随机位置出发，贝塞尔曲线移动）
-    const startX = intX - 80 - Math.floor(Math.random() * 150);
-    const startY = intY - 40 - Math.floor(Math.random() * 80);
-    const steps = 8 + Math.floor(Math.random() * 8);
-
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const easeT = t * t * (3 - 2 * t); // smoothstep
-      const curX = Math.round(startX + (intX - startX) * easeT + (Math.random() - 0.5) * 4);
-      const curY = Math.round(startY + (intY - startY) * easeT + (Math.random() - 0.5) * 4);
-      try {
-        execSync(`DISPLAY=:99 xdotool mousemove --sync ${curX} ${curY}`, { timeout: 2000 });
-      } catch (_) { /* 忽略移动错误 */ }
-      await sleep(10 + Math.random() * 25);
-    }
-
-    // 最终精确移动到目标
-    execSync(`DISPLAY=:99 xdotool mousemove --sync ${intX} ${intY}`, { timeout: 2000 });
-    await sleep(80 + Math.random() * 120);
-
-    // 真实鼠标点击
-    execSync(`DISPLAY=:99 xdotool click 1`, { timeout: 2000 });
-
-    // 验证鼠标最终位置
-    try {
-      const mousePos = execSync('DISPLAY=:99 xdotool getmouselocation', { timeout: 2000, encoding: 'utf-8' }).trim();
-      log(`xdotool 鼠标最终位置: ${mousePos}`);
-    } catch (_) {}
-
-    log('xdotool 真实鼠标点击已完成！');
-    return true;
-  } catch (e) {
-    err(`CDP 点击异常: ${e.message}`);
+    log('未找到 Turnstile widget 可点击区域');
     return false;
-  } finally {
-    await client.detach().catch(() => {});
+  } catch (e) {
+    err(`Turnstile 点击异常: ${e.message}`);
+    return false;
   }
 }
 
@@ -785,11 +396,11 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
-  // 先用 CDP 穿透扫描尝试点击
-  log('尝试 CDP 穿透点击...');
-  const clicked = await clickTurnstileWithCDP(page);
+  // 用 page.mouse.click() 点击 Turnstile checkbox
+  log('尝试点击 Turnstile...');
+  const clicked = await clickTurnstile(page);
   if (clicked) {
-    log('CDP 穿透点击完成，等待令牌生成...');
+    log('Turnstile 点击完成，等待令牌生成...');
 
     // 点击后截图诊断：观察 Turnstile 是否变成 spinner 或 checkmark
     await sleep(2000);
@@ -813,11 +424,11 @@ async function waitForTurnstile(page) {
       return true;
     }
 
-    // 每 8 秒重试 CDP 点击一次
+    // 每 8 秒重试点击一次
     const elapsed = Date.now() - startTime;
     if (elapsed > 8000 && elapsed % 8000 < 1000) {
-      log(`令牌未生成，第 ${Math.floor(elapsed / 8000)} 次重试 CDP 点击...`);
-      await clickTurnstileWithCDP(page);
+      log(`令牌未生成，第 ${Math.floor(elapsed / 8000)} 次重试点击...`);
+      await clickTurnstile(page);
     }
 
     await sleep(1000);
@@ -935,6 +546,9 @@ async function main() {
         '--disable-renderer-backgrounding',
         '--window-size=1280,900',
         '--window-position=0,0',
+        // Chrome 扩展：修复 CDP MouseEvent.screenX/screenY 异常（Turnstile 检测绕过）
+        '--load-extension=/app/turnstile-patch',
+        '--disable-extensions-except=/app/turnstile-patch',
       ],
       defaultViewport: { width: 1280, height: 900 },
     });
@@ -942,10 +556,6 @@ async function main() {
 
     const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
-
-    // 注入 Turnstile attachShadow hook（在所有 frame 的 document_start 阶段执行）
-    await page.evaluateOnNewDocument(getTurnstileHookScript());
-    log('Turnstile attachShadow hook 已注入。');
 
     // 步骤 1：登录
     await handleLogin(page);
