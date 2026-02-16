@@ -1,37 +1,26 @@
 #!/usr/bin/env node
 
 /**
- * Xserver VPS 自动续期脚本 - Playwright CDP 版本
+ * Xserver VPS 自动续期脚本 - Puppeteer Stealth 版本
  *
- * 通过 CDP 连接真实 Chrome 实例，全自动完成：
+ * 通过 puppeteer-extra-plugin-stealth 连接真实 Chrome，绕过 Cloudflare Turnstile：
  * 登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交
- *
- * 使用方式：
- *   方式A（连接已运行的 Chrome）：
- *     1. 启动 Chrome：google-chrome --remote-debugging-port=9222 --user-data-dir=$HOME/.config/xserver-chrome
- *     2. node xserver-vps-renew.mjs
- *
- *   方式B（脚本自动启动 Chrome）：
- *     node xserver-vps-renew.mjs --launch
  *
  * 环境变量：
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
  *   CDP_URL            - Chrome CDP 地址（默认 http://127.0.0.1:9222）
  *   CAPTCHA_API        - 验证码识别API地址
- *   CHROME_PATH        - Chrome 可执行文件路径（--launch 模式）
- *   CHROME_USER_DATA   - Chrome 用户数据目录（--launch 模式）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
  *   TG_CHAT_ID         - Telegram Chat ID（可选，启用通知）
- *
- * Cron 示例（每天东京时间 8:00）：
- *   0 23 * * * cd /path/to/scripts && node xserver-vps-renew.mjs --launch >> /var/log/xserver-renew.log 2>&1
  */
 
-import { chromium } from 'playwright';
-import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
+
+// 启用 Stealth 插件，隐藏自动化特征
+puppeteer.use(StealthPlugin());
 
 // ============================================================
 // 配置
@@ -49,9 +38,6 @@ const CONFIG = {
   NAVIGATION_TIMEOUT: 30_000,
   TURNSTILE_TIMEOUT: 60_000,
   CAPTCHA_MAX_RETRY: 3,
-
-  AUTO_LAUNCH: process.argv.includes('--launch'),
-  CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/tmp/xserver-chrome-profile',
 
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
@@ -104,53 +90,19 @@ async function notify(message) {
 }
 
 // ============================================================
-// Chrome 启动（--launch 模式）
+// 工具函数
 // ============================================================
 
-function findChromePath() {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-
-  const candidates = [
-    // Linux
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    // macOS
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ];
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) throw new Error('未找到 Chrome，请设置 CHROME_PATH 环境变量。');
-  return found;
+/** 等待导航完成 */
+async function waitForNav(page, timeout = CONFIG.NAVIGATION_TIMEOUT) {
+  return page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout }).catch(() => {});
 }
 
-/**
- * 启动 Chrome 进程并返回子进程句柄
- */
-function spawnChrome() {
-  const bin = findChromePath();
-  log(`正在启动 Chrome: ${bin}`);
-
-  const child = spawn(
-    bin,
-    [
-      `--remote-debugging-port=9222`,
-      `--user-data-dir=${CONFIG.CHROME_USER_DATA}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      // 窗口大小（即使是虚拟显示器也需要）
-      '--window-size=1280,900',
-    ],
-    { stdio: 'ignore', detached: true },
-  );
-
-  child.unref();
-  return child;
+/** 获取元素文本 */
+async function getText(page, selector) {
+  const el = await page.$(selector);
+  if (!el) return null;
+  return page.evaluate((e) => e.textContent.trim(), el);
 }
 
 // ============================================================
@@ -171,29 +123,24 @@ async function handleLogin(page) {
   }
 
   // 检查页面是否有登录错误
-  const errorEl = await page.$('.errorMessage');
-  if (errorEl) {
-    const text = await errorEl.textContent();
-    err(`登录页存在错误信息: ${text.trim()}`);
+  const errorText = await getText(page, '.errorMessage');
+  if (errorText) {
+    err(`登录页存在错误信息: ${errorText}`);
   }
 
   log('正在填充凭据并提交...');
-  await page.fill('#memberid', CONFIG.MEMBER_ID);
-  await page.fill('#user_password', CONFIG.PASSWORD);
+  await page.type('#memberid', CONFIG.MEMBER_ID, { delay: 50 });
+  await page.type('#user_password', CONFIG.PASSWORD, { delay: 50 });
 
   // 点击提交并等待导航
-  const submitBtn =
-    (await page.$('input[name="action_user_login"]')) ??
-    (await page.$('#login_area input[type="submit"]'));
+  const submitBtn = await page.$('input[name="action_user_login"]')
+    || await page.$('#login_area input[type="submit"]');
 
   if (submitBtn) {
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT }),
-      submitBtn.click(),
-    ]);
+    await Promise.all([waitForNav(page), submitBtn.click()]);
   } else {
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT }),
+      waitForNav(page),
       page.$eval('#login_area', (form) => form.submit()),
     ]);
   }
@@ -225,32 +172,37 @@ async function checkRenewalNeeded(page) {
   });
   log(`明天日期（东京时区）: ${tomorrow}`);
 
-  const row = await page.$('tr:has(.freeServerIco)');
-  if (!row) {
+  // 查找免费 VPS 行
+  const result = await page.evaluate(() => {
+    const row = document.querySelector('tr:has(.freeServerIco)');
+    if (!row) return null;
+
+    const termEl = row.querySelector('.contract__term');
+    const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
+
+    return {
+      expireDate: termEl ? termEl.textContent.trim() : null,
+      detailHref: detailLink ? detailLink.href : null,
+    };
+  });
+
+  if (!result) {
     log('未找到免费 VPS 条目。');
     return null;
   }
 
-  const expireDate = await row
-    .$eval('.contract__term', (el) => el.textContent.trim())
-    .catch(() => null);
-  log(`VPS 到期日期: ${expireDate ?? '未找到'}`);
+  log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
 
-  if (expireDate !== tomorrow) {
-    log(`无需续期（到期日 ${expireDate} ≠ 明天 ${tomorrow}）。`);
+  if (result.expireDate !== tomorrow) {
+    log(`无需续期（到期日 ${result.expireDate} ≠ 明天 ${tomorrow}）。`);
     return null;
   }
 
-  // 构造续期 URL
-  const detailHref = await row
-    .$eval('a[href^="/xapanel/xvps/server/detail?id="]', (el) => el.href)
-    .catch(() => null);
-
-  if (!detailHref) {
+  if (!result.detailHref) {
     throw new Error('检测到需续期但未找到续期链接。');
   }
 
-  const renewUrl = detailHref.replace('detail?id', 'freevps/extend/index?id_vps');
+  const renewUrl = result.detailHref.replace('detail?id', 'freevps/extend/index?id_vps');
   log(`需要续期！URL: ${renewUrl}`);
   return renewUrl;
 }
@@ -270,10 +222,7 @@ async function handleRenewalConfirm(page, renewUrl) {
   if (!extendBtn) throw new Error('未找到续期确认按钮。');
 
   log('正在点击续期确认...');
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT }),
-    extendBtn.click(),
-  ]);
+  await Promise.all([waitForNav(page), extendBtn.click()]);
 
   log(`已进入验证码页面: ${page.url()}`);
 }
@@ -318,7 +267,7 @@ async function waitForTurnstile(page) {
   const cfContainer = await page.$('.cf-turnstile');
   if (!cfContainer) {
     log('页面无 Turnstile 组件，跳过。');
-    return;
+    return true;
   }
 
   // 令牌是否已经存在
@@ -328,56 +277,48 @@ async function waitForTurnstile(page) {
 
   if (existingToken) {
     log('Turnstile 令牌已就绪。');
-    return;
+    return true;
   }
 
-  // 等待 Turnstile iframe 加载
-  log('等待 Turnstile 初始化...');
-  await sleep(2000);
+  // 等待 Turnstile 自动通过（Stealth 插件应该能让它自动通过）
+  log('等待 Turnstile 自动验证（Stealth 模式）...');
 
-  // 尝试与 Turnstile iframe 交互（点击复选框）
-  // 这是 Playwright 相比 UserScript 的核心优势：可以操作跨域 iframe
-  try {
-    const frames = page.frames();
-    const cfFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
+  const startTime = Date.now();
+  const pollInterval = 1000;
 
-    if (cfFrame) {
-      log('已找到 Turnstile iframe，尝试交互...');
+  while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
+    const token = await page
+      .$eval('[name="cf-turnstile-response"]', (el) => el.value)
+      .catch(() => '');
 
-      // Turnstile 复选框可能的选择器
-      const checkboxSelectors = [
-        'input[type="checkbox"]',
-        '.ctp-checkbox-label',
-        '#challenge-stage',
-      ];
+    if (token) {
+      log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
+      return true;
+    }
 
-      for (const sel of checkboxSelectors) {
-        const el = await cfFrame.$(sel);
-        if (el && (await el.isVisible().catch(() => false))) {
-          log(`点击 Turnstile 元素: ${sel}`);
-          await el.click();
-          break;
+    // 尝试点击 Turnstile iframe 中的复选框
+    try {
+      const frames = page.frames();
+      const cfFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
+      if (cfFrame) {
+        const checkbox = await cfFrame.$('input[type="checkbox"]');
+        if (checkbox) {
+          const box = await checkbox.boundingBox();
+          if (box) {
+            log('尝试点击 Turnstile 复选框...');
+            await checkbox.click();
+          }
         }
       }
+    } catch {
+      // 忽略 iframe 交互错误
     }
-  } catch (e) {
-    log(`Turnstile iframe 交互跳过（非交互模式或已自动通过）: ${e.message}`);
+
+    await sleep(pollInterval);
   }
 
-  // 轮询等待令牌生成
-  log('等待 Turnstile 令牌生成...');
-  try {
-    await page.waitForFunction(
-      () => {
-        const el = document.querySelector('[name="cf-turnstile-response"]');
-        return el && el.value && el.value.length > 0;
-      },
-      { timeout: CONFIG.TURNSTILE_TIMEOUT },
-    );
-    log('Turnstile 令牌已成功生成！');
-  } catch {
-    err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），将尝试强制提交。`);
-  }
+  err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），将尝试强制提交。`);
+  return false;
 }
 
 // ============================================================
@@ -388,43 +329,40 @@ async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
   // 等待验证码图片
-  const imgSelector = 'img[src^="data:image"], img[src^="data:"]';
-  await page.waitForSelector(imgSelector, { timeout: 10_000 });
-  const imgSrc = await page.$eval(imgSelector, (el) => el.src);
+  await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
+  const imgSrc = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
   if (!imgSrc) throw new Error('未找到验证码图片。');
 
   // 识别验证码
   const code = await recognizeCaptcha(imgSrc);
 
-  // 填入验证码
+  // 填入验证码（模拟人类输入）
   const captchaInput = await page.$('[placeholder*="上の画像"]');
   if (!captchaInput) throw new Error('未找到验证码输入框。');
-  await captchaInput.fill(code);
+  await captchaInput.click();
+  await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
   log('验证码已填入输入框。');
 
   // 等待 Turnstile
-  await waitForTurnstile(page);
+  const turnstilePassed = await waitForTurnstile(page);
 
   // 提交表单
   log('正在提交表单...');
-  // Turnstile 超时时按钮可能仍为 disabled，用 JS 强制移除限制并提交
-  await page.evaluate(() => {
-    const btn = document.querySelector('input[type="submit"], button[type="submit"]');
-    if (btn) {
-      btn.disabled = false;
-      btn.removeAttribute('disabled');
-    }
-  });
+  if (!turnstilePassed) {
+    // Turnstile 超时，强制移除 disabled 属性
+    await page.evaluate(() => {
+      const btn = document.querySelector('input[type="submit"], button[type="submit"]');
+      if (btn) {
+        btn.disabled = false;
+        btn.removeAttribute('disabled');
+      }
+    });
+  }
 
   const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
   if (!submitBtn) throw new Error('未找到提交按钮。');
 
-  await Promise.all([
-    page
-      .waitForNavigation({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT })
-      .catch(() => {}),
-    submitBtn.click(),
-  ]);
+  await Promise.all([waitForNav(page), submitBtn.click()]);
 
   log(`提交完成，当前页面: ${page.url()}`);
 
@@ -434,13 +372,12 @@ async function handleCaptchaPage(page) {
   const currentUrl = page.url();
 
   // 检查是否有错误信息
-  const errorPatterns = ['エラー', 'error', '失敗', 'トークン', '不正', 'もう一度'];
-  const hasError = errorPatterns.some((pat) => pageText.toLowerCase().includes(pat.toLowerCase()));
+  const errorPatterns = ['エラー', '失敗', '認証に失敗', '不正', 'もう一度'];
+  const hasError = errorPatterns.some((pat) => pageText.includes(pat));
 
   if (hasError || currentUrl.includes('/conf')) {
-    // 还在确认页或出现错误，说明提交失败
     const snippet = pageText.substring(0, 300).replace(/\s+/g, ' ').trim();
-    throw new Error(`续期提交后页面异常（可能 Turnstile 验证未通过）: ${snippet}`);
+    throw new Error(`续期提交失败（Turnstile 验证未通过）: ${snippet}`);
   }
 
   // 检查是否包含成功关键词
@@ -465,24 +402,18 @@ async function main() {
   }
 
   let browser = null;
-  let chromeProcess = null;
 
   try {
-    // --launch 模式：由脚本自行启动 Chrome
-    if (CONFIG.AUTO_LAUNCH) {
-      chromeProcess = spawnChrome();
-      log('等待 Chrome 启动...');
-      await sleep(4000);
-    }
-
-    // 通过 CDP 连接到 Chrome
+    // 通过 CDP 连接到 Chrome（由 entrypoint.sh 管理 Chrome 生命周期）
     log(`正在连接 CDP: ${CONFIG.CDP_URL}`);
-    browser = await chromium.connectOverCDP(CONFIG.CDP_URL);
-    log('CDP 连接成功！');
+    browser = await puppeteer.connect({
+      browserURL: CONFIG.CDP_URL,
+      defaultViewport: { width: 1280, height: 900 },
+    });
+    log('CDP 连接成功（Stealth 模式）！');
 
-    // 获取或创建页面
-    const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = await context.newPage();
+    // 创建新页面
+    const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // 步骤 1：登录
@@ -503,28 +434,22 @@ async function main() {
     await handleCaptchaPage(page);
 
     log('🎉 续期流程全部完成！');
-    await notify(`✅ <b>Xserver VPS 续期成功</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n📋 续期页面: ${page.url()}`);
+    await notify(
+      `✅ <b>Xserver VPS 续期成功</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n📋 续期页面: ${escapeHtml(page.url())}`,
+    );
     await page.close();
   } catch (e) {
     err(`流程异常终止: ${e.message}`);
-    await notify(`❌ <b>Xserver VPS 续期失败</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n💥 错误: <code>${escapeHtml(e.message)}</code>`);
+    await notify(
+      `❌ <b>Xserver VPS 续期失败</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n💥 错误: <code>${escapeHtml(e.message)}</code>`,
+    );
     process.exitCode = 1;
   } finally {
-    // 断开 CDP（不关闭浏览器）
     if (browser) {
       try {
-        browser.close();
+        browser.disconnect();
       } catch {
         /* 忽略断开连接错误 */
-      }
-    }
-    // --launch 模式下关闭 Chrome 进程
-    if (chromeProcess) {
-      log('正在关闭 Chrome 进程...');
-      try {
-        process.kill(-chromeProcess.pid, 'SIGTERM');
-      } catch {
-        chromeProcess.kill('SIGTERM');
       }
     }
     log('========== 流程结束 ==========');

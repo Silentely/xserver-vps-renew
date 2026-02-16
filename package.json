@@ -1,14 +1,16 @@
 {
   "name": "xserver-vps-renew",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "private": true,
-  "description": "Xserver VPS 自动续期 - Playwright CDP 版本",
+  "description": "Xserver VPS 自动续期 - Puppeteer Stealth 版本",
   "scripts": {
     "start": "node xserver-vps-renew.mjs",
     "start:launch": "node xserver-vps-renew.mjs --launch"
   },
   "dependencies": {
-    "playwright": "^1.52.0"
+    "puppeteer-core": "^24.2.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   }
 }

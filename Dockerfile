@@ -2,7 +2,7 @@ FROM node:22-slim
 
 # 元数据
 LABEL maintainer="adair"
-LABEL description="Xserver VPS 自动续期 - Playwright CDP"
+LABEL description="Xserver VPS 自动续期 - Puppeteer Stealth"
 
 # 安装 Chrome、Xvfb、cron 及依赖
 RUN apt-get update \
