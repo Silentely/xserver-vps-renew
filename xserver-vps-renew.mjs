@@ -288,75 +288,12 @@ async function recognizeCaptcha(imgSrc) {
 // ============================================================
 
 /**
- * 通过 CDP 在 Turnstile iframe 内精确点击 checkbox
- * 原理参考 cf-autoclick：注入脚本找到 shadow DOM 中的 checkbox 坐标，
- * 再用 CDP Input.dispatchMouseEvent 模拟真人点击
+ * 通过 CDP 点击 Turnstile iframe 中的 checkbox
+ * Turnstile checkbox 始终位于 iframe 内左侧固定位置（约 x:28, y:28）
+ * 直接根据 iframe 位置 + 偏移量用 CDP 发送点击事件
  */
 async function clickTurnstileCheckbox(page) {
-  const frames = page.frames();
-  const cfFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
-  if (!cfFrame) {
-    log('未找到 Turnstile iframe。');
-    return false;
-  }
-
-  log('已找到 Turnstile iframe，正在注入点击脚本...');
-
-  // 在 Turnstile iframe 中注入脚本，hook attachShadow 并找到 checkbox 位置
-  const position = await cfFrame.evaluate(() => {
-    return new Promise((resolve) => {
-      let attempts = 0;
-      const maxAttempts = 50;
-
-      function tryFind() {
-        attempts++;
-
-        // 尝试在所有 shadow root 中找到 checkbox
-        const allElements = document.querySelectorAll('*');
-        for (const el of allElements) {
-          if (el.shadowRoot) {
-            const checkbox = el.shadowRoot.querySelector('input[type="checkbox"]');
-            if (checkbox) {
-              const rect = checkbox.getBoundingClientRect();
-              const centerX = rect.left + rect.width / 2;
-              const centerY = rect.top + rect.height / 2;
-              resolve({ x: centerX, y: centerY, found: true });
-              return;
-            }
-          }
-        }
-
-        // 也尝试直接查找（某些版本可能没有 shadow DOM）
-        const directCheckbox = document.querySelector('input[type="checkbox"]');
-        if (directCheckbox) {
-          const rect = directCheckbox.getBoundingClientRect();
-          resolve({
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2,
-            found: true,
-          });
-          return;
-        }
-
-        if (attempts < maxAttempts) {
-          setTimeout(tryFind, 200);
-        } else {
-          resolve({ found: false });
-        }
-      }
-
-      tryFind();
-    });
-  }).catch(() => ({ found: false }));
-
-  if (!position.found) {
-    log('未在 Turnstile iframe 中找到 checkbox。');
-    return false;
-  }
-
-  log(`找到 Turnstile checkbox 位置: (${position.x.toFixed(1)}, ${position.y.toFixed(1)})`);
-
-  // 计算 checkbox 在主页面中的绝对坐标
+  // 找到 Turnstile iframe 元素
   const iframeElement = await page.$('iframe[src*="challenges.cloudflare.com"]');
   if (!iframeElement) {
     log('未找到 Turnstile iframe 元素。');
@@ -369,21 +306,26 @@ async function clickTurnstileCheckbox(page) {
     return false;
   }
 
-  const absoluteX = iframeBox.x + position.x;
-  const absoluteY = iframeBox.y + position.y;
+  // Turnstile checkbox 在 iframe 内的位置（左侧居中区域）
+  // 标准 Turnstile widget 尺寸约 300x65，checkbox 在 (28, 33) 附近
+  const offsetX = 28 + Math.random() * 6;
+  const offsetY = iframeBox.height / 2 + (Math.random() * 4 - 2);
 
-  log(`计算绝对点击坐标: (${absoluteX.toFixed(1)}, ${absoluteY.toFixed(1)})`);
+  const absoluteX = iframeBox.x + offsetX;
+  const absoluteY = iframeBox.y + offsetY;
 
-  // 使用 CDP 发送精确鼠标事件（和真人点击无区别）
+  log(`点击 Turnstile checkbox: iframe(${iframeBox.x.toFixed(0)},${iframeBox.y.toFixed(0)},${iframeBox.width.toFixed(0)}x${iframeBox.height.toFixed(0)}) → 点击(${absoluteX.toFixed(1)},${absoluteY.toFixed(1)})`);
+
+  // 使用 CDP 发送精确鼠标事件
   const client = await page.createCDPSession();
 
-  // 模拟鼠标移动到目标位置
+  // 模拟鼠标移动
   await client.send('Input.dispatchMouseEvent', {
     type: 'mouseMoved',
     x: absoluteX,
     y: absoluteY,
   });
-  await sleep(100 + Math.random() * 200);
+  await sleep(80 + Math.random() * 150);
 
   // 鼠标按下
   await client.send('Input.dispatchMouseEvent', {
@@ -393,7 +335,7 @@ async function clickTurnstileCheckbox(page) {
     button: 'left',
     clickCount: 1,
   });
-  await sleep(50 + Math.random() * 100);
+  await sleep(40 + Math.random() * 80);
 
   // 鼠标释放
   await client.send('Input.dispatchMouseEvent', {
