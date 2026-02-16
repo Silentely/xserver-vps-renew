@@ -644,11 +644,38 @@ async function clickTurnstileWithCDP(page) {
     let windowOffsetY = 0;
     let chromeWindowId = null;
     try {
-      // 查找 Chrome 窗口 ID 并聚焦
-      const winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "." | head -1', { timeout: 3000, encoding: 'utf-8' }).trim();
+      // 查找 Chrome 窗口 ID — 优先匹配 Chrome/Chromium 类名
+      let winIdOutput = '';
+      try {
+        winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --class chrome 2>/dev/null || DISPLAY=:99 xdotool search --onlyvisible --class chromium 2>/dev/null || echo ""', { timeout: 3000, encoding: 'utf-8' }).trim();
+      } catch (_) {}
+
+      // 如果类名搜索失败，用窗口名搜索（排除 fluxbox 自身窗口）
+      if (!winIdOutput) {
+        try {
+          winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "xserver\\|Xserver\\|Chrome\\|chrome" 2>/dev/null | head -1', { timeout: 3000, encoding: 'utf-8' }).trim();
+        } catch (_) {}
+      }
+
+      // 最后兜底：搜索所有可见窗口，取最大的那个（Chrome 通常是最大窗口）
+      if (!winIdOutput) {
+        try {
+          winIdOutput = execSync('DISPLAY=:99 xdotool search --onlyvisible --name "." | tail -1', { timeout: 3000, encoding: 'utf-8' }).trim();
+        } catch (_) {}
+      }
+
       if (winIdOutput) {
-        chromeWindowId = winIdOutput;
+        // 可能返回多行，取第一个
+        chromeWindowId = winIdOutput.split('\n')[0].trim();
         log(`找到 Chrome 窗口 ID: ${chromeWindowId}`);
+
+        // 诊断：获取窗口信息
+        try {
+          const winName = execSync(`DISPLAY=:99 xdotool getwindowname ${chromeWindowId}`, { timeout: 2000, encoding: 'utf-8' }).trim();
+          const winGeom = execSync(`DISPLAY=:99 xdotool getwindowgeometry ${chromeWindowId}`, { timeout: 2000, encoding: 'utf-8' }).trim();
+          log(`窗口名称: "${winName}", 窗口几何: ${winGeom}`);
+        } catch (_) {}
+
         execSync(`DISPLAY=:99 xdotool windowactivate --sync ${chromeWindowId}`, { timeout: 3000 });
         execSync(`DISPLAY=:99 xdotool windowfocus --sync ${chromeWindowId}`, { timeout: 3000 });
         log('Chrome 窗口已聚焦');
@@ -710,6 +737,12 @@ async function clickTurnstileWithCDP(page) {
 
     // 真实鼠标点击
     execSync(`DISPLAY=:99 xdotool click 1`, { timeout: 2000 });
+
+    // 验证鼠标最终位置
+    try {
+      const mousePos = execSync('DISPLAY=:99 xdotool getmouselocation', { timeout: 2000, encoding: 'utf-8' }).trim();
+      log(`xdotool 鼠标最终位置: ${mousePos}`);
+    } catch (_) {}
 
     log('xdotool 真实鼠标点击已完成！');
     return true;
