@@ -347,36 +347,38 @@ function getTurnstileProvider() {
 }
 
 /**
- * 从页面提取 Turnstile 参数（sitekey + render 调用参数）
+ * 从页面提取 Turnstile 参数
+ * Standalone Turnstile 只需 sitekey（从 HTML data-sitekey 属性获取）
+ * 同时提取 data-action / data-cdata 等可选属性
  * 返回 { sitekey, action, cData, chlPageData } 或 null
  */
 async function extractTurnstileParams(page) {
-  // 优先从拦截器获取完整参数
-  const intercepted = await page.evaluate(() => window.__turnstileParams).catch(() => null);
-  if (intercepted && intercepted.sitekey) {
-    log(`Turnstile 参数提取成功（render 拦截器）: sitekey=${intercepted.sitekey}, ` +
-      `action=${intercepted.action || '(空)'}, cData=${intercepted.cData ? '(有值)' : '(空)'}, ` +
-      `chlPageData=${intercepted.chlPageData ? '(有值)' : '(空)'}`);
-    return intercepted;
-  }
-
-  // 降级：从 data-sitekey 属性获取（仅 sitekey，其他参数为空）
-  const sitekey = await page.evaluate(() => {
-    const el = document.querySelector('.cf-turnstile[data-sitekey]');
-    return el ? el.getAttribute('data-sitekey') : null;
+  // 从 .cf-turnstile 元素的 data-* 属性提取所有参数
+  const params = await page.evaluate(() => {
+    const el = document.querySelector('.cf-turnstile[data-sitekey]')
+      || document.querySelector('[data-sitekey]');
+    if (!el) return null;
+    return {
+      sitekey: el.getAttribute('data-sitekey') || '',
+      action: el.getAttribute('data-action') || '',
+      cData: el.getAttribute('data-cdata') || '',
+      chlPageData: el.getAttribute('data-chlpagedata') || '',
+      callbackName: el.getAttribute('data-callback') || '',
+    };
   });
 
-  if (sitekey) {
-    log(`Turnstile sitekey 提取成功（data-sitekey）: ${sitekey}（无 render 参数）`);
-    return { sitekey, action: '', cData: '', chlPageData: '' };
+  if (params && params.sitekey) {
+    log(`Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
+      `action=${params.action || '(空)'}, callback=${params.callbackName || '(空)'}`);
+    return params;
   }
 
-  // 最终降级：正则匹配页面源码
+  // 降级：正则匹配页面源码
   const html = await page.content();
   const match = html.match(/data-sitekey=["']([0-9a-zA-Z_-]+)["']/);
   if (match) {
     log(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
-    return { sitekey: match[1], action: '', cData: '', chlPageData: '' };
+    return { sitekey: match[1], action: '', cData: '', chlPageData: '', callbackName: '' };
   }
 
   return null;
@@ -541,37 +543,18 @@ async function injectTurnstileToken(page, token) {
     // 尝试调用 Turnstile 回调函数
     let callbackCalled = false;
     try {
-      // 方法 1：通过 window.turnstile 获取 widget 的 callback
-      if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
-        // 检查是否有全局注册的 callback
-        const cfDiv = document.querySelector('.cf-turnstile');
-        if (cfDiv) {
-          const callbackName = cfDiv.getAttribute('data-callback');
-          if (callbackName && typeof window[callbackName] === 'function') {
-            window[callbackName](tkn);
-            callbackCalled = true;
-          }
+      // 通过 data-callback 属性找到回调函数名
+      const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
+      if (cfDiv) {
+        const callbackName = cfDiv.getAttribute('data-callback');
+        if (callbackName && typeof window[callbackName] === 'function') {
+          window[callbackName](tkn);
+          callbackCalled = true;
         }
       }
     } catch (_) { /* 忽略回调异常 */ }
 
-    try {
-      // 方法 2：检查拦截器捕获的 callback（最可靠的方式）
-      if (!callbackCalled && typeof window.__turnstileCallback === 'function') {
-        window.__turnstileCallback(tkn);
-        callbackCalled = true;
-      }
-    } catch (_) { /* 忽略 */ }
-
-    try {
-      // 方法 3：检查全局 tsCallback（2Captcha 文档推荐的拦截方式）
-      if (!callbackCalled && typeof window.tsCallback === 'function') {
-        window.tsCallback(tkn);
-        callbackCalled = true;
-      }
-    } catch (_) { /* 忽略 */ }
-
-    // 方法 3：启用提交按钮（某些表单在 token 注入前禁用提交）
+    // 启用提交按钮（某些表单在 token 注入前禁用提交）
     const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
     if (submitBtn && submitBtn.disabled) {
       submitBtn.disabled = false;
@@ -682,23 +665,21 @@ async function waitForTurnstile(page) {
         }
       }
 
-      // 按官方推荐：优先通过 callback 传递 token（最可靠的方式）
-      // 然后再注入 input 作为补充
+      // 通过 data-callback 属性名查找全局回调函数，传递 token
       const callbackResult = await page.evaluate((tkn) => {
-        // 方法 1：使用拦截器捕获的 callback（官方推荐）
-        if (typeof window.__turnstileCallback === 'function') {
-          window.__turnstileCallback(tkn);
-          return 'intercepted_callback';
+        // 方法 1：从 .cf-turnstile 的 data-callback 属性获取回调函数名
+        const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
+        if (cfDiv) {
+          const callbackName = cfDiv.getAttribute('data-callback');
+          if (callbackName && typeof window[callbackName] === 'function') {
+            window[callbackName](tkn);
+            return `data-callback:${callbackName}`;
+          }
         }
-        // 方法 2：全局 cfCallback（2Captcha 官方示例中的命名）
-        if (typeof window.cfCallback === 'function') {
-          window.cfCallback(tkn);
-          return 'cfCallback';
-        }
-        // 方法 3：全局 tsCallback
-        if (typeof window.tsCallback === 'function') {
-          window.tsCallback(tkn);
-          return 'tsCallback';
+        // 方法 2：检查 Turnstile API 是否已加载，尝试通过 widgetId 触发回调
+        if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
+          // Turnstile 已正常加载，token 注入到 input 后表单提交即可
+          return 'turnstile_loaded';
         }
         return null;
       }, result.token);
@@ -897,55 +878,10 @@ async function main() {
     log(`浏览器 UA 已设置: ${WINDOWS_UA.substring(0, 60)}...`);
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
-    // 拦截 turnstile.render 调用，捕获 action/cData/chlPageData 等参数
-    // 对于 Challenge Page（含 cData/chlPageData）：阻止原始 render，保留一次性参数给 API
-    // 对于 Standalone Captcha（仅 sitekey）：正常渲染，API 只需 sitekey 即可求解
-    // 参考 2Captcha 官方示例：https://2captcha.com/blog/bypassing-cloudflare-challenge-with-puppeteer-and-2captcha
-    await page.evaluateOnNewDocument(() => {
-      window.__turnstileParams = null;
-      window.__turnstileCallback = null;
-      // 阻止 Cloudflare 清空 console
-      console.clear = () => console.log('Console was cleared');
-      let _turnstile = undefined;
-      Object.defineProperty(window, 'turnstile', {
-        configurable: true,
-        get() { return _turnstile; },
-        set(val) {
-          if (val && typeof val.render === 'function') {
-            const originalRender = val.render;
-            val.render = function (container, params) {
-              window.__turnstileParams = {
-                sitekey: params.sitekey || '',
-                action: params.action || '',
-                cData: params.cData || '',
-                chlPageData: params.chlPageData || '',
-              };
-              if (typeof params.callback === 'function') {
-                window.__turnstileCallback = params.callback;
-              }
-              // Challenge Page 检测：含 cData 或 chlPageData 时才阻止渲染
-              // Standalone Captcha 只有 sitekey，正常渲染即可
-              const isChallengePage = !!(params.cData || params.chlPageData);
-              if (window.__blockTurnstileRender && isChallengePage) {
-                console.log('intercepted-params:' + JSON.stringify(window.__turnstileParams));
-                return '';  // 阻止 widget 渲染，保留一次性参数
-              }
-              return originalRender.call(this, container, params);
-            };
-          }
-          _turnstile = val;
-        },
-      });
-    });
-    log('已注册 turnstile.render 拦截器（Object.defineProperty）');
-
-    // 如果有 API 密钥，标记可阻止 Turnstile 渲染（仅 Challenge Page 会实际生效）
-    if (getTurnstileProvider()) {
-      await page.evaluateOnNewDocument(() => {
-        window.__blockTurnstileRender = true;
-      });
-      log('已标记 Turnstile 渲染控制（Challenge Page 阻止，Standalone 放行）');
-    }
+    // Turnstile 处理策略：不拦截渲染，让 widget 正常显示
+    // Xserver 使用 Standalone Turnstile（隐式渲染），Object.defineProperty 会破坏其初始化
+    // API 求解只需 sitekey（从 data-sitekey 属性提取），无需拦截 render 调用
+    log('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
 
     // 步骤 1：登录
     await handleLogin(page);
