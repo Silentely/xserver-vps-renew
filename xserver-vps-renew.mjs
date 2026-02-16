@@ -3,14 +3,15 @@
 /**
  * Xserver VPS 自动续期脚本 - Puppeteer Stealth 版本
  *
- * 通过 puppeteer-extra-plugin-stealth 连接真实 Chrome，绕过 Cloudflare Turnstile：
+ * 通过 puppeteer.launch() 启动 Chrome，Stealth 插件完整注入反检测补丁：
  * 登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交
  *
  * 环境变量：
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
- *   CDP_URL            - Chrome CDP 地址（默认 http://127.0.0.1:9222）
  *   CAPTCHA_API        - 验证码识别API地址
+ *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
+ *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
  *   TG_CHAT_ID         - Telegram Chat ID（可选，启用通知）
  */
@@ -18,6 +19,7 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'timers/promises';
+import { existsSync, rmSync } from 'fs';
 
 // 启用 Stealth 插件，隐藏自动化特征
 puppeteer.use(StealthPlugin());
@@ -27,7 +29,6 @@ puppeteer.use(StealthPlugin());
 // ============================================================
 
 const CONFIG = {
-  CDP_URL: process.env.CDP_URL || 'http://127.0.0.1:9222',
   MEMBER_ID: process.env.XSERVER_MEMBER_ID || '',
   PASSWORD: process.env.XSERVER_PASSWORD || '',
   CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',
@@ -39,10 +40,28 @@ const CONFIG = {
   TURNSTILE_TIMEOUT: 60_000,
   CAPTCHA_MAX_RETRY: 3,
 
+  CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
+  CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
+
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
 };
+
+// ============================================================
+// Chrome 路径检测
+// ============================================================
+
+function findChromePath() {
+  const candidates = [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ];
+  return candidates.find((p) => existsSync(p)) || 'google-chrome-stable';
+}
 
 // ============================================================
 // 日志
@@ -103,6 +122,14 @@ async function getText(page, selector) {
   const el = await page.$(selector);
   if (!el) return null;
   return page.evaluate((e) => e.textContent.trim(), el);
+}
+
+/** 清理 Chrome 锁文件 */
+function cleanChromeLocks(userDataDir) {
+  for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    const lockPath = `${userDataDir}/${lock}`;
+    try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
+  }
 }
 
 // ============================================================
@@ -172,7 +199,6 @@ async function checkRenewalNeeded(page) {
   });
   log(`明天日期（东京时区）: ${tomorrow}`);
 
-  // 查找免费 VPS 行
   const result = await page.evaluate(() => {
     const row = document.querySelector('tr:has(.freeServerIco)');
     if (!row) return null;
@@ -280,8 +306,7 @@ async function waitForTurnstile(page) {
     return true;
   }
 
-  // 等待 Turnstile 自动通过（Stealth 插件应该能让它自动通过）
-  log('等待 Turnstile 自动验证（Stealth 模式）...');
+  log('等待 Turnstile 自动验证（Stealth launch 模式）...');
 
   const startTime = Date.now();
   const pollInterval = 1000;
@@ -294,24 +319,6 @@ async function waitForTurnstile(page) {
     if (token) {
       log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
       return true;
-    }
-
-    // 尝试点击 Turnstile iframe 中的复选框
-    try {
-      const frames = page.frames();
-      const cfFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
-      if (cfFrame) {
-        const checkbox = await cfFrame.$('input[type="checkbox"]');
-        if (checkbox) {
-          const box = await checkbox.boundingBox();
-          if (box) {
-            log('尝试点击 Turnstile 复选框...');
-            await checkbox.click();
-          }
-        }
-      }
-    } catch {
-      // 忽略 iframe 交互错误
     }
 
     await sleep(pollInterval);
@@ -349,7 +356,6 @@ async function handleCaptchaPage(page) {
   // 提交表单
   log('正在提交表单...');
   if (!turnstilePassed) {
-    // Turnstile 超时，强制移除 disabled 属性
     await page.evaluate(() => {
       const btn = document.querySelector('input[type="submit"], button[type="submit"]');
       if (btn) {
@@ -371,7 +377,6 @@ async function handleCaptchaPage(page) {
   const pageText = await page.evaluate(() => document.body.innerText);
   const currentUrl = page.url();
 
-  // 检查是否有错误信息
   const errorPatterns = ['エラー', '失敗', '認証に失敗', '不正', 'もう一度'];
   const hasError = errorPatterns.some((pat) => pageText.includes(pat));
 
@@ -380,7 +385,6 @@ async function handleCaptchaPage(page) {
     throw new Error(`续期提交失败（Turnstile 验证未通过）: ${snippet}`);
   }
 
-  // 检查是否包含成功关键词
   const successPatterns = ['完了', '延長', '更新'];
   const isSuccess = successPatterns.some((pat) => pageText.includes(pat));
   if (isSuccess) {
@@ -404,15 +408,30 @@ async function main() {
   let browser = null;
 
   try {
-    // 通过 CDP 连接到 Chrome（由 entrypoint.sh 管理 Chrome 生命周期）
-    log(`正在连接 CDP: ${CONFIG.CDP_URL}`);
-    browser = await puppeteer.connect({
-      browserURL: CONFIG.CDP_URL,
+    // 清理锁文件
+    cleanChromeLocks(CONFIG.CHROME_USER_DATA);
+
+    // 通过 puppeteer.launch() 启动 Chrome，Stealth 插件才能完整注入
+    log(`正在启动 Chrome（Stealth launch 模式）: ${CONFIG.CHROME_PATH}`);
+    browser = await puppeteer.launch({
+      executablePath: CONFIG.CHROME_PATH,
+      userDataDir: CONFIG.CHROME_USER_DATA,
+      headless: false,
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--window-size=1280,900',
+      ],
       defaultViewport: { width: 1280, height: 900 },
     });
-    log('CDP 连接成功（Stealth 模式）！');
+    log('Chrome 启动成功（Stealth 模式完整注入）！');
 
-    // 创建新页面
     const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
@@ -447,10 +466,8 @@ async function main() {
   } finally {
     if (browser) {
       try {
-        browser.disconnect();
-      } catch {
-        /* 忽略断开连接错误 */
-      }
+        await browser.close();
+      } catch { /* 忽略 */ }
     }
     log('========== 流程结束 ==========');
   }

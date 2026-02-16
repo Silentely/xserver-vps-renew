@@ -4,7 +4,7 @@ set -e
 LOG_PREFIX="[entrypoint]"
 
 # ============================================================
-# 启动虚拟显示器（Xvfb）
+# 启动虚拟显示器（Xvfb）— puppeteer headless:false 需要
 # ============================================================
 echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
 rm -f /tmp/.X99-lock 2>/dev/null || true
@@ -13,68 +13,11 @@ XVFB_PID=$!
 sleep 1
 
 # ============================================================
-# 启动 Chrome（带 CDP 调试端口）
-# ============================================================
-start_chrome() {
-    # 清理上次残留的锁文件，避免 "profile in use" 错误
-    rm -f /data/chrome-profile/SingletonLock \
-          /data/chrome-profile/SingletonSocket \
-          /data/chrome-profile/SingletonCookie 2>/dev/null || true
-
-    echo "$LOG_PREFIX 启动 Chrome..."
-    google-chrome-stable \
-        --remote-debugging-port=9222 \
-        --user-data-dir=/data/chrome-profile \
-        --no-first-run \
-        --no-default-browser-check \
-        --disable-background-timer-throttling \
-        --disable-backgrounding-occluded-windows \
-        --disable-renderer-backgrounding \
-        --no-sandbox \
-        --disable-dev-shm-usage \
-        --disable-gpu \
-        --window-size=1280,900 \
-        &>/tmp/chrome.log &
-    CHROME_PID=$!
-    echo "$LOG_PREFIX Chrome PID: $CHROME_PID"
-    echo "$LOG_PREFIX 等待 Chrome 就绪..."
-    # 轮询等待 CDP 端口可用，最多 15 秒
-    for i in $(seq 1 30); do
-        if ! kill -0 "$CHROME_PID" 2>/dev/null; then
-            echo "$LOG_PREFIX Chrome 进程已退出！日志："
-            cat /tmp/chrome.log 2>/dev/null || true
-            return 1
-        fi
-        if curl -s -o /dev/null http://127.0.0.1:9222/json/version 2>/dev/null; then
-            echo "$LOG_PREFIX Chrome CDP 已就绪（等待 ${i}×0.5s）"
-            return 0
-        fi
-        sleep 0.5
-    done
-    echo "$LOG_PREFIX Chrome CDP 等待超时！Chrome 日志："
-    cat /tmp/chrome.log 2>/dev/null || true
-    return 1
-}
-
-# ============================================================
-# 关闭 Chrome
-# ============================================================
-stop_chrome() {
-    if [ -n "$CHROME_PID" ] && kill -0 "$CHROME_PID" 2>/dev/null; then
-        echo "$LOG_PREFIX 关闭 Chrome (PID: $CHROME_PID)..."
-        kill "$CHROME_PID" 2>/dev/null || true
-        wait "$CHROME_PID" 2>/dev/null || true
-    fi
-}
-
-# ============================================================
-# 执行续期脚本
+# 执行续期脚本（Chrome 由 puppeteer.launch 管理）
 # ============================================================
 run_renew() {
     echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
-    start_chrome
     node /app/xserver-vps-renew.mjs || true
-    stop_chrome
     echo "$LOG_PREFIX ====== 执行完毕 $(date -Iseconds) ======"
 }
 
@@ -83,7 +26,6 @@ run_renew() {
 # ============================================================
 cleanup() {
     echo "$LOG_PREFIX 收到退出信号，正在清理..."
-    stop_chrome
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
     exit 0
 }
