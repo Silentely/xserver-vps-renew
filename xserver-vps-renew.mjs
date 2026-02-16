@@ -391,14 +391,15 @@ function getTurnstileHookScript() {
 }
 
 /**
- * 通过 CDP 穿透 shadow DOM 获取 Turnstile iframe 的绝对坐标，
- * 再结合 hook 捕获的 checkbox 坐标比例进行精确点击
+ * 通过 CDP 在 Turnstile iframe 的执行上下文中注入 attachShadow hook，
+ * 获取 checkbox 的精确坐标比例，然后结合 iframe 绝对位置进行点击
  */
 async function clickTurnstileWithCDP(page) {
   const client = await page.createCDPSession();
 
   try {
     await client.send('DOM.enable');
+    await client.send('Page.enable');
     await client.send('Runtime.enable');
 
     // 用 getFlattenedDocument 穿透所有 shadow DOM 和 iframe
@@ -420,7 +421,6 @@ async function clickTurnstileWithCDP(page) {
     });
 
     if (!iframeNode) {
-      // 输出诊断信息：列出所有 iframe
       const allIframes = nodes.filter((n) => n.nodeName === 'IFRAME');
       const iframeSrcs = allIframes.map((n) => {
         const attrs = n.attributes || [];
@@ -446,45 +446,161 @@ async function clickTurnstileWithCDP(page) {
 
     log(`Turnstile iframe 位置: (${x1},${y1}) 尺寸: ${iframeWidth}x${iframeHeight}`);
 
-    // 尝试从 iframe 内获取 hook 捕获的 checkbox 坐标比例
+    // ========== 核心：在 Turnstile iframe 执行上下文中注入 hook ==========
+
+    // 获取帧树，找到 Turnstile iframe 的 frameId
+    const { frameTree } = await client.send('Page.getFrameTree');
+    let turnstileFrameId = null;
+
+    function findTurnstileFrame(tree) {
+      if (tree.frame?.url?.includes('challenges.cloudflare.com')) {
+        turnstileFrameId = tree.frame.id;
+        return;
+      }
+      for (const child of (tree.childFrames || [])) {
+        findTurnstileFrame(child);
+        if (turnstileFrameId) return;
+      }
+    }
+    findTurnstileFrame(frameTree);
+
+    if (!turnstileFrameId) {
+      log('未在帧树中找到 Turnstile frame，使用标准坐标点击。');
+    } else {
+      log(`找到 Turnstile frameId: ${turnstileFrameId}`);
+    }
+
+    // 获取 Turnstile iframe 的执行上下文 ID
+    let turnstileContextId = null;
+
+    if (turnstileFrameId) {
+      // 通过创建隔离世界（isolated world）获取可靠的执行上下文
+      try {
+        const { executionContextId } = await client.send('Page.createIsolatedWorld', {
+          frameId: turnstileFrameId,
+          worldName: 'turnstile_hook',
+          grantUniveralAccess: true,
+        });
+        turnstileContextId = executionContextId;
+        log(`创建 Turnstile iframe 隔离执行上下文: ${turnstileContextId}`);
+      } catch (e) {
+        log(`创建隔离世界失败: ${e.message}`);
+      }
+    }
+
     let xRatio = null;
     let yRatio = null;
 
-    // 找到 iframe 的 contentDocument frameId
-    const frameId = iframeNode.contentDocument
-      ? iframeNode.contentDocument.frameId
-      : null;
+    if (turnstileContextId) {
+      // 在 Turnstile iframe 内注入 attachShadow hook 并获取 checkbox 坐标
+      const hookAndFindScript = `
+        (function() {
+          // 如果已找到坐标，直接返回
+          if (window.__checkboxRatio) return JSON.stringify(window.__checkboxRatio);
 
-    // 尝试在 iframe 内执行 JS 获取坐标比例
-    if (iframeNode.frameId || frameId) {
+          // 注入 attachShadow hook
+          if (!window.__hookInstalled) {
+            window.__hookInstalled = true;
+            try {
+              const origAttachShadow = Element.prototype.attachShadow;
+              Element.prototype.attachShadow = function(...args) {
+                const sr = origAttachShadow.apply(this, args);
+                if (sr) {
+                  const check = sr.querySelector('input[type="checkbox"]');
+                  if (check) {
+                    window.__foundCheckbox = check;
+                  } else {
+                    new MutationObserver((_, o) => {
+                      const cb = sr.querySelector('input[type="checkbox"]');
+                      if (cb) { window.__foundCheckbox = cb; o.disconnect(); }
+                    }).observe(sr, { childList: true, subtree: true });
+                  }
+                }
+                return sr;
+              };
+            } catch(e) {}
+          }
+
+          // 尝试直接遍历 DOM 树查找 checkbox（不依赖 hook）
+          if (!window.__foundCheckbox) {
+            // 方法1：穿透所有 shadow root 查找
+            function findInShadows(root) {
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node;
+              while (node = walker.nextNode()) {
+                if (node.tagName === 'INPUT' && node.type === 'checkbox') return node;
+                if (node.shadowRoot) {
+                  const found = findInShadows(node.shadowRoot);
+                  if (found) return found;
+                }
+              }
+              return null;
+            }
+            const found = findInShadows(document);
+            if (found) window.__foundCheckbox = found;
+          }
+
+          // 计算坐标比例
+          if (window.__foundCheckbox) {
+            const rect = window.__foundCheckbox.getBoundingClientRect();
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            if (w > 0 && h > 0 && rect.width > 0) {
+              const cx = rect.left + rect.width / 2;
+              const cy = rect.top + rect.height / 2;
+              window.__checkboxRatio = { x: cx / w, y: cy / h, w: rect.width, h: rect.height };
+              return JSON.stringify(window.__checkboxRatio);
+            }
+          }
+
+          return 'null';
+        })()
+      `;
+
       try {
-        const targetFrameId = iframeNode.frameId || frameId;
         const result = await client.send('Runtime.evaluate', {
-          expression: 'JSON.stringify(window.__checkboxRatio || null)',
-          contextId: undefined,
-          // 尝试通过 Page.getFrameTree 获取正确的执行上下文
-        }).catch(() => null);
+          expression: hookAndFindScript,
+          contextId: turnstileContextId,
+          returnByValue: true,
+        });
 
-        if (result?.result?.value) {
+        if (result?.result?.value && result.result.value !== 'null') {
           const ratio = JSON.parse(result.result.value);
           if (ratio) {
             xRatio = ratio.x;
             yRatio = ratio.y;
-            log(`Hook 捕获到 checkbox 坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
+            log(`✅ iframe 内找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}, 尺寸: ${ratio.w}x${ratio.h}`);
+          }
+        } else {
+          log('iframe 内未找到 checkbox（shadow root 可能是 closed 且已创建）');
+
+          // 等一会再试一次（hook 可能需要时间捕获新创建的 shadow root）
+          await sleep(2000);
+          const retry = await client.send('Runtime.evaluate', {
+            expression: hookAndFindScript,
+            contextId: turnstileContextId,
+            returnByValue: true,
+          }).catch(() => null);
+
+          if (retry?.result?.value && retry.result.value !== 'null') {
+            const ratio = JSON.parse(retry.result.value);
+            if (ratio) {
+              xRatio = ratio.x;
+              yRatio = ratio.y;
+              log(`✅ 重试后找到 checkbox！坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
+            }
           }
         }
       } catch (e) {
-        log(`获取 iframe 内坐标比例失败（预期内）: ${e.message}`);
+        log(`iframe 内执行脚本失败: ${e.message}`);
       }
     }
 
-    // 如果 hook 没有捕获到坐标，使用 Turnstile checkbox 的标准位置
-    // Turnstile widget 标准尺寸 300x65，checkbox 在左侧约 (28, 32) 位置
+    // 降级：使用标准 checkbox 坐标
     if (xRatio === null || yRatio === null) {
-      // 标准比例：checkbox 中心在 iframe 内约 x=28/300≈0.093, y=32/65≈0.49
       xRatio = 0.085 + Math.random() * 0.02;
       yRatio = 0.45 + Math.random() * 0.10;
-      log(`使用标准 checkbox 坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
+      log(`降级使用标准 checkbox 坐标比例: x=${xRatio.toFixed(3)}, y=${yRatio.toFixed(3)}`);
     }
 
     // 计算绝对点击坐标
@@ -493,30 +609,32 @@ async function clickTurnstileWithCDP(page) {
 
     log(`CDP 精确点击坐标: (${clickX.toFixed(1)}, ${clickY.toFixed(1)})`);
 
-    // 模拟人类鼠标移动轨迹
-    const startX = clickX - 50 - Math.random() * 100;
-    const startY = clickY - 30 - Math.random() * 60;
-    const steps = 5 + Math.floor(Math.random() * 5);
+    // 模拟人类鼠标移动轨迹（从页面随机位置出发）
+    const startX = clickX - 80 - Math.random() * 150;
+    const startY = clickY - 40 - Math.random() * 80;
+    const steps = 8 + Math.floor(Math.random() * 8);
 
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
-      const curX = startX + (clickX - startX) * t + (Math.random() - 0.5) * 3;
-      const curY = startY + (clickY - startY) * t + (Math.random() - 0.5) * 3;
+      // 贝塞尔曲线模拟（非线性移动）
+      const easeT = t * t * (3 - 2 * t); // smoothstep
+      const curX = startX + (clickX - startX) * easeT + (Math.random() - 0.5) * 4;
+      const curY = startY + (clickY - startY) * easeT + (Math.random() - 0.5) * 4;
       await client.send('Input.dispatchMouseEvent', {
         type: 'mouseMoved',
         x: curX,
         y: curY,
       });
-      await sleep(15 + Math.random() * 30);
+      await sleep(10 + Math.random() * 25);
     }
 
-    // 最终精确移动到目标位置
+    // 最终精确移动到目标
     await client.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved',
       x: clickX,
       y: clickY,
     });
-    await sleep(50 + Math.random() * 100);
+    await sleep(80 + Math.random() * 120);
 
     // 鼠标按下
     await client.send('Input.dispatchMouseEvent', {
@@ -526,7 +644,7 @@ async function clickTurnstileWithCDP(page) {
       button: 'left',
       clickCount: 1,
     });
-    await sleep(30 + Math.random() * 60);
+    await sleep(40 + Math.random() * 80);
 
     // 鼠标释放
     await client.send('Input.dispatchMouseEvent', {
@@ -568,7 +686,15 @@ async function waitForTurnstile(page) {
 
   // 等待 Turnstile widget 渲染和 iframe 加载
   log('等待 Turnstile 渲染...');
-  await sleep(4000);
+  await sleep(5000);
+
+  // 截图诊断：确认 Turnstile 的视觉状态
+  try {
+    await page.screenshot({ path: '/tmp/turnstile-before-click.png', fullPage: false });
+    log('已保存点击前截图: /tmp/turnstile-before-click.png');
+  } catch (e) {
+    log(`截图失败: ${e.message}`);
+  }
 
   // 先用 CDP 穿透扫描尝试点击
   log('尝试 CDP 穿透点击...');
