@@ -543,8 +543,8 @@ async function waitForTurnstile(page) {
   await sleep(5000);
 
   // 关键步骤：通过 CDP 直接在 Turnstile iframe 中注入 screenX/screenY 修复补丁
-  // Chrome 扩展无法注入 closed shadow root 内动态创建的 iframe，
-  // 但 Puppeteer 的 frame.evaluate() 通过 CDP 绕过同源策略可以直接执行
+  // 双重保险：evaluateOnNewDocument 可能对 OOPIF 不生效（取决于 Chrome 版本），
+  // 所以同时通过 frame.evaluate() 补注入，确保覆盖
   await injectScreenPatchToTurnstileFrames(page);
 
   // 截图诊断：确认 Turnstile 的视觉状态
@@ -717,6 +717,12 @@ async function main() {
 
     const page = await browser.newPage();
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
+
+    // 关键：在所有新 frame/document 创建时自动注入 screenX/screenY 补丁
+    // evaluateOnNewDocument 在 document_start 时机执行，确保在 Turnstile 脚本之前完成修补
+    // 这比 frame.evaluate() 更可靠，因为后者可能在 Turnstile 已经缓存原始 getter 之后才执行
+    await page.evaluateOnNewDocument(SCREEN_PATCH_SCRIPT);
+    log('已注册 screenX/screenY 补丁（evaluateOnNewDocument，所有新 frame 自动注入）');
 
     // 步骤 1：登录
     await handleLogin(page);
