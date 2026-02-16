@@ -297,6 +297,24 @@ async function recognizeCaptcha(imgSrc) {
 //   4. 降级方案：查找页面中 300x65 左右的 iframe 元素
 
 /**
+ * 模拟人类鼠标移动 + 点击（避免直接 click 被 Turnstile 检测为机器行为）
+ */
+async function humanClick(page, targetX, targetY) {
+  // 从随机偏移位置开始移动
+  const startX = targetX - 50 + Math.random() * 30;
+  const startY = targetY - 20 - Math.random() * 30;
+  await page.mouse.move(startX, startY);
+  await sleep(80 + Math.random() * 150);
+  // 带 steps 的移动模拟人类手部轨迹
+  await page.mouse.move(targetX, targetY, { steps: 8 + Math.floor(Math.random() * 8) });
+  await sleep(40 + Math.random() * 80);
+  // 分离 mousedown/mouseup 模拟真实按压时长
+  await page.mouse.down();
+  await sleep(30 + Math.random() * 60);
+  await page.mouse.up();
+}
+
+/**
  * 在主页面层面定位并点击 Turnstile widget
  *
  * Turnstile 的 DOM 结构：
@@ -336,7 +354,24 @@ async function clickTurnstile(page) {
         log(`Turnstile iframe 位置: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
           `尺寸: ${box.width.toFixed(0)}x${box.height.toFixed(0)}, ` +
           `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-        await page.mouse.click(clickX, clickY);
+
+        // 诊断：检查扩展是否成功注入 Turnstile iframe（screenX getter 是否被修改）
+        try {
+          const patchStatus = await frame.evaluate(() => {
+            const desc = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'screenX');
+            return {
+              hasCustomGetter: desc && desc.get && !desc.get.toString().includes('native code'),
+              getterSource: desc && desc.get ? desc.get.toString().substring(0, 80) : 'N/A',
+            };
+          });
+          log(`Turnstile iframe 扩展注入状态: customGetter=${patchStatus.hasCustomGetter}, ` +
+            `getter=${patchStatus.getterSource}`);
+        } catch (e) {
+          log(`无法检查 iframe 扩展状态（跨域限制）: ${e.message}`);
+        }
+
+        // 模拟人类鼠标移动轨迹：从随机起点移动到目标，再点击
+        await humanClick(page, clickX, clickY);
         return true;
       } catch (e) {
         log(`通过 frame.frameElement() 点击失败: ${e.message}`);
@@ -375,7 +410,7 @@ async function clickTurnstile(page) {
         log(`找到候选 iframe [${item.match}]: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
           `${item.w.toFixed(0)}x${item.h.toFixed(0)} src=${item.src}, ` +
           `点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-        await page.mouse.click(clickX, clickY);
+        await humanClick(page, clickX, clickY);
         return true;
       }
     }
@@ -405,7 +440,7 @@ async function clickTurnstile(page) {
         const clickY = item.y + item.h / 2;
         log(`降级定位到候选 div: (${item.x.toFixed(0)},${item.y.toFixed(0)}) ` +
           `${item.w.toFixed(0)}x${item.h.toFixed(0)}, 点击坐标: (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
-        await page.mouse.click(clickX, clickY);
+        await humanClick(page, clickX, clickY);
       }
       return true;
     }
