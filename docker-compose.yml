@@ -1,16 +1,27 @@
 services:
+  # Cloudflare Turnstile token 解析服务
+  cf-solver:
+    image: zfcsoftware/cf-clearance-scraper:latest
+    container_name: cf-solver
+    environment:
+      - PORT=3000
+      - browserLimit=5
+      - timeOut=60000
+    shm_size: "2gb"
+    restart: unless-stopped
+
   xserver-renew:
     image: debug502/xserver-vps-renew:latest
     container_name: xserver-vps-renew
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
-      # 定时规则，在 .env 中通过 CRON_SCHEDULE 配置
-      # 默认：0 23 * * *（东京时间 08:00）
+      # cf-solver 地址，脚本用它获取 Turnstile token
+      - CF_SOLVER_URL=http://cf-solver:3000/cf-clearance-scraper
+    depends_on:
+      - cf-solver
     volumes:
-      # 持久化 Chrome 用户数据（保留登录 Cookie，减少重复登录）
       - chrome-data:/data/chrome-profile
-    # Chrome 渲染需要较大共享内存
     shm_size: "2gb"
     restart: unless-stopped
 

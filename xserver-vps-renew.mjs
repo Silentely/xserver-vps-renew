@@ -33,6 +33,9 @@ const CONFIG = {
   PASSWORD: process.env.XSERVER_PASSWORD || '',
   CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',
 
+  // cf-clearance-scraper 服务地址（用于获取 Turnstile token）
+  CF_SOLVER_URL: process.env.CF_SOLVER_URL || 'http://cf-solver:3000/cf-clearance-scraper',
+
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
 
@@ -287,6 +290,41 @@ async function recognizeCaptcha(imgSrc) {
 // 步骤 5：等待 Cloudflare Turnstile 通过
 // ============================================================
 
+/**
+ * 通过 cf-clearance-scraper 服务获取 Turnstile token
+ */
+async function solveTurnstileViaCfSolver(pageUrl, siteKey) {
+  log(`正在调用 cf-solver 获取 Turnstile token (siteKey: ${siteKey})...`);
+
+  try {
+    const res = await fetch(CONFIG.CF_SOLVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: pageUrl,
+        siteKey,
+        mode: 'turnstile-min',
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`cf-solver 响应 ${res.status}: ${body}`);
+    }
+
+    const data = await res.json();
+    if (data.code === 200 && data.token) {
+      log(`cf-solver 成功获取 token（长度: ${data.token.length}）`);
+      return data.token;
+    }
+
+    throw new Error(`cf-solver 返回异常: ${JSON.stringify(data)}`);
+  } catch (e) {
+    err(`cf-solver 调用失败: ${e.message}`);
+    return null;
+  }
+}
+
 async function waitForTurnstile(page) {
   log('正在处理 Cloudflare Turnstile...');
 
@@ -306,26 +344,61 @@ async function waitForTurnstile(page) {
     return true;
   }
 
-  log('等待 Turnstile 自动验证（Stealth launch 模式）...');
-
+  // 第一阶段：等待 Stealth 模式自动通过（15 秒）
+  log('等待 Turnstile 自动验证（Stealth 模式，15s）...');
+  const quickTimeout = 15_000;
   const startTime = Date.now();
-  const pollInterval = 1000;
 
-  while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
+  while (Date.now() - startTime < quickTimeout) {
     const token = await page
       .$eval('[name="cf-turnstile-response"]', (el) => el.value)
       .catch(() => '');
 
     if (token) {
-      log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
+      log(`Turnstile 令牌已自动生成！（耗时 ${Date.now() - startTime}ms）`);
       return true;
     }
-
-    await sleep(pollInterval);
+    await sleep(1000);
   }
 
-  err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），将尝试强制提交。`);
-  return false;
+  // 第二阶段：调用 cf-solver 获取 token 并注入
+  log('Stealth 自动通过失败，切换到 cf-solver...');
+
+  // 提取 siteKey
+  const siteKey = await page
+    .$eval('.cf-turnstile', (el) => el.getAttribute('data-sitekey'))
+    .catch(() => null);
+
+  if (!siteKey) {
+    err('未找到 Turnstile siteKey，无法调用 cf-solver。');
+    return false;
+  }
+
+  const token = await solveTurnstileViaCfSolver(page.url(), siteKey);
+  if (!token) {
+    err('cf-solver 未返回有效 token。');
+    return false;
+  }
+
+  // 将 token 注入页面
+  await page.evaluate((t) => {
+    const el = document.querySelector('[name="cf-turnstile-response"]');
+    if (el) {
+      el.value = t;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    // 同时设置隐藏的 callback（部分 Turnstile 实现会检查）
+    if (typeof window.turnstileCallback === 'function') {
+      window.turnstileCallback(t);
+    }
+  }, token);
+
+  log('cf-solver token 已注入页面。');
+
+  // 等待按钮启用
+  await sleep(1000);
+  return true;
 }
 
 // ============================================================
