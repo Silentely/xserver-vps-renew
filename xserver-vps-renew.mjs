@@ -220,10 +220,12 @@ async function checkRenewalNeeded(page) {
     });
   }
 
-  // 计算明天的日期（东京时区，yyyy-mm-dd 格式）
+  // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
+  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
   const tomorrow = new Date(Date.now() + 86_400_000).toLocaleDateString('sv', {
     timeZone: 'Asia/Tokyo',
   });
+  log(`今天日期（东京时区）: ${today}`);
   log(`明天日期（东京时区）: ${tomorrow}`);
 
   const result = await page.evaluate(() => {
@@ -246,8 +248,10 @@ async function checkRenewalNeeded(page) {
 
   log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
 
-  if (result.expireDate !== tomorrow) {
-    log(`无需续期（到期日 ${result.expireDate} ≠ 明天 ${tomorrow}）。`);
+  // 今天或明天到期都需要续期
+  const needsRenewal = result.expireDate === today || result.expireDate === tomorrow;
+  if (!needsRenewal) {
+    log(`无需续期（到期日 ${result.expireDate} 不是今天 ${today} 或明天 ${tomorrow}）。`);
     return null;
   }
 

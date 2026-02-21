@@ -238,7 +238,8 @@ function t(text) {
         updateStatusElement("正在检查续期状态...");
  
         try {
-            // 计算明天的日期，格式为 yyyy-mm-dd (瑞典时区格式更稳定)
+            // 计算今天和明天的日期，格式为 yyyy-mm-dd (瑞典时区格式更稳定)
+            const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
             const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
             const row = document.querySelector('tr:has(.freeServerIco)');
  
@@ -252,10 +253,13 @@ function t(text) {
             const expireDate = expireSpan ? expireSpan.textContent.trim() : null;
  
             console.log(`${LOG_PREFIX} 页面上的到期日: ${expireDate || '未找到'}`);
+            console.log(`${LOG_PREFIX} 今天的日期: ${today}`);
             console.log(`${LOG_PREFIX} 明天的日期: ${tomorrow}`);
- 
-            if (expireDate === tomorrow) {
-                console.log(`${LOG_PREFIX} 条件满足：到期日为明天。正在跳转到续期页面...`);
+
+            // 今天或明天到期都需要续期
+            const needsRenewal = expireDate === today || expireDate === tomorrow;
+            if (needsRenewal) {
+                console.log(`${LOG_PREFIX} 条件满足：到期日为今天或明天。正在跳转到续期页面...`);
                 const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
                 if (detailLink && detailLink.href) {
                     updateStatusElement("检测到即将过期，正在续期...");

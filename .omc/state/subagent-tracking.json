@@ -1,0 +1,80 @@
+{
+  "agents": [
+    {
+      "agent_id": "acd1f0d",
+      "agent_type": "Explore",
+      "started_at": "2026-02-16T07:08:53.305Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T07:09:36.228Z",
+      "duration_ms": 42923
+    },
+    {
+      "agent_id": "a02b5c1",
+      "agent_type": "Plan",
+      "started_at": "2026-02-16T07:10:16.898Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T07:15:00.914Z",
+      "duration_ms": 284016
+    },
+    {
+      "agent_id": "a5c23c3",
+      "agent_type": "get-current-datetime",
+      "started_at": "2026-02-16T07:22:42.427Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T07:22:50.953Z",
+      "duration_ms": 8526
+    },
+    {
+      "agent_id": "a1dc7b7",
+      "agent_type": "Explore",
+      "started_at": "2026-02-16T07:30:41.619Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T07:32:24.669Z",
+      "duration_ms": 103050
+    },
+    {
+      "agent_id": "aa1398d",
+      "agent_type": "get-current-datetime",
+      "started_at": "2026-02-16T08:18:23.173Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T08:18:32.448Z",
+      "duration_ms": 9275
+    },
+    {
+      "agent_id": "a6a7f9a",
+      "agent_type": "Explore",
+      "started_at": "2026-02-16T08:19:10.898Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T08:22:14.371Z",
+      "duration_ms": 183473
+    },
+    {
+      "agent_id": "a48df7a",
+      "agent_type": "Explore",
+      "started_at": "2026-02-16T08:19:10.953Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T08:22:12.540Z",
+      "duration_ms": 181587
+    },
+    {
+      "agent_id": "a52df19",
+      "agent_type": "Explore",
+      "started_at": "2026-02-16T09:01:23.790Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-16T09:01:54.457Z",
+      "duration_ms": 30667
+    }
+  ],
+  "total_spawned": 8,
+  "total_completed": 0,
+  "total_failed": 8,
+  "last_updated": "2026-02-16T09:01:54.458Z"
+}
