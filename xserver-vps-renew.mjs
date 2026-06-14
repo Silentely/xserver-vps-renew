@@ -973,11 +973,11 @@ async function waitForTurnstileToken(page) {
 async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
-  // 等待验证码图片元素
-  await page.waitForSelector('img[alt="画像認証"]', { timeout: 10_000 });
+  // 等待验证码图片元素（使用原始选择器）
+  await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
 
   // 截取验证码图片并转换为 Base64
-  const imgElement = await page.$('img[alt="画像認証"]');
+  const imgElement = await page.$('img[src^="data:image"], img[src^="data:"]');
   if (!imgElement) throw new Error('未找到验证码图片。');
 
   const imgBase64 = await imgElement.screenshot({ encoding: 'base64' });
