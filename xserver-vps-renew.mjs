@@ -1189,7 +1189,7 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
-  // ========== 策略 1：先尝试点击 Turnstile checkbox 让其自行通过 ==========
+  // ========== 策略 1：点击 Turnstile checkbox 尝试自然通过 ==========
   // rebrowser + Stealth 模式下，部分场景可直接通过 Turnstile 验证
   // 优势：无需 API、无 IP 绑定问题、最快速
   log('策略 1：尝试点击 Turnstile checkbox 自行通过...');
@@ -1360,8 +1360,27 @@ async function handleCaptchaPage(page) {
   const imgDataUri = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
   if (!imgDataUri) throw new Error('未找到验证码图片。');
 
-  // 识别验证码（2Captcha 人工识别）
+  // 优化：在验证码识别期间，并行检查 Turnstile 是否已提前通过
+  let turnstileCheckPromise = null;
+  let turnstileAlreadyPassed = false;
+
+  // 启动 Turnstile 提前检查（不阻塞验证码识别）
+  turnstileCheckPromise = page.evaluate(() => {
+    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+    for (const field of fields) {
+      if (field.value) return true;
+    }
+    return false;
+  }).catch(() => false);
+
+  // 识别验证码（并行进行 Turnstile 检查）
   const code = await recognizeCaptcha(imgDataUri);
+
+  // 检查 Turnstile 结果
+  turnstileAlreadyPassed = await turnstileCheckPromise;
+  if (turnstileAlreadyPassed) {
+    log('✅ Turnstile 在验证码识别期间已提前通过！');
+  }
 
   // 填入验证码（模拟人类输入）
   const captchaInput = await page.$('[placeholder*="上の画像"]');
@@ -1370,7 +1389,7 @@ async function handleCaptchaPage(page) {
   await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
   log('验证码已填入输入框。');
 
-  // 等待 Turnstile
+  // 等待 Turnstile（如果已提前通过，waitForTurnstile 会立即返回 true）
   const turnstilePassed = await waitForTurnstile(page);
 
   // 提交表单
