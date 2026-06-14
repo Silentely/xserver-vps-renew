@@ -18,7 +18,17 @@ sleep 1
 # ============================================================
 run_renew() {
     echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
-    node /app/xserver-vps-renew.mjs || true
+
+    # 执行续期脚本，捕获退出码
+    if node /app/xserver-vps-renew.mjs; then
+        echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
+        return 0
+    else
+        EXIT_CODE=$?
+        echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
+        return $EXIT_CODE
+    fi
+
     echo "$LOG_PREFIX ====== 执行完毕 $(date -Iseconds) ======"
 }
 
@@ -36,7 +46,7 @@ trap cleanup SIGTERM SIGINT
 # 运行模式判断
 # ============================================================
 if [ -n "$CRON_SCHEDULE" ]; then
-    # 定时模式：写入 cron 任务并保持容器运行
+    # 定时模式：先立即执行一次，然后定时调度
     echo "$LOG_PREFIX 定时模式：$CRON_SCHEDULE"
 
     # 将环境变量传递给 cron 子进程
@@ -58,8 +68,9 @@ CRONSCRIPT
 
     echo "$LOG_PREFIX cron 已配置，容器将持续运行。"
 
-    # 先立即执行一次
-    run_renew
+    # 立即执行第一次检查（失败不影响后续定时）
+    echo "$LOG_PREFIX 启动后立即检查一次到期情况..."
+    run_renew || echo "$LOG_PREFIX 首次检查失败，等待下次定时调度..."
 
     # 启动 cron 并保持前台
     cron
@@ -68,7 +79,7 @@ CRONSCRIPT
     wait
 else
     if [ "$1" = "--once" ]; then
-        # 被 cron 内部调用
+        # 被 cron 内部调用：执行一次，失败不重试
         run_renew
     else
         # 单次模式：执行完毕后退出

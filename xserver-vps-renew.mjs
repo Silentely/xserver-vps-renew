@@ -1018,18 +1018,6 @@ async function main() {
     await injectBrowserFingerprint(page);
     log('✅ 浏览器指纹补丁已注入！');
 
-    // 🆕 验证浏览器指纹是否正确应用
-    const fingerprint = await page.evaluate(() => {
-      return {
-        deviceMemory: navigator.deviceMemory || 'N/A',
-        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
-        platform: navigator.platform,
-        language: navigator.language,
-        webdriver: navigator.webdriver || false,
-      };
-    });
-    log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
-
     // 代理需要认证时，通过 page.authenticate 传递凭据
     if (hasProxy && CONFIG.PROXY_LOGIN) {
       await page.authenticate({
@@ -1051,6 +1039,18 @@ async function main() {
 
     // 步骤 1：登录
     await handleLogin(page);
+
+    // 🆕 验证浏览器指纹是否正确应用（在第一次导航后）
+    const fingerprint = await page.evaluate(() => {
+      return {
+        deviceMemory: navigator.deviceMemory || 'N/A',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+        platform: navigator.platform,
+        language: navigator.language,
+        webdriver: navigator.webdriver || false,
+      };
+    });
+    log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
 
     // 步骤 2：检查续期
     const renewUrl = await checkRenewalNeeded(page);
