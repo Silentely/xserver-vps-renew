@@ -973,15 +973,12 @@ async function waitForTurnstileToken(page) {
 async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
-  // 等待验证码图片元素（使用原始选择器）
+  // 等待验证码图片元素（验证码图片是 Base64 内嵌在 src 属性中）
   await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
 
-  // 截取验证码图片并转换为 Base64
-  const imgElement = await page.$('img[src^="data:image"], img[src^="data:"]');
-  if (!imgElement) throw new Error('未找到验证码图片。');
-
-  const imgBase64 = await imgElement.screenshot({ encoding: 'base64' });
-  const imgDataUri = `data:image/png;base64,${imgBase64}`;
+  // 直接读取 img 元素的 src 属性（已经是 Base64 格式）
+  const imgDataUri = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
+  if (!imgDataUri) throw new Error('未找到验证码图片。');
 
   // 识别验证码（2Captcha 人工识别）
   const code = await recognizeCaptcha(imgDataUri);
