@@ -392,10 +392,16 @@ function normalizeCaptchaCode(rawText) {
     return text;
   }
 
-  // 步骤 4: 尝试平假名转换
+  // 步骤 4: 尝试平假名转换（支持混合内容：数字 + 平假名）
   const convertedFromHiragana = convertHiraganaToNumber(text);
   if (convertedFromHiragana && /^\d{6}$/.test(convertedFromHiragana)) {
     return convertedFromHiragana;
+  }
+
+  // 步骤 4.5: 如果平假名转换后长度不足 6 位，但 >= 4 位，尝试智能补全
+  if (convertedFromHiragana && /^\d{4,5}$/.test(convertedFromHiragana)) {
+    log(`⚠️ 平假名转换结果不足 6 位: "${convertedFromHiragana}" (长度 ${convertedFromHiragana.length})`);
+    // 不自动补全，返回 null，让其他 OCR 提供完整结果
   }
 
   // 步骤 5: 提取所有数字字符（处理混合内容）
@@ -410,7 +416,7 @@ function normalizeCaptchaCode(rawText) {
 }
 
 /**
- * 尝试将平假名文本转换为数字（如果 OCR 返回平假名）
+ * 尝试将平假名文本转换为数字（支持数字 + 平假名混合内容）
  * @param {string} text - OCR 识别结果
  * @returns {string|null} - 转换后的数字，失败返回 null
  */
@@ -432,13 +438,21 @@ function convertHiraganaToNumber(text) {
     return converted;
   }
 
-  // 方法 2：逐字匹配并拼接
+  // 方法 2：逐字匹配并拼接（支持混合内容：数字 + 平假名）
   let result = '';
   let i = 0;
   while (i < cleanText.length) {
     let matched = false;
 
-    // 尝试匹配 3 字符、2 字符、1 字符
+    // 优先检查：如果当前字符已经是数字，直接保留
+    if (/^\d$/.test(cleanText[i])) {
+      result += cleanText[i];
+      i++;
+      matched = true;
+      continue;
+    }
+
+    // 尝试匹配 3 字符、2 字符、1 字符的平假名
     for (let len = 3; len >= 1; len--) {
       const substr = cleanText.substring(i, i + len);
       if (HIRAGANA_NUMBER_MAP[substr]) {
@@ -1181,9 +1195,9 @@ async function waitForTurnstile(page) {
   log('策略 1：尝试点击 Turnstile checkbox 自行通过...');
   await clickTurnstileFallback(page);
 
-  // 等待 Turnstile 自行验证通过（最多 15 秒）
+  // 等待 Turnstile 自行验证通过（最多 8 秒，避免验证码 Session 超时）
   const clickWaitStart = Date.now();
-  const clickWaitTimeout = 15_000;
+  const clickWaitTimeout = 8_000;  // 优化：15s → 8s（减少总耗时，避免验证码 Session 过期）
   while (Date.now() - clickWaitStart < clickWaitTimeout) {
     // 🔧 优化：读取所有字段，返回第一个有值的
     const token = await page.evaluate(() => {
