@@ -14,18 +14,25 @@ XVFB_PID=$!
 sleep 1
 
 # ============================================================
-# 计算下次运行时间
+# 显示定时任务信息
 # ============================================================
-calculate_next_run() {
+show_cron_schedule() {
     local cron_expr="$1"
     if [ -z "$cron_expr" ]; then
         echo "未设置定时"
         return
     fi
 
-    # 使用 date 命令计算明天同一时间
-    local next_run=$(date -d "tomorrow" '+%Y-%m-%d %H:%M:%S %Z')
-    echo "$next_run"
+    # 解析 cron 表达式显示易读时间
+    local minute=$(echo "$cron_expr" | awk '{print $1}')
+    local hour=$(echo "$cron_expr" | awk '{print $2}')
+
+    # 如果是简单的时间表达式（如 "30 20 * * *"），显示易读格式
+    if [[ "$minute" =~ ^[0-9]+$ ]] && [[ "$hour" =~ ^[0-9]+$ ]]; then
+        echo "每天 $(printf "%02d:%02d" "$hour" "$minute") (容器本地时间 - 东京)"
+    else
+        echo "$cron_expr (容器本地时间)"
+    fi
 }
 
 # ============================================================
@@ -64,9 +71,9 @@ if [ -n "$CRON_SCHEDULE" ]; then
     # 定时模式：先立即执行一次，然后定时调度
     echo "$LOG_PREFIX 🕐 定时模式: $CRON_SCHEDULE"
 
-    # 计算下次运行时间
-    NEXT_RUN=$(calculate_next_run "$CRON_SCHEDULE")
-    echo "$LOG_PREFIX ⏭️ 下次运行时间: $NEXT_RUN"
+    # 显示定时任务信息
+    SCHEDULE_INFO=$(show_cron_schedule "$CRON_SCHEDULE")
+    echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
 
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
@@ -111,7 +118,7 @@ CRONSCRIPT
     # 启动 cron 并保持前台
     cron
     echo "$LOG_PREFIX cron 守护进程已启动，等待下次调度..."
-    echo "$LOG_PREFIX ⏭️ 下次运行时间: $NEXT_RUN"
+    echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
     tail -f /var/log/xserver-renew.log 2>/dev/null &
     wait
 else
