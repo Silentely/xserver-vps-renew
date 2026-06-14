@@ -1189,33 +1189,10 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
-  // ========== 策略 1：点击 Turnstile checkbox 尝试自然通过 ==========
-  // rebrowser + Stealth 模式下，部分场景可直接通过 Turnstile 验证
-  // 优势：无需 API、无 IP 绑定问题、最快速
-  log('策略 1：尝试点击 Turnstile checkbox 自行通过...');
-  await clickTurnstileFallback(page);
-
-  // 等待 Turnstile 自行验证通过（最多 8 秒，避免验证码 Session 超时）
-  const clickWaitStart = Date.now();
-  const clickWaitTimeout = 8_000;  // 优化：15s → 8s（减少总耗时，避免验证码 Session 过期）
-  while (Date.now() - clickWaitStart < clickWaitTimeout) {
-    // 🔧 优化：读取所有字段，返回第一个有值的
-    const token = await page.evaluate(() => {
-      const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-      for (const field of fields) {
-        if (field.value) return field.value;
-      }
-      return '';
-    }).catch(() => '');
-
-    if (token) {
-      log(`Turnstile 自行通过！耗时 ${Date.now() - clickWaitStart}ms，token 长度: ${token.length}`);
-      return true;
-    }
-    await sleep(1000);
-  }
-
-  log(`Turnstile 点击后 ${clickWaitTimeout}ms 内未通过，检查是否有 API 密钥...`);
+  // ========== 策略 1：跳过（Docker 环境成功率低）==========
+  // 🔧 优化：Docker 环境中策略 1 成功率极低（<5%），且耗时 8-9 秒
+  // 直接跳过策略 1，立即使用 API 求解，减少总耗时至 ~11 秒
+  log('策略 1 在 Docker 环境中成功率低，直接使用 API 求解...');
 
   // ========== 策略 2：API 求解模式 ==========
   const provider = getTurnstileProvider();
