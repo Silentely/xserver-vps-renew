@@ -7,7 +7,7 @@
 - ✅ 自动检测免费 VPS 到期日，仅在到期前一天执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ 验证码自动识别（调用外部 API）
+- ✅ **图形验证码人工识别** - 使用 2Captcha 人工识别（准确率 >95%）
 - ✅ Cloudflare Turnstile 人机验证双策略：
   - **策略 1**：点击 checkbox 自然通过（优先）
   - **策略 2**：API 求解（降级）
@@ -25,10 +25,11 @@ mkdir xserver-vps-renew && cd xserver-vps-renew
 # 2. 下载 docker-compose.yml
 curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
-# 3. 创建环境变量
+# 3. 创建环境变量（必填 2Captcha API Key）
 cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
+TWOCAPTCHA_API_KEY=你的2Captcha密钥
 EOF
 
 # 4. 启动容器（每天东京时间 08:00 自动执行）
@@ -81,19 +82,13 @@ node xserver-vps-renew.mjs
 |------|------|
 | `XSERVER_MEMBER_ID` | Xserver 会员 ID |
 | `XSERVER_PASSWORD` | Xserver 密码 |
-
-### 可选 - 验证码识别
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `CAPTCHA_API` | 内置地址 | 验证码识别 API |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（图形验证码人工识别，注册：https://2captcha.com/） |
 
 ### 可选 - Turnstile API 求解
 
 | 变量 | 说明 |
 |------|------|
-| `CAPSOLVER_API_KEY` | CapSolver API 密钥（优先） |
-| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（备选） |
+| `CAPSOLVER_API_KEY` | CapSolver API 密钥（Turnstile 验证，注册：https://www.capsolver.com/） |
 
 ### 可选 - Telegram 通知
 
@@ -169,6 +164,17 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 
 ## 🐛 故障排查
 
+### 图形验证码识别失败
+
+**症状**：日志中出现 `认证に失敗しました`（认证失败）
+
+**原因**：图形验证码识别错误（6 位平假名数字）
+
+**解决方法**：
+1. 确保已配置 `TWOCAPTCHA_API_KEY`（必填）
+2. 检查 2Captcha 账户余额是否充足（每次识别约 $0.003）
+3. 注册地址：https://2captcha.com/
+
 ### Turnstile 无法自动通过
 
 **症状**：日志中出现 `策略 2：使用 CapSolver API 求解 Turnstile`
@@ -179,15 +185,16 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 
 **解决方法**：
 1. 配置代理（住宅 IP 更佳）
-2. 配置 Turnstile API 密钥（CapSolver 或 2Captcha）
+2. 配置 Turnstile API 密钥（CapSolver）
 
-### 验证码识别失败
+## 💰 成本估算
 
-**症状**：日志中出现 `验证码识别失败`
+| 服务 | 用途 | 每次成本 | 每月成本 |
+|------|------|---------|---------|
+| 2Captcha | 图形验证码识别 | ~$0.003 | ~$0.09（每天续期） |
+| CapSolver（可选） | Turnstile 验证 | ~$0.002 | ~$0.06（仅在自然通过失败时） |
 
-**解决方法**：
-1. 检查 `CAPTCHA_API` 是否可访问
-2. 查看验证码截图：`/tmp/captcha-*.png`
+**总计**：约 $0.09-0.15/月（~0.6-1 元人民币）
 
 ## 📜 许可证
 

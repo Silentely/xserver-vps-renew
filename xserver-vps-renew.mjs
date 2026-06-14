@@ -292,26 +292,121 @@ async function handleRenewalConfirm(page, renewUrl) {
 }
 
 // ============================================================
-// 步骤 4：验证码识别（远程 API）
+// 步骤 4：验证码识别（2Captcha 人工识别）
 // ============================================================
 
+/**
+ * 使用 2Captcha API v2 人工识别图形验证码
+ * @param {string} imgBase64 - Base64 编码的图片数据
+ * @returns {Promise<string>} - 识别的 6 位数字验证码
+ */
+async function recognizeCaptchaWith2Captcha(imgBase64) {
+  if (!CONFIG.TWOCAPTCHA_API_KEY) {
+    throw new Error('未配置 TWOCAPTCHA_API_KEY，无法识别验证码');
+  }
+
+  const apiKey = CONFIG.TWOCAPTCHA_API_KEY;
+  const apiBase = 'https://api.2captcha.com';
+
+  // 步骤 1：创建识别任务（使用 API v2）
+  log('正在提交验证码到 2Captcha...');
+  const createTaskUrl = `${apiBase}/createTask`;
+  const createTaskPayload = {
+    clientKey: apiKey,
+    task: {
+      type: 'ImageToTextTask',
+      body: imgBase64.replace(/^data:image\/\w+;base64,/, ''), // 移除 data URI 前缀
+      phrase: false,
+      case: false,
+      numeric: 1, // 1 = 仅数字
+      math: false,
+      minLength: 6,
+      maxLength: 6
+    },
+    languagePool: 'ja' // 日语
+  };
+
+  const createTaskRes = await fetch(createTaskUrl, {
+    method: 'POST',
+    body: JSON.stringify(createTaskPayload),
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  const createTaskData = await createTaskRes.json();
+  if (createTaskData.errorId !== 0) {
+    throw new Error(`2Captcha 创建任务失败: ${createTaskData.errorCode || createTaskData.errorDescription || JSON.stringify(createTaskData)}`);
+  }
+
+  const taskId = createTaskData.taskId;
+  log(`验证码任务已创建: ${taskId}`);
+
+  // 步骤 2：轮询任务结果（人工识别需要 10-30 秒）
+  const getTaskResultUrl = `${apiBase}/getTaskResult`;
+  const maxPolls = 30; // 最多轮询 30 次（60 秒）
+  const pollInterval = 2000; // 每 2 秒查询一次
+
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(pollInterval);
+
+    const getTaskResultPayload = {
+      clientKey: apiKey,
+      taskId: taskId
+    };
+
+    const resultRes = await fetch(getTaskResultUrl, {
+      method: 'POST',
+      body: JSON.stringify(getTaskResultPayload),
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const resultData = await resultRes.json();
+
+    // errorId === 0 表示成功
+    if (resultData.errorId === 0) {
+      if (resultData.status === 'ready') {
+        const code = resultData.solution.text;
+        log(`验证码识别成功: ${code} (耗时 ${(i + 1) * pollInterval / 1000}s)`);
+        return code;
+      } else if (resultData.status === 'processing') {
+        log(`等待人工识别... (${i + 1}/${maxPolls})`);
+        continue;
+      }
+    }
+
+    // errorId !== 0 表示出错
+    if (resultData.errorId !== 0) {
+      throw new Error(`2Captcha 识别失败: ${resultData.errorCode || resultData.errorDescription || JSON.stringify(resultData)}`);
+    }
+  }
+
+  throw new Error('2Captcha 识别超时（超过 60 秒）');
+}
+
+/**
+ * 验证码识别主函数（带重试机制）
+ * @param {string} imgSrc - 验证码图片 src（可能是 Base64 或 URL）
+ * @returns {Promise<string>} - 识别的 6 位数字验证码
+ */
 async function recognizeCaptcha(imgSrc) {
   for (let attempt = 1; attempt <= CONFIG.CAPTCHA_MAX_RETRY; attempt++) {
     try {
       log(`验证码识别第 ${attempt} 次尝试...`);
-      const res = await fetch(CONFIG.CAPTCHA_API, {
-        method: 'POST',
-        body: imgSrc,
-        headers: { 'Content-Type': 'text/plain' },
-      });
 
-      if (!res.ok) throw new Error(`API 响应 ${res.status}`);
+      // 如果已经是 Base64，直接使用；否则需要下载图片转 Base64
+      let imgBase64 = imgSrc;
+      if (!imgSrc.startsWith('data:image/')) {
+        // 这里假设 imgSrc 是一个 data URI，如果是 URL 需要下载
+        throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
+      }
 
-      const code = (await res.text()).trim();
-      if (code && code.length >= 4) {
+      // 使用 2Captcha 人工识别
+      const code = await recognizeCaptchaWith2Captcha(imgBase64);
+
+      if (code && code.length === 6 && /^\d{6}$/.test(code)) {
         log(`验证码识别成功: ${code}`);
         return code;
       }
+
       throw new Error(`返回无效结果: "${code}"`);
     } catch (e) {
       err(`第 ${attempt} 次识别失败: ${e.message}`);
@@ -878,13 +973,18 @@ async function waitForTurnstileToken(page) {
 async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
-  // 等待验证码图片
-  await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
-  const imgSrc = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
-  if (!imgSrc) throw new Error('未找到验证码图片。');
+  // 等待验证码图片元素
+  await page.waitForSelector('img[alt="画像認証"]', { timeout: 10_000 });
 
-  // 识别验证码
-  const code = await recognizeCaptcha(imgSrc);
+  // 截取验证码图片并转换为 Base64
+  const imgElement = await page.$('img[alt="画像認証"]');
+  if (!imgElement) throw new Error('未找到验证码图片。');
+
+  const imgBase64 = await imgElement.screenshot({ encoding: 'base64' });
+  const imgDataUri = `data:image/png;base64,${imgBase64}`;
+
+  // 识别验证码（2Captcha 人工识别）
+  const code = await recognizeCaptcha(imgDataUri);
 
   // 填入验证码（模拟人类输入）
   const captchaInput = await page.$('[placeholder*="上の画像"]');
