@@ -14,6 +14,21 @@ XVFB_PID=$!
 sleep 1
 
 # ============================================================
+# 计算下次运行时间
+# ============================================================
+calculate_next_run() {
+    local cron_expr="$1"
+    if [ -z "$cron_expr" ]; then
+        echo "未设置定时"
+        return
+    fi
+
+    # 使用 date 命令计算明天同一时间
+    local next_run=$(date -d "tomorrow" '+%Y-%m-%d %H:%M:%S %Z')
+    echo "$next_run"
+}
+
+# ============================================================
 # 执行续期脚本（Chrome 由 puppeteer.launch 管理）
 # ============================================================
 run_renew() {
@@ -47,7 +62,11 @@ trap cleanup SIGTERM SIGINT
 # ============================================================
 if [ -n "$CRON_SCHEDULE" ]; then
     # 定时模式：先立即执行一次，然后定时调度
-    echo "$LOG_PREFIX 定时模式：$CRON_SCHEDULE"
+    echo "$LOG_PREFIX 🕐 定时模式: $CRON_SCHEDULE"
+
+    # 计算下次运行时间
+    NEXT_RUN=$(calculate_next_run "$CRON_SCHEDULE")
+    echo "$LOG_PREFIX ⏭️ 下次运行时间: $NEXT_RUN"
 
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
@@ -59,6 +78,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
 set -e
 source /app/.env.cron
 export $(cut -d= -f1 /app/.env.cron)
+echo "[cron] ====== 定时任务触发 $(date -Iseconds) ======"
 cd /app && ./entrypoint.sh --once
 CRONSCRIPT
     chmod +x /app/cron-run.sh
@@ -68,13 +88,30 @@ CRONSCRIPT
 
     echo "$LOG_PREFIX cron 已配置，容器将持续运行。"
 
-    # 立即执行第一次检查（失败不影响后续定时）
+    # 立即执行第一次检查（失败最多重试 3 次）
     echo "$LOG_PREFIX 启动后立即检查一次到期情况..."
-    run_renew || echo "$LOG_PREFIX 首次检查失败，等待下次定时调度..."
+    RETRY_COUNT=0
+    MAX_RETRIES=3
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if run_renew; then
+            echo "$LOG_PREFIX ✅ 首次检查成功，进入定时模式"
+            break
+        else
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "$LOG_PREFIX ⚠️ 第 $RETRY_COUNT 次失败，等待 10 秒后重试..."
+                sleep 10
+            else
+                echo "$LOG_PREFIX ❌ 失败 $MAX_RETRIES 次，跳过本次续期，等待下次定时执行"
+            fi
+        fi
+    done
 
     # 启动 cron 并保持前台
     cron
     echo "$LOG_PREFIX cron 守护进程已启动，等待下次调度..."
+    echo "$LOG_PREFIX ⏭️ 下次运行时间: $NEXT_RUN"
     tail -f /var/log/xserver-renew.log 2>/dev/null &
     wait
 else

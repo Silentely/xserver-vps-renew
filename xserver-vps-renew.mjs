@@ -237,14 +237,55 @@ async function checkRenewalNeeded(page) {
 
   const result = await page.evaluate(() => {
     const row = document.querySelector('tr:has(.freeServerIco)');
-    if (!row) return null;
+    if (!row) {
+      console.log('❌ 未找到免费 VPS 条目（.freeServerIco）');
+      return null;
+    }
+
+    console.log('✅ 找到免费 VPS 条目');
 
     const termEl = row.querySelector('.contract__term');
     const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
 
+    // 提取 VPS 规格信息（调整选择器以匹配实际页面结构）
+    const cells = row.querySelectorAll('td');
+    console.log(`📊 表格列数: ${cells.length}`);
+
+    // 尝试多种方式提取服务器名和规格
+    let serverName = null;
+    let plan = null;
+
+    // 方法 1：通过列索引（假设第 2 列是服务器名，第 3 列是规格）
+    if (cells.length >= 3) {
+      serverName = cells[1]?.textContent.trim() || null;
+      plan = cells[2]?.textContent.trim() || null;
+      console.log(`方法1 - 服务器名: ${serverName}, 规格: ${plan}`);
+    }
+
+    // 方法 2：查找包含特定关键词的单元格
+    if (!serverName || !plan) {
+      cells.forEach((cell, idx) => {
+        const text = cell.textContent.trim();
+        console.log(`  单元格[${idx}]: ${text.substring(0, 50)}...`);
+
+        // 如果包含内存/CPU 信息，认为是规格
+        if (text.includes('メモリ') || text.includes('コア') || text.includes('GB')) {
+          plan = text;
+        }
+
+        // 如果包含 host/vps 等关键词，认为是服务器名
+        if (text.includes('host') || text.includes('vps-')) {
+          serverName = text;
+        }
+      });
+      console.log(`方法2 - 服务器名: ${serverName}, 规格: ${plan}`);
+    }
+
     return {
       expireDate: termEl ? termEl.textContent.trim() : null,
       detailHref: detailLink ? detailLink.href : null,
+      serverName: serverName,
+      plan: plan,
     };
   });
 
@@ -254,6 +295,8 @@ async function checkRenewalNeeded(page) {
   }
 
   log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
+  log(`VPS 服务器名: ${result.serverName ?? '未找到'}`);
+  log(`VPS 规格: ${result.plan ?? '未找到'}`);
 
   // 今天或明天到期都需要续期
   const needsRenewal = result.expireDate === today || result.expireDate === tomorrow;
@@ -268,7 +311,16 @@ async function checkRenewalNeeded(page) {
 
   const renewUrl = result.detailHref.replace('detail?id', 'freevps/extend/index?id_vps');
   log(`需要续期！URL: ${renewUrl}`);
-  return renewUrl;
+
+  // 返回续期 URL 和 VPS 信息
+  return {
+    renewUrl,
+    vpsInfo: {
+      serverName: result.serverName,
+      plan: result.plan,
+      expireDate: result.expireDate,
+    }
+  };
 }
 
 // ============================================================
@@ -292,8 +344,44 @@ async function handleRenewalConfirm(page, renewUrl) {
 }
 
 // ============================================================
-// 步骤 4：验证码识别（2Captcha 人工识别）
+// 步骤 4：验证码识别（2Captcha 人工识别 + 百度 OCR 保底）
 // ============================================================
+
+/**
+ * 使用百度 OCR API 识别验证码（保底方案）
+ * @param {string} imgBase64 - Base64 编码的图片数据
+ * @returns {Promise<string>} - 识别的验证码
+ */
+async function recognizeCaptchaWithBaiduOCR(imgBase64) {
+  if (!CONFIG.CAPTCHA_API) {
+    throw new Error('未配置 CAPTCHA_API，无法使用百度 OCR 保底方案');
+  }
+
+  log(`使用百度 OCR API 识别验证码（保底方案）: ${CONFIG.CAPTCHA_API}`);
+
+  const res = await fetch(CONFIG.CAPTCHA_API, {
+    method: 'POST',
+    body: imgBase64,
+    headers: { 'Content-Type': 'text/plain' },
+  });
+
+  log(`百度 OCR API 响应状态: ${res.status}`);
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`百度 OCR API 响应 ${res.status}: ${errorText}`);
+  }
+
+  const code = (await res.text()).trim();
+  log(`百度 OCR 返回结果: "${code}" (长度: ${code.length})`);
+
+  if (code && code.length >= 4) {
+    log(`✅ 百度 OCR 识别成功: ${code}`);
+    return code;
+  }
+
+  throw new Error(`百度 OCR 返回无效结果: "${code}"`);
+}
 
 /**
  * 使用 2Captcha API v2 人工识别图形验证码
@@ -383,33 +471,57 @@ async function recognizeCaptchaWith2Captcha(imgBase64) {
 }
 
 /**
- * 验证码识别主函数（带重试机制）
- * @param {string} imgSrc - 验证码图片 src（可能是 Base64 或 URL）
+ * 验证码识别主函数（2Captcha 优先 + 百度 OCR 保底）
+ * @param {string} imgSrc - 验证码图片 src（Base64 格式）
  * @returns {Promise<string>} - 识别的 6 位数字验证码
  */
 async function recognizeCaptcha(imgSrc) {
+  // 如果已经是 Base64，直接使用；否则需要下载图片转 Base64
+  let imgBase64 = imgSrc;
+  if (!imgSrc.startsWith('data:image/')) {
+    throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
+  }
+
+  // 策略 1：2Captcha 人工识别（尝试 3 次）
+  if (CONFIG.TWOCAPTCHA_API_KEY) {
+    for (let attempt = 1; attempt <= CONFIG.CAPTCHA_MAX_RETRY; attempt++) {
+      try {
+        log(`验证码识别第 ${attempt} 次尝试（2Captcha）...`);
+        const code = await recognizeCaptchaWith2Captcha(imgBase64);
+
+        if (code && code.length === 6 && /^\d{6}$/.test(code)) {
+          log(`✅ 2Captcha 验证码识别成功: ${code}`);
+          return code;
+        }
+
+        throw new Error(`返回无效结果: "${code}"`);
+      } catch (e) {
+        err(`第 ${attempt} 次 2Captcha 识别失败: ${e.message}`);
+        if (attempt < CONFIG.CAPTCHA_MAX_RETRY) {
+          await sleep(1000);
+        }
+      }
+    }
+
+    log('⚠️ 2Captcha 3 次尝试均失败，切换到百度 OCR 保底方案...');
+  } else {
+    log('⚠️ 未配置 TWOCAPTCHA_API_KEY，直接使用百度 OCR...');
+  }
+
+  // 策略 2：百度 OCR 保底（尝试 3 次）
   for (let attempt = 1; attempt <= CONFIG.CAPTCHA_MAX_RETRY; attempt++) {
     try {
-      log(`验证码识别第 ${attempt} 次尝试...`);
+      log(`验证码识别第 ${attempt} 次尝试（百度 OCR）...`);
+      const code = await recognizeCaptchaWithBaiduOCR(imgBase64);
 
-      // 如果已经是 Base64，直接使用；否则需要下载图片转 Base64
-      let imgBase64 = imgSrc;
-      if (!imgSrc.startsWith('data:image/')) {
-        // 这里假设 imgSrc 是一个 data URI，如果是 URL 需要下载
-        throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
-      }
-
-      // 使用 2Captcha 人工识别
-      const code = await recognizeCaptchaWith2Captcha(imgBase64);
-
-      if (code && code.length === 6 && /^\d{6}$/.test(code)) {
-        log(`验证码识别成功: ${code}`);
+      if (code && code.length >= 4) {
+        log(`✅ 百度 OCR 验证码识别成功: ${code}`);
         return code;
       }
 
       throw new Error(`返回无效结果: "${code}"`);
     } catch (e) {
-      err(`第 ${attempt} 次识别失败: ${e.message}`);
+      err(`第 ${attempt} 次百度 OCR 识别失败: ${e.message}`);
       if (attempt >= CONFIG.CAPTCHA_MAX_RETRY) throw e;
       await sleep(1000);
     }
@@ -1150,22 +1262,81 @@ async function main() {
     log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
 
     // 步骤 2：检查续期
-    const renewUrl = await checkRenewalNeeded(page);
-    if (!renewUrl) {
+    const renewalData = await checkRenewalNeeded(page);
+    if (!renewalData) {
       log('无需续期，流程结束。');
       await page.close();
       return;
     }
 
+    log(`📊 VPS 信息: 服务器名=${renewalData.vpsInfo.serverName}, 规格=${renewalData.vpsInfo.plan}, 原到期日=${renewalData.vpsInfo.expireDate}`);
+
     // 步骤 3：续期确认
-    await handleRenewalConfirm(page, renewUrl);
+    await handleRenewalConfirm(page, renewalData.renewUrl);
 
     // 步骤 4-6：验证码 + Turnstile + 提交
     await handleCaptchaPage(page);
 
+    // 提取续期后的到期时间
+    log('正在提取续期后的新到期日...');
+    const pageContent = await page.content();
+    log(`📄 当前页面 URL: ${page.url()}`);
+
+    const newExpireDate = await page.evaluate(() => {
+      // 方法 1：查找包含"更新後の利用期限"的 td 元素
+      const allTds = Array.from(document.querySelectorAll('td'));
+      const expireTd = allTds.find(td => td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'));
+
+      if (expireTd && expireTd.nextElementSibling) {
+        const dateText = expireTd.nextElementSibling.textContent.trim();
+        console.log('方法1找到日期:', dateText);
+        return dateText;
+      }
+
+      // 方法 2：直接查找 yyyy-mm-dd 格式的日期
+      const allText = document.body.textContent;
+      const dateMatches = allText.match(/\d{4}-\d{2}-\d{2}/g);
+      if (dateMatches && dateMatches.length > 0) {
+        console.log('方法2找到日期:', dateMatches);
+        // 返回最后一个日期（通常是新到期日）
+        return dateMatches[dateMatches.length - 1];
+      }
+
+      // 方法 3：查找包含年月日的日本格式
+      const jpDateMatch = allText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (jpDateMatch) {
+        const [, year, month, day] = jpDateMatch;
+        const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        console.log('方法3找到日期:', formattedDate);
+        return formattedDate;
+      }
+
+      console.log('所有方法均未找到日期');
+      return null;
+    });
+
+    if (newExpireDate) {
+      log(`✅ 成功提取新到期日: ${newExpireDate}`);
+    } else {
+      log(`⚠️ 未能自动提取新到期日，请检查页面结构`);
+    }
+
     log('🎉 续期流程全部完成！');
+
+    // 计算下次运行时间（明天同一时间）
+    const now = new Date();
+    const nextRun = new Date(now.getTime() + 86_400_000);
+    const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
+
     await notify(
-      `✅ <b>Xserver VPS 续期成功</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n📋 续期页面: ${escapeHtml(page.url())}`,
+      `✅ <b>Xserver VPS 续期成功</b>\n\n` +
+      `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
+      `🖥️ 服务器名: ${escapeHtml(renewalData.vpsInfo.serverName || '未知')}\n` +
+      `📦 VPS 规格: ${escapeHtml(renewalData.vpsInfo.plan || '未知')}\n` +
+      `📅 原到期日: ${escapeHtml(renewalData.vpsInfo.expireDate || '未知')}\n` +
+      `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+      `⏭️ 下次执行: ${nextRunStr}\n` +
+      `📋 续期页面: ${escapeHtml(page.url())}`,
     );
     await page.close();
   } catch (e) {
