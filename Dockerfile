@@ -29,6 +29,7 @@ RUN npm install --omit=dev && npm cache clean --force
 
 # 复制项目文件
 COPY xserver-vps-renew.mjs .
+COPY browser-fingerprint-patch.js .
 COPY turnstile-patch/ turnstile-patch/
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
