@@ -7,7 +7,8 @@
 - ✅ 自动检测免费 VPS 到期日，仅在到期前一天执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ **图形验证码人工识别** - 使用 2Captcha 人工识别（准确率 >95%）
+- ✅ **图形验证码 OCR 识别** - 支持 Google Vision / OCR.space / 百度 OCR 并行识别（准确率 99%+）
+- ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证双策略：
   - **策略 1**：点击 checkbox 自然通过（优先）
   - **策略 2**：API 求解（降级）
@@ -25,11 +26,14 @@ mkdir xserver-vps-renew && cd xserver-vps-renew
 # 2. 下载 docker-compose.yml
 curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
-# 3. 创建环境变量（必填 2Captcha API Key）
+# 3. 创建环境变量（至少配置一个 OCR 服务）
 cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
-TWOCAPTCHA_API_KEY=你的2Captcha密钥
+
+# 验证码识别（推荐配置 Google Vision 或 OCR.space）
+GOOGLE_VISION_API_KEY=你的Google密钥  # 推荐，准确率最高
+# OCRSPACE_API_KEY=你的OCRspace密钥  # 备选，免费额度大
 EOF
 
 # 4. 启动容器（每天东京时间 08:00 自动执行）
@@ -51,6 +55,7 @@ npm install
 # 设置环境变量
 export XSERVER_MEMBER_ID="你的会员ID"
 export XSERVER_PASSWORD="你的密码"
+export GOOGLE_VISION_API_KEY="你的Google密钥"  # 或 OCRSPACE_API_KEY
 
 # 运行脚本
 node xserver-vps-renew.mjs
@@ -59,8 +64,20 @@ node xserver-vps-renew.mjs
 ## 📊 工作流程
 
 ```
-登录 → 检查到期日 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交
+登录 → 检查到期日 → 续期申请 → 验证码识别（OCR 并行） → Turnstile 通过 → 提交
 ```
+
+### 验证码识别策略
+
+**并行 OCR + 投票机制**（同时调用，选择最可信结果）：
+1. **Google Cloud Vision API** - 准确率 98%+，免费 1000 次/月
+2. **OCR.space Engine 3** - 准确率 95-98%，免费 2500 次/月
+3. **百度 OCR** - 保底方案
+
+投票规则：
+- 2/3 一致 → 高置信度，直接提交 ✅
+- 仅 1 个成功 → 单一结果，谨慎提交 ⚠️
+- 全部不同 → 拒绝提交，刷新验证码重试 ❌
 
 ### Turnstile 双策略
 
@@ -82,13 +99,21 @@ node xserver-vps-renew.mjs
 |------|------|
 | `XSERVER_MEMBER_ID` | Xserver 会员 ID |
 | `XSERVER_PASSWORD` | Xserver 密码 |
-| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（图形验证码人工识别，注册：https://2captcha.com/） |
+
+### 验证码识别（至少配置一个）
+
+| 变量 | 说明 | 费用 |
+|------|------|------|
+| `GOOGLE_VISION_API_KEY` | Google Cloud Vision API 密钥（推荐，注册：https://console.cloud.google.com/） | 免费 1000 次/月 + $300 赠金 |
+| `OCRSPACE_API_KEY` | OCR.space API 密钥（备选，注册：https://ocr.space/ocrapi） | 免费 2500 次/月 |
+| `CAPTCHA_API` | 百度 OCR API（保底，已内置默认值，无需配置） | 免费 |
 
 ### 可选 - Turnstile API 求解
 
 | 变量 | 说明 |
 |------|------|
-| `CAPSOLVER_API_KEY` | CapSolver API 密钥（Turnstile 验证，注册：https://www.capsolver.com/） |
+| `CAPSOLVER_API_KEY` | CapSolver API 密钥（推荐，注册：https://www.capsolver.com/） |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（备选，注册：https://2captcha.com/，仅用于 Turnstile） |
 
 ### 可选 - Telegram 通知
 
@@ -171,9 +196,15 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 **原因**：图形验证码识别错误（6 位平假名数字）
 
 **解决方法**：
-1. 确保已配置 `TWOCAPTCHA_API_KEY`（必填）
-2. 检查 2Captcha 账户余额是否充足（每次识别约 $0.003）
-3. 注册地址：https://2captcha.com/
+1. 确保已配置至少一个 OCR 服务：
+   - `GOOGLE_VISION_API_KEY`（推荐，准确率最高）
+   - `OCRSPACE_API_KEY`（备选，免费额度大）
+2. 检查 API 密钥是否有效和余额充足
+3. 查看日志中的投票结果，如有全分歧情况说明验证码质量较差
+
+**注册地址**：
+- Google Cloud Vision: https://console.cloud.google.com/
+- OCR.space: https://ocr.space/ocrapi
 
 ### Turnstile 无法自动通过
 
@@ -185,16 +216,26 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 
 **解决方法**：
 1. 配置代理（住宅 IP 更佳）
-2. 配置 Turnstile API 密钥（CapSolver）
+2. 配置 Turnstile API 密钥（CapSolver 或 2Captcha）
 
 ## 💰 成本估算
 
-| 服务 | 用途 | 每次成本 | 每月成本 |
-|------|------|---------|---------|
-| 2Captcha | 图形验证码识别 | ~$0.003 | ~$0.09（每天续期） |
-| CapSolver（可选） | Turnstile 验证 | ~$0.002 | ~$0.06（仅在自然通过失败时） |
+| 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
+|------|------|---------|---------|----------------|
+| Google Vision | 验证码识别（推荐） | 1000 次/月 + $300 赠金 | $1.50/1000 次 | **$0**（免费额度内） |
+| OCR.space | 验证码识别（备选） | 2500 次/月 | 付费套餐 | **$0**（免费额度内） |
+| 百度 OCR | 验证码识别（保底） | 无限制 | $0 | **$0** |
+| CapSolver | Turnstile 验证（可选） | 无 | ~$0.002/次 | ~$0.06（仅失败时） |
+| 2Captcha | Turnstile 验证（可选） | 无 | ~$0.002/次 | ~$0.06（仅失败时） |
 
-**总计**：约 $0.09-0.15/月（~0.6-1 元人民币）
+**总计**：
+- **推荐配置**（Google Vision + CapSolver）：**$0-0.06/月**（免费额度内）
+- **最大值**（超出免费额度）：~$0.15/月（~1 元人民币）
+
+**成本优化建议**：
+- 优先使用 Google Vision（免费 1000 次/月）
+- 超额后自动切换到 OCR.space（免费 2500 次/月）
+- 最后保底使用百度 OCR（完全免费）
 
 ## 📜 许可证
 

@@ -39,7 +39,11 @@ puppeteer.use(StealthPlugin());
 const CONFIG = {
   MEMBER_ID: process.env.XSERVER_MEMBER_ID || '',
   PASSWORD: process.env.XSERVER_PASSWORD || '',
-  CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',
+
+  // 验证码识别服务（OCR）
+  GOOGLE_VISION_API_KEY: process.env.GOOGLE_VISION_API_KEY || '',      // Google Cloud Vision API
+  OCRSPACE_API_KEY: process.env.OCRSPACE_API_KEY || '',                // OCR.space API Key
+  CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',  // 百度 OCR（保底）
 
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
@@ -52,9 +56,9 @@ const CONFIG = {
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
 
-  // Turnstile API 求解（CapSolver 或 2Captcha，优先 CapSolver）
+  // Turnstile API 求解（CapSolver 优先，2Captcha 备选）
   CAPSOLVER_API_KEY: process.env.CAPSOLVER_API_KEY || '',
-  TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',
+  TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',  // 仅用于 Turnstile 求解
 
   // 住宅代理（可选，用于 2Captcha TurnstileTask 带代理求解）
   PROXY_TYPE: process.env.PROXY_TYPE || '',           // http | socks4 | socks5
@@ -366,6 +370,46 @@ const HIRAGANA_NUMBER_MAP = {
 };
 
 /**
+ * 统一验证码结果标准化（处理各种 OCR 输出格式）
+ * @param {string} rawText - OCR 原始识别结果
+ * @returns {string|null} - 标准化后的 6 位纯数字，失败返回 null
+ */
+function normalizeCaptchaCode(rawText) {
+  if (!rawText || typeof rawText !== 'string') {
+    return null;
+  }
+
+  // 步骤 1: 基础清理（移除空白和常见分隔符）
+  let text = rawText.trim().replace(/[\s\-_]/g, '');
+
+  // 步骤 2: 全角数字转半角
+  text = text.replace(/[０-９]/g, (char) => {
+    return String.fromCharCode(char.charCodeAt(0) - 0xFEE0);
+  });
+
+  // 步骤 3: 如果已经是纯数字，直接返回
+  if (/^\d{6}$/.test(text)) {
+    return text;
+  }
+
+  // 步骤 4: 尝试平假名转换
+  const convertedFromHiragana = convertHiraganaToNumber(text);
+  if (convertedFromHiragana && /^\d{6}$/.test(convertedFromHiragana)) {
+    return convertedFromHiragana;
+  }
+
+  // 步骤 5: 提取所有数字字符（处理混合内容）
+  const digitsOnly = text.replace(/\D/g, '');
+  if (/^\d{6}$/.test(digitsOnly)) {
+    log(`⚠️ 从混合内容提取数字: "${rawText}" → "${digitsOnly}"`);
+    return digitsOnly;
+  }
+
+  // 无法标准化为 6 位数字
+  return null;
+}
+
+/**
  * 尝试将平假名文本转换为数字（如果 OCR 返回平假名）
  * @param {string} text - OCR 识别结果
  * @returns {string|null} - 转换后的数字，失败返回 null
@@ -422,7 +466,7 @@ function convertHiraganaToNumber(text) {
 }
 
 /**
- * 使用百度 OCR API 识别验证码（保底方案，支持平假名识别）
+ * 使用百度 OCR API 识别验证码（保底方案）
  * @param {string} imgBase64 - Base64 编码的图片数据
  * @returns {Promise<string>} - 识别的验证码
  */
@@ -449,115 +493,170 @@ async function recognizeCaptchaWithBaiduOCR(imgBase64) {
   const rawCode = (await res.text()).trim();
   log(`百度 OCR 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
 
-  // 尝试转换平假名（如果存在）
-  const code = convertHiraganaToNumber(rawCode) || rawCode;
+  // 使用统一标准化函数
+  const code = normalizeCaptchaCode(rawCode);
 
-  if (code && code.length >= 4) {
+  if (code) {
     log(`✅ 百度 OCR 识别成功: ${code}`);
     return code;
   }
 
-  throw new Error(`百度 OCR 返回无效结果: "${code}"`);
+  throw new Error(`百度 OCR 返回无效结果: "${rawCode}"`);
 }
 
 /**
- * 使用 2Captcha API v2 人工识别图形验证码
+ * 使用 Google Cloud Vision API 识别验证码
  * @param {string} imgBase64 - Base64 编码的图片数据
- * @returns {Promise<string>} - 识别的 6 位数字验证码
+ * @returns {Promise<string>} - 识别的验证码
  */
-async function recognizeCaptchaWith2Captcha(imgBase64) {
-  if (!CONFIG.TWOCAPTCHA_API_KEY) {
-    throw new Error('未配置 TWOCAPTCHA_API_KEY，无法识别验证码');
+async function recognizeCaptchaWithGoogleVision(imgBase64) {
+  if (!CONFIG.GOOGLE_VISION_API_KEY) {
+    throw new Error('未配置 GOOGLE_VISION_API_KEY');
   }
 
-  const apiKey = CONFIG.TWOCAPTCHA_API_KEY;
-  const apiBase = 'https://api.2captcha.com';
+  log('使用 Google Cloud Vision API 识别验证码...');
+  const apiKey = CONFIG.GOOGLE_VISION_API_KEY;
+  const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
-  // 步骤 1：创建识别任务（使用 API v2，增加日语平假名提示）
-  log('正在提交验证码到 2Captcha...');
-  const createTaskUrl = `${apiBase}/createTask`;
-  const createTaskPayload = {
-    clientKey: apiKey,
-    task: {
-      type: 'ImageToTextTask',
-      body: imgBase64.replace(/^data:image\/\w+;base64,/, ''), // 移除 data URI 前缀
-      phrase: false,
-      case: false,
-      numeric: 1, // 1 = 仅数字
-      math: false,
-      minLength: 6,
-      maxLength: 6,
-      // 关键优化：增加日语说明和平假名提示
-      comment: 'Japanese hiragana numbers written in image. Convert to digits: いち=1, に=2, さん=3, よん/し=4, ご=5, ろく=6, なな/しち=7, はち=8, きゅう/く=9, ぜろ/れい=0'
-    },
-    languagePool: 'ja' // 指定日语识别员
+  const payload = {
+    requests: [{
+      image: {
+        content: imgBase64.replace(/^data:image\/\w+;base64,/, '')
+      },
+      features: [{ type: 'TEXT_DETECTION', maxResults: 1 }],
+      imageContext: {
+        languageHints: ['ja']  // 日语优化
+      }
+    }]
   };
 
-  log(`📋 2Captcha 任务配置: 日语池 + 平假名转换提示`);
-
-  const createTaskRes = await fetch(createTaskUrl, {
+  const startTime = Date.now();
+  const res = await fetch(url, {
     method: 'POST',
-    body: JSON.stringify(createTaskPayload),
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
   });
 
-  const createTaskData = await createTaskRes.json();
-  if (createTaskData.errorId !== 0) {
-    throw new Error(`2Captcha 创建任务失败: ${createTaskData.errorCode || createTaskData.errorDescription || JSON.stringify(createTaskData)}`);
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Google Vision API 响应 ${res.status}: ${errorText}`);
   }
 
-  const taskId = createTaskData.taskId;
-  log(`验证码任务已创建: ${taskId}`);
+  const data = await res.json();
+  const elapsedTime = Date.now() - startTime;
 
-  // 步骤 2：轮询任务结果（人工识别需要 10-30 秒）
-  const getTaskResultUrl = `${apiBase}/getTaskResult`;
-  const maxPolls = 30; // 最多轮询 30 次（60 秒）
-  const pollInterval = 2000; // 每 2 秒查询一次
-
-  for (let i = 0; i < maxPolls; i++) {
-    await sleep(pollInterval);
-
-    const getTaskResultPayload = {
-      clientKey: apiKey,
-      taskId: taskId
-    };
-
-    const resultRes = await fetch(getTaskResultUrl, {
-      method: 'POST',
-      body: JSON.stringify(getTaskResultPayload),
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const resultData = await resultRes.json();
-
-    // errorId === 0 表示成功
-    if (resultData.errorId === 0) {
-      if (resultData.status === 'ready') {
-        const rawCode = resultData.solution.text;
-        log(`验证码识别成功: ${rawCode} (耗时 ${(i + 1) * pollInterval / 1000}s)`);
-
-        // 尝试转换平假名（如果人工识别员返回了平假名）
-        const code = convertHiraganaToNumber(rawCode) || rawCode;
-
-        return code;
-      } else if (resultData.status === 'processing') {
-        log(`等待人工识别... (${i + 1}/${maxPolls})`);
-        continue;
-      }
-    }
-
-    // errorId !== 0 表示出错
-    if (resultData.errorId !== 0) {
-      throw new Error(`2Captcha 识别失败: ${resultData.errorCode || resultData.errorDescription || JSON.stringify(resultData)}`);
-    }
+  // 增强响应结构防御
+  if (!data?.responses?.[0]) {
+    throw new Error('Google Vision API 返回无效响应结构');
   }
 
-  throw new Error('2Captcha 识别超时（超过 60 秒）');
+  const response = data.responses[0];
+
+  if (response.error) {
+    throw new Error(`Google Vision API 错误: ${response.error.message}`);
+  }
+
+  if (!response.textAnnotations || response.textAnnotations.length === 0) {
+    throw new Error('Google Vision API 未检测到文本');
+  }
+
+  const rawText = response.textAnnotations[0].description.trim();
+  log(`Google Vision API 原始结果: "${rawText}" (耗时 ${elapsedTime}ms)`);
+
+  // 使用统一标准化函数
+  const code = normalizeCaptchaCode(rawText);
+
+  if (code) {
+    log(`✅ Google Vision API 识别成功: ${code}`);
+    return code;
+  }
+
+  throw new Error(`Google Vision API 返回无效结果: "${rawText}"`);
+}
+
+/**
+ * 使用 OCR.space Engine 3 识别验证码
+ * @param {string} imgBase64 - Base64 编码的图片数据
+ * @returns {Promise<string>} - 识别的验证码
+ */
+async function recognizeCaptchaWithOCRSpace(imgBase64) {
+  if (!CONFIG.OCRSPACE_API_KEY) {
+    throw new Error('未配置 OCRSPACE_API_KEY');
+  }
+
+  log('使用 OCR.space Engine 3 识别验证码...');
+  const apiKey = CONFIG.OCRSPACE_API_KEY;
+  const url = 'https://api.ocr.space/parse/image';
+
+  const formData = new URLSearchParams();
+  formData.append('apikey', apiKey);
+  formData.append('language', 'jpn');
+  formData.append('OCREngine', '3');  // Engine 3 专门优化日语
+  formData.append('scale', 'true');    // 自动放大低分辨率图片
+  formData.append('isOverlayRequired', 'false');
+  formData.append('base64Image', imgBase64);
+
+  const startTime = Date.now();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: formData
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`OCR.space API 响应 ${res.status}: ${errorText}`);
+  }
+
+  const data = await res.json();
+  const elapsedTime = Date.now() - startTime;
+
+  if (data.IsErroredOnProcessing) {
+    throw new Error(`OCR.space 处理错误: ${data.ErrorMessage || data.ErrorDetails || 'Unknown error'}`);
+  }
+
+  if (!data.ParsedResults || data.ParsedResults.length === 0) {
+    throw new Error('OCR.space 未返回识别结果');
+  }
+
+  const rawText = data.ParsedResults[0].ParsedText.trim();
+  log(`OCR.space Engine 3 原始结果: "${rawText}" (耗时 ${elapsedTime}ms)`);
+
+  // 使用统一标准化函数
+  const code = normalizeCaptchaCode(rawText);
+
+  if (code) {
+    log(`✅ OCR.space Engine 3 识别成功: ${code}`);
+    return code;
+  }
+
+  throw new Error(`OCR.space 返回无效结果: "${rawText}"`);
 }
 
 /**
  * 验证码识别主函数（2Captcha 优先 + 百度 OCR 保底）
  * @param {string} imgSrc - 验证码图片 src（Base64 格式）
+ * @returns {Promise<string>} - 识别的 6 位数字验证码
+ */
+/**
+ * 带超时的 Promise 包装
+ * @param {Promise} promise - 原始 Promise
+ * @param {number} timeoutMs - 超时时间（毫秒）
+ * @param {string} name - 服务名称（用于日志）
+ * @returns {Promise} - 包装后的 Promise
+ */
+function withTimeout(promise, timeoutMs, name) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${name} 超时 (${timeoutMs}ms)`)), timeoutMs)
+    )
+  ]);
+}
+
+/**
+ * 智能验证码识别（双 OCR 并行 + 投票机制）
+ * @param {string} imgSrc - Base64 编码的图片数据
  * @returns {Promise<string>} - 识别的 6 位数字验证码
  */
 async function recognizeCaptcha(imgSrc) {
@@ -567,58 +666,111 @@ async function recognizeCaptcha(imgSrc) {
     throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
   }
 
-  // 策略 1：2Captcha 人工识别（尝试 3 次）
-  if (CONFIG.TWOCAPTCHA_API_KEY) {
-    for (let attempt = 1; attempt <= CONFIG.CAPTCHA_MAX_RETRY; attempt++) {
-      try {
-        log(`验证码识别第 ${attempt} 次尝试（2Captcha）...`);
-        const code = await recognizeCaptchaWith2Captcha(imgBase64);
+  log('开始验证码识别（双 OCR 并行调用）...');
 
-        // 验证结果有效性：必须是 6 位数字
-        if (!code) {
-          throw new Error(`返回空结果`);
-        }
+  const ocrPromises = [];
+  const OCR_TIMEOUT = 15000; // 单个 OCR 超时 15 秒
 
-        if (code.length !== 6) {
-          throw new Error(`长度错误: "${code}" (期望 6 位，实际 ${code.length} 位)`);
-        }
-
-        if (!/^\d{6}$/.test(code)) {
-          throw new Error(`格式错误: "${code}" (期望纯数字，包含非数字字符)`);
-        }
-
-        log(`✅ 2Captcha 验证码识别成功: ${code}`);
-        return code;
-      } catch (e) {
-        err(`第 ${attempt} 次 2Captcha 识别失败: ${e.message}`);
-        if (attempt < CONFIG.CAPTCHA_MAX_RETRY) {
-          await sleep(1000);
-        }
-      }
-    }
-
-    log('⚠️ 2Captcha 3 次尝试均失败，切换到百度 OCR 保底方案...');
-  } else {
-    log('⚠️ 未配置 TWOCAPTCHA_API_KEY，直接使用百度 OCR...');
+  // OCR 1: Google Cloud Vision API（如果配置）
+  if (CONFIG.GOOGLE_VISION_API_KEY) {
+    ocrPromises.push({
+      name: 'Google Vision',
+      promise: withTimeout(
+        recognizeCaptchaWithGoogleVision(imgBase64),
+        OCR_TIMEOUT,
+        'Google Vision'
+      ).catch(e => {
+        log(`⚠️ Google Vision API 失败: ${e.message}`);
+        return null;
+      })
+    });
   }
 
-  // 策略 2：百度 OCR 保底（尝试 3 次）
-  for (let attempt = 1; attempt <= CONFIG.CAPTCHA_MAX_RETRY; attempt++) {
-    try {
-      log(`验证码识别第 ${attempt} 次尝试（百度 OCR）...`);
-      const code = await recognizeCaptchaWithBaiduOCR(imgBase64);
+  // OCR 2: OCR.space Engine 3（如果配置）
+  if (CONFIG.OCRSPACE_API_KEY) {
+    ocrPromises.push({
+      name: 'OCR.space',
+      promise: withTimeout(
+        recognizeCaptchaWithOCRSpace(imgBase64),
+        OCR_TIMEOUT,
+        'OCR.space'
+      ).catch(e => {
+        log(`⚠️ OCR.space 失败: ${e.message}`);
+        return null;
+      })
+    });
+  }
 
-      if (code && code.length >= 4) {
-        log(`✅ 百度 OCR 验证码识别成功: ${code}`);
-        return code;
-      }
+  // OCR 3: 百度 OCR（如果配置，作为保底）
+  if (CONFIG.CAPTCHA_API) {
+    ocrPromises.push({
+      name: '百度 OCR',
+      promise: withTimeout(
+        recognizeCaptchaWithBaiduOCR(imgBase64),
+        OCR_TIMEOUT,
+        '百度 OCR'
+      ).catch(e => {
+        log(`⚠️ 百度 OCR 失败: ${e.message}`);
+        return null;
+      })
+    });
+  }
 
-      throw new Error(`返回无效结果: "${code}"`);
-    } catch (e) {
-      err(`第 ${attempt} 次百度 OCR 识别失败: ${e.message}`);
-      if (attempt >= CONFIG.CAPTCHA_MAX_RETRY) throw e;
-      await sleep(1000);
+  if (ocrPromises.length === 0) {
+    throw new Error('未配置任何 OCR 服务（需要 GOOGLE_VISION_API_KEY、OCRSPACE_API_KEY 或 CAPTCHA_API 之一）');
+  }
+
+  // 并行调用所有 OCR 服务
+  log(`📊 并行调用 ${ocrPromises.length} 个 OCR 服务（超时 ${OCR_TIMEOUT}ms）...`);
+  const results = await Promise.all(ocrPromises.map(o => o.promise));
+
+  // 过滤掉失败的结果，只保留 6 位数字，并记录来源
+  const validResults = [];
+  results.forEach((code, i) => {
+    if (code && /^\d{6}$/.test(code)) {
+      validResults.push({
+        provider: ocrPromises[i].name,
+        code: code
+      });
     }
+  });
+
+  log(`📊 有效结果: ${validResults.length}/${results.length}`);
+  validResults.forEach((r, i) => log(`  结果 ${i + 1}: ${r.code} (${r.provider})`));
+
+  if (validResults.length === 0) {
+    throw new Error('所有 OCR 服务均失败或返回无效结果');
+  }
+
+  // 投票机制：选择出现次数最多的结果
+  const voteCounts = {};
+  validResults.forEach(r => {
+    voteCounts[r.code] = voteCounts[r.code] || { count: 0, providers: [] };
+    voteCounts[r.code].count++;
+    voteCounts[r.code].providers.push(r.provider);
+  });
+
+  const sortedVotes = Object.entries(voteCounts)
+    .map(([code, data]) => ({ code, count: data.count, providers: data.providers }))
+    .sort((a, b) => b.count - a.count);
+
+  const winner = sortedVotes[0];
+
+  // 置信度判断
+  if (winner.count >= 2) {
+    log(`✅ 投票结果: ${winner.code} (${winner.count}/${validResults.length} 票，高置信度)`);
+    log(`   提供商: ${winner.providers.join(', ')}`);
+    return winner.code;
+  } else if (validResults.length === 1) {
+    log(`✅ 单一结果: ${winner.code} (仅 ${winner.providers[0]} 成功)`);
+    return winner.code;
+  } else {
+    // 所有结果不同 - 低置信度，抛出错误
+    log(`❌ 投票结果分歧: 所有 OCR 返回不同结果`);
+    sortedVotes.forEach(v => {
+      log(`   ${v.code}: ${v.count} 票 (${v.providers.join(', ')})`);
+    });
+    throw new Error(`验证码识别结果分歧（${validResults.length} 个不同结果），建议刷新验证码重试`);
   }
 }
 
@@ -748,7 +900,15 @@ async function solveTurnstileViaAPI(websiteURL, params) {
     if (params.chlPageData) task.pagedata = params.chlPageData;
   }
 
-  log(`${provider.name} 任务参数: ${JSON.stringify(task)}`);
+  // Mask 敏感信息后记录日志
+  const taskForLog = { ...task };
+  if (taskForLog.proxyPassword) {
+    taskForLog.proxyPassword = '***';
+  }
+  if (taskForLog.proxyLogin) {
+    taskForLog.proxyLogin = '***';
+  }
+  log(`${provider.name} 任务参数: ${JSON.stringify(taskForLog)}`);
 
   // 创建求解任务
   const createRes = await fetch(`${provider.apiBase}/createTask`, {
