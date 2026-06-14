@@ -25,6 +25,7 @@ import { setTimeout as sleep } from 'timers/promises';
 import { existsSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
@@ -71,9 +72,15 @@ const CONFIG = {
 // 常量
 // ============================================================
 
-// 固定为常见 Windows 家用电脑 UA
-// 版本号与 2Captcha 当前求解环境（Chrome 140）保持一致，避免 UA 不匹配导致 token 失效
-const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+// 🔧 优化：使用真实浏览器调试发现的 UA (Chrome 149 on macOS)
+// 基于 Browser Relay 调试收集的真实指纹数据
+const MACOS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
+
+// 备用：Windows UA (如果需要伪装成 Windows 环境)
+const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+
+// 默认使用 macOS UA（与调试环境一致）
+const DEFAULT_UA = MACOS_UA;
 
 // ============================================================
 // Chrome 路径检测
@@ -658,15 +665,42 @@ async function waitForTurnstile(page) {
     return true;
   }
 
+  // 🆕 调试：输出 Turnstile 配置信息
+  const turnstileConfig = await page.evaluate(() => {
+    const div = document.querySelector('.cf-turnstile');
+    if (!div) return null;
+    return {
+      sitekey: div.getAttribute('data-sitekey'),
+      callback: div.getAttribute('data-callback'),
+      theme: div.getAttribute('data-theme') || '(默认)',
+      action: div.getAttribute('data-action') || '(无)',
+    };
+  }).catch(() => null);
+
+  if (turnstileConfig) {
+    log(`📊 Turnstile 配置: sitekey=${turnstileConfig.sitekey}, callback=${turnstileConfig.callback}`);
+  }
+
   // 令牌是否已经存在
-  const existingToken = await page
-    .$eval('[name="cf-turnstile-response"]', (el) => el.value)
-    .catch(() => '');
+  // 🔧 优化：读取所有字段，返回第一个有值的
+  const existingToken = await page.evaluate(() => {
+    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+    for (const field of fields) {
+      if (field.value) return field.value;
+    }
+    return '';
+  }).catch(() => '');
 
   if (existingToken) {
     log('Turnstile 令牌已就绪。');
     return true;
   }
+
+  // 🆕 调试：输出字段数量
+  const fieldCount = await page.evaluate(() => {
+    return document.querySelectorAll('[name="cf-turnstile-response"]').length;
+  }).catch(() => 0);
+  log(`📊 检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
 
   // 等待 Turnstile widget 渲染
   log('等待 Turnstile 渲染...');
@@ -690,9 +724,14 @@ async function waitForTurnstile(page) {
   const clickWaitStart = Date.now();
   const clickWaitTimeout = 15_000;
   while (Date.now() - clickWaitStart < clickWaitTimeout) {
-    const token = await page
-      .$eval('[name="cf-turnstile-response"]', (el) => el.value)
-      .catch(() => '');
+    // 🔧 优化：读取所有字段，返回第一个有值的
+    const token = await page.evaluate(() => {
+      const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+      for (const field of fields) {
+        if (field.value) return field.value;
+      }
+      return '';
+    }).catch(() => '');
 
     if (token) {
       log(`Turnstile 自行通过！耗时 ${Date.now() - clickWaitStart}ms，token 长度: ${token.length}`);
@@ -761,9 +800,14 @@ async function waitForTurnstile(page) {
       await sleep(2000);
 
       // 验证 token 是否生效
-      const verifyToken = await page
-        .$eval('[name="cf-turnstile-response"]', (el) => el.value)
-        .catch(() => '');
+      // 🔧 优化：读取所有字段，返回第一个有值的
+      const verifyToken = await page.evaluate(() => {
+        const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+        for (const field of fields) {
+          if (field.value) return field.value;
+        }
+        return '';
+      }).catch(() => '');
 
       if (verifyToken) {
         log(`Turnstile token 验证成功！token 长度: ${verifyToken.length}`);
@@ -798,9 +842,15 @@ async function waitForTurnstile(page) {
 async function waitForTurnstileToken(page) {
   const startTime = Date.now();
   while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
-    const token = await page
-      .$eval('[name="cf-turnstile-response"]', (el) => el.value)
-      .catch(() => '');
+    // 🔧 优化：读取所有 cf-turnstile-response 字段，返回第一个有值的
+    // 调试发现页面有两个字段，需要读取有值的那个
+    const token = await page.evaluate(() => {
+      const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+      for (const field of fields) {
+        if (field.value) return field.value;
+      }
+      return '';
+    }).catch(() => '');
 
     if (token) {
       log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
@@ -922,8 +972,9 @@ async function main() {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      '--window-size=1280,900',
+      '--window-size=1440,900',  // 🔧 优化：使用真实浏览器调试的分辨率
       '--window-position=0,0',
+      '--tz=Asia/Shanghai',       // 🆕 添加：时区设置
     ];
 
     // 加载 turnstile-patch 扩展
@@ -956,11 +1007,28 @@ async function main() {
       userDataDir: CONFIG.CHROME_USER_DATA,
       headless: false,
       args: chromeArgs,
-      defaultViewport: { width: 1280, height: 900 },
+      defaultViewport: { width: 1440, height: 900 },  // 🔧 优化：匹配启动参数
     });
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
     const page = await browser.newPage();
+
+    // 🆕 注入浏览器指纹补丁（基于真实浏览器调试数据）
+    log('注入浏览器指纹补丁...');
+    await injectBrowserFingerprint(page);
+    log('✅ 浏览器指纹补丁已注入！');
+
+    // 🆕 验证浏览器指纹是否正确应用
+    const fingerprint = await page.evaluate(() => {
+      return {
+        deviceMemory: navigator.deviceMemory || 'N/A',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+        platform: navigator.platform,
+        language: navigator.language,
+        webdriver: navigator.webdriver || false,
+      };
+    });
+    log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
 
     // 代理需要认证时，通过 page.authenticate 传递凭据
     if (hasProxy && CONFIG.PROXY_LOGIN) {
@@ -971,9 +1039,9 @@ async function main() {
       log('浏览器代理认证已设置');
     }
 
-    // 启动后立即设置 Windows UA，确保整个生命周期与 Turnstile token 绑定的 UA 一致
-    await page.setUserAgent(WINDOWS_UA);
-    log(`浏览器 UA 已设置: ${WINDOWS_UA.substring(0, 60)}...`);
+    // 🔧 优化：使用真实浏览器调试的 UA (Chrome 149)
+    await page.setUserAgent(DEFAULT_UA);
+    log(`浏览器 UA 已设置: ${DEFAULT_UA.substring(0, 60)}...`);
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // Turnstile 处理策略：不拦截渲染，让 widget 正常显示

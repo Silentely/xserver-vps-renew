@@ -2,3 +2,33 @@ node_modules/
 npm-debug.log*
 .env
 *.log
+.ace-tool/
+.omc/
+.omx/
+.claude/
+
+# 内部文档和开发笔记（不适合公开）
+.docs/
+
+# 测试结果
+test-results-*/
+screenshots/
+
+# 临时文件
+/tmp/
+*.png
+*.jpg
+*.jpeg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Chrome 用户数据
+chrome-profile/
