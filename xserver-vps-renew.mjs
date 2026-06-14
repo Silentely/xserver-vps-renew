@@ -247,39 +247,31 @@ async function checkRenewalNeeded(page) {
     const termEl = row.querySelector('.contract__term');
     const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
 
-    // 提取 VPS 规格信息（调整选择器以匹配实际页面结构）
+    // 提取 VPS 规格信息
     const cells = row.querySelectorAll('td');
     console.log(`📊 表格列数: ${cells.length}`);
 
-    // 尝试多种方式提取服务器名和规格
     let serverName = null;
     let plan = null;
 
-    // 方法 1：通过列索引（假设第 2 列是服务器名，第 3 列是规格）
-    if (cells.length >= 3) {
-      serverName = cells[1]?.textContent.trim() || null;
-      plan = cells[2]?.textContent.trim() || null;
-      console.log(`方法1 - 服务器名: ${serverName}, 规格: ${plan}`);
-    }
+    // 遍历所有单元格，根据内容特征判断
+    cells.forEach((cell, idx) => {
+      const text = cell.textContent.replace(/\s+/g, ' ').trim(); // 移除多余空白符
+      console.log(`  单元格[${idx}]: "${text.substring(0, 80)}"`);
 
-    // 方法 2：查找包含特定关键词的单元格
-    if (!serverName || !plan) {
-      cells.forEach((cell, idx) => {
-        const text = cell.textContent.trim();
-        console.log(`  单元格[${idx}]: ${text.substring(0, 50)}...`);
+      // 判断规格：包含内存/CPU/存储信息
+      if ((text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe'))
+          && text.length > 10) {
+        plan = text;
+        console.log(`  → 识别为规格: "${plan}"`);
+      }
 
-        // 如果包含内存/CPU 信息，认为是规格
-        if (text.includes('メモリ') || text.includes('コア') || text.includes('GB')) {
-          plan = text;
-        }
-
-        // 如果包含 host/vps 等关键词，认为是服务器名
-        if (text.includes('host') || text.includes('vps-')) {
-          serverName = text;
-        }
-      });
-      console.log(`方法2 - 服务器名: ${serverName}, 规格: ${plan}`);
-    }
+      // 判断服务器名：包含 host/vps 关键词，且长度较短
+      if ((text.includes('host') || text.includes('vps-')) && text.length < 30) {
+        serverName = text;
+        console.log(`  → 识别为服务器名: "${serverName}"`);
+      }
+    });
 
     return {
       expireDate: termEl ? termEl.textContent.trim() : null,
@@ -294,9 +286,13 @@ async function checkRenewalNeeded(page) {
     return null;
   }
 
+  // 清理 VPS 信息中的多余空白符
+  const cleanServerName = result.serverName ? result.serverName.replace(/\s+/g, ' ').trim() : null;
+  const cleanPlan = result.plan ? result.plan.replace(/\s+/g, ' ').trim() : null;
+
   log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
-  log(`VPS 服务器名: ${result.serverName ?? '未找到'}`);
-  log(`VPS 规格: ${result.plan ?? '未找到'}`);
+  log(`VPS 服务器名: ${cleanServerName ?? '未找到'}`);
+  log(`VPS 规格: ${cleanPlan ?? '未找到'}`);
 
   // 今天或明天到期都需要续期
   const needsRenewal = result.expireDate === today || result.expireDate === tomorrow;
@@ -316,8 +312,8 @@ async function checkRenewalNeeded(page) {
   return {
     renewUrl,
     vpsInfo: {
-      serverName: result.serverName,
-      plan: result.plan,
+      serverName: cleanServerName,
+      plan: cleanPlan,
       expireDate: result.expireDate,
     }
   };
@@ -489,12 +485,21 @@ async function recognizeCaptcha(imgSrc) {
         log(`验证码识别第 ${attempt} 次尝试（2Captcha）...`);
         const code = await recognizeCaptchaWith2Captcha(imgBase64);
 
-        if (code && code.length === 6 && /^\d{6}$/.test(code)) {
-          log(`✅ 2Captcha 验证码识别成功: ${code}`);
-          return code;
+        // 验证结果有效性：必须是 6 位数字
+        if (!code) {
+          throw new Error(`返回空结果`);
         }
 
-        throw new Error(`返回无效结果: "${code}"`);
+        if (code.length !== 6) {
+          throw new Error(`长度错误: "${code}" (期望 6 位，实际 ${code.length} 位)`);
+        }
+
+        if (!/^\d{6}$/.test(code)) {
+          throw new Error(`格式错误: "${code}" (期望纯数字，包含非数字字符)`);
+        }
+
+        log(`✅ 2Captcha 验证码识别成功: ${code}`);
+        return code;
       } catch (e) {
         err(`第 ${attempt} 次 2Captcha 识别失败: ${e.message}`);
         if (attempt < CONFIG.CAPTCHA_MAX_RETRY) {
@@ -1129,6 +1134,12 @@ async function handleCaptchaPage(page) {
   const pageText = await page.evaluate(() => document.body.innerText);
   const currentUrl = page.url();
 
+  log(`📄 续期提交后页面 URL: ${currentUrl}`);
+
+  // 保存完整页面文本用于调试（前1000字符）
+  const pageSnippet = pageText.substring(0, 1000).replace(/\s+/g, ' ').trim();
+  log(`📝 页面内容片段: ${pageSnippet}`);
+
   // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
   if (currentUrl.includes('/conf')) {
     const hasAuthFail = pageText.includes('認証に失敗');
@@ -1136,21 +1147,34 @@ async function handleCaptchaPage(page) {
     throw new Error(`续期提交失败（${reason}）`);
   }
 
-  // 检查是否有明确错误
-  const errorPatterns = ['エラー', '失敗', '不正', 'もう一度'];
-  const hasError = errorPatterns.some((pat) => pageText.includes(pat));
-  if (hasError) {
-    const snippet = pageText.substring(0, 300).replace(/\s+/g, ' ').trim();
-    throw new Error(`续期提交后出现错误: ${snippet}`);
+  // 优先检查失败标识（必须在成功检查之前）
+  const failurePatterns = ['認証に失敗', '失敗しました', 'エラーが発生', '不正なアクセス'];
+  const matchedFailure = failurePatterns.find(pat => pageText.includes(pat));
+  if (matchedFailure) {
+    log(`❌ 检测到失败标识: "${matchedFailure}"`);
+    throw new Error(`续期提交失败: ${pageSnippet}`);
   }
 
-  // 检查是否包含成功关键词
-  const successPatterns = ['完了', '延長', '更新'];
-  const isSuccess = successPatterns.some((pat) => pageText.includes(pat));
-  if (isSuccess) {
-    log('页面确认续期成功！');
+  // 检查其他错误标识
+  const errorPatterns = ['エラー', '不正', 'もう一度'];
+  const matchedError = errorPatterns.find(pat => pageText.includes(pat));
+  if (matchedError) {
+    log(`⚠️ 检测到错误标识: "${matchedError}"`);
+    throw new Error(`续期提交后出现错误: ${pageSnippet}`);
+  }
+
+  // 检查是否包含明确的成功关键词
+  const successPatterns = ['完了しました', '延長しました', '更新が完了', '手続きが完了'];
+  const matchedSuccess = successPatterns.find(pat => pageText.includes(pat));
+  if (matchedSuccess) {
+    log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
   } else {
-    log(`页面未检测到明确的成功标识，请人工确认。URL: ${currentUrl}`);
+    // 如果没有明确成功标识，输出完整页面内容用于调试
+    log(`⚠️ 页面未检测到明确的成功标识`);
+    log(`⚠️ 完整页面文本（前1500字符）: ${pageText.substring(0, 1500).replace(/\s+/g, ' ').trim()}`);
+
+    // 不抛出异常，但标记为可能失败
+    log(`⚠️ 续期状态不明确，请人工确认。URL: ${currentUrl}`);
   }
 }
 
