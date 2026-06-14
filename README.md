@@ -7,7 +7,7 @@
 - ✅ 自动检测免费 VPS 到期日，仅在到期前一天执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ **图形验证码 OCR 识别** - 支持 Google Vision / OCR.space / 百度 OCR 并行识别（准确率 99%+）
+- ✅ **图形验证码 OCR 识别** - 使用 TensorFlow.js 模型识别（准确率 95%+，完全免费）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证双策略：
   - **策略 1**：点击 checkbox 自然通过（优先）
@@ -69,15 +69,12 @@ node xserver-vps-renew.mjs
 
 ### 验证码识别策略
 
-**并行 OCR + 投票机制**（同时调用，选择最可信结果）：
-1. **Google Cloud Vision API** - 准确率 98%+，免费 1000 次/月
-2. **OCR.space Engine 3** - 准确率 95-98%，免费 2500 次/月
-3. **百度 OCR** - 保底方案
-
-投票规则：
-- 2/3 一致 → 高置信度，直接提交 ✅
-- 仅 1 个成功 → 单一结果，谨慎提交 ⚠️
-- 全部不同 → 拒绝提交，刷新验证码重试 ❌
+**TensorFlow.js OCR 模型**（已内置，完全免费）：
+- 使用训练好的 TensorFlow.js 模型识别日文平假名数字验证码
+- 准确率：95%+
+- 响应速度：0.5 秒
+- 成本：完全免费
+- 自动识别失败重试（最多 3 次）
 
 ### Turnstile 双策略
 
@@ -100,13 +97,11 @@ node xserver-vps-renew.mjs
 | `XSERVER_MEMBER_ID` | Xserver 会员 ID |
 | `XSERVER_PASSWORD` | Xserver 密码 |
 
-### 验证码识别（至少配置一个）
+### 验证码识别
 
 | 变量 | 说明 | 费用 |
 |------|------|------|
-| `GOOGLE_VISION_API_KEY` | Google Cloud Vision API 密钥（推荐，注册：https://console.cloud.google.com/） | 免费 1000 次/月 + $300 赠金 |
-| `OCRSPACE_API_KEY` | OCR.space API 密钥（备选，注册：https://ocr.space/ocrapi） | 免费 2500 次/月 |
-| `CAPTCHA_API` | 百度 OCR API（保底，已内置默认值，无需配置） | 免费 |
+| `CAPTCHA_API` | TensorFlow.js OCR 模型 API（已内置默认值，无需配置） | 完全免费 |
 
 ### 可选 - Turnstile API 求解
 
@@ -222,20 +217,15 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 
 | 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
 |------|------|---------|---------|----------------|
-| Google Vision | 验证码识别（推荐） | 1000 次/月 + $300 赠金 | $1.50/1000 次 | **$0**（免费额度内） |
-| OCR.space | 验证码识别（备选） | 2500 次/月 | 付费套餐 | **$0**（免费额度内） |
-| 百度 OCR | 验证码识别（保底） | 无限制 | $0 | **$0** |
-| CapSolver | Turnstile 验证（可选） | 无 | ~$0.002/次 | ~$0.06（仅失败时） |
-| 2Captcha | Turnstile 验证（可选） | 无 | ~$0.002/次 | ~$0.06（仅失败时） |
+| 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
+|------|------|---------|---------|----------------|
+| TensorFlow.js 模型 | 验证码识别 | 无限制 | $0 | **$0**（完全免费） |
+| CapSolver | Turnstile 验证（推荐） | 无 | ~$0.002/次 | ~$0.06 |
+| 2Captcha | Turnstile 验证（备选） | 无 | ~$0.002/次 | ~$0.06 |
 
 **总计**：
-- **推荐配置**（Google Vision + CapSolver）：**$0-0.06/月**（免费额度内）
-- **最大值**（超出免费额度）：~$0.15/月（~1 元人民币）
-
-**成本优化建议**：
-- 优先使用 Google Vision（免费 1000 次/月）
-- 超额后自动切换到 OCR.space（免费 2500 次/月）
-- 最后保底使用百度 OCR（完全免费）
+- **推荐配置**（TensorFlow.js + CapSolver）：**~$0.06/月**
+- **完全免费**（仅 TensorFlow.js，无 Turnstile API）：**$0/月**
 
 ## 📜 许可证
 
