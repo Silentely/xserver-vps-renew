@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
+      - CRON_SCHEDULE=0 23 * * *  # 每天东京时间 23:00 (UTC 14:00, 北京时间 22:00)
     volumes:
       - chrome-data:/data/chrome-profile
       - ./screenshots:/tmp

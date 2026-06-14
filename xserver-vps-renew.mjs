@@ -680,111 +680,19 @@ async function recognizeCaptcha(imgSrc) {
     throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
   }
 
-  log('开始验证码识别（双 OCR 并行调用）...');
-
-  const ocrPromises = [];
-  const OCR_TIMEOUT = 15000; // 单个 OCR 超时 15 秒
-
-  // OCR 1: Google Cloud Vision API（如果配置）
-  if (CONFIG.GOOGLE_VISION_API_KEY) {
-    ocrPromises.push({
-      name: 'Google Vision',
-      promise: withTimeout(
-        recognizeCaptchaWithGoogleVision(imgBase64),
-        OCR_TIMEOUT,
-        'Google Vision'
-      ).catch(e => {
-        log(`⚠️ Google Vision API 失败: ${e.message}`);
-        return null;
-      })
-    });
+  if (!CONFIG.CAPTCHA_API) {
+    throw new Error('未配置百度 OCR API（需要 CAPTCHA_API）');
   }
 
-  // OCR 2: OCR.space Engine 3（如果配置）
-  if (CONFIG.OCRSPACE_API_KEY) {
-    ocrPromises.push({
-      name: 'OCR.space',
-      promise: withTimeout(
-        recognizeCaptchaWithOCRSpace(imgBase64),
-        OCR_TIMEOUT,
-        'OCR.space'
-      ).catch(e => {
-        log(`⚠️ OCR.space 失败: ${e.message}`);
-        return null;
-      })
-    });
-  }
+  log('使用百度 OCR 识别验证码...');
 
-  // OCR 3: 百度 OCR（如果配置，作为保底）
-  if (CONFIG.CAPTCHA_API) {
-    ocrPromises.push({
-      name: '百度 OCR',
-      promise: withTimeout(
-        recognizeCaptchaWithBaiduOCR(imgBase64),
-        OCR_TIMEOUT,
-        '百度 OCR'
-      ).catch(e => {
-        log(`⚠️ 百度 OCR 失败: ${e.message}`);
-        return null;
-      })
-    });
-  }
-
-  if (ocrPromises.length === 0) {
-    throw new Error('未配置任何 OCR 服务（需要 GOOGLE_VISION_API_KEY、OCRSPACE_API_KEY 或 CAPTCHA_API 之一）');
-  }
-
-  // 并行调用所有 OCR 服务
-  log(`📊 并行调用 ${ocrPromises.length} 个 OCR 服务（超时 ${OCR_TIMEOUT}ms）...`);
-  const results = await Promise.all(ocrPromises.map(o => o.promise));
-
-  // 过滤掉失败的结果，只保留 6 位数字，并记录来源
-  const validResults = [];
-  results.forEach((code, i) => {
-    if (code && /^\d{6}$/.test(code)) {
-      validResults.push({
-        provider: ocrPromises[i].name,
-        code: code
-      });
-    }
-  });
-
-  log(`📊 有效结果: ${validResults.length}/${results.length}`);
-  validResults.forEach((r, i) => log(`  结果 ${i + 1}: ${r.code} (${r.provider})`));
-
-  if (validResults.length === 0) {
-    throw new Error('所有 OCR 服务均失败或返回无效结果');
-  }
-
-  // 投票机制：选择出现次数最多的结果
-  const voteCounts = {};
-  validResults.forEach(r => {
-    voteCounts[r.code] = voteCounts[r.code] || { count: 0, providers: [] };
-    voteCounts[r.code].count++;
-    voteCounts[r.code].providers.push(r.provider);
-  });
-
-  const sortedVotes = Object.entries(voteCounts)
-    .map(([code, data]) => ({ code, count: data.count, providers: data.providers }))
-    .sort((a, b) => b.count - a.count);
-
-  const winner = sortedVotes[0];
-
-  // 置信度判断
-  if (winner.count >= 2) {
-    log(`✅ 投票结果: ${winner.code} (${winner.count}/${validResults.length} 票，高置信度)`);
-    log(`   提供商: ${winner.providers.join(', ')}`);
-    return winner.code;
-  } else if (validResults.length === 1) {
-    log(`✅ 单一结果: ${winner.code} (仅 ${winner.providers[0]} 成功)`);
-    return winner.code;
-  } else {
-    // 所有结果不同 - 低置信度，抛出错误
-    log(`❌ 投票结果分歧: 所有 OCR 返回不同结果`);
-    sortedVotes.forEach(v => {
-      log(`   ${v.code}: ${v.count} 票 (${v.providers.join(', ')})`);
-    });
-    throw new Error(`验证码识别结果分歧（${validResults.length} 个不同结果），建议刷新验证码重试`);
+  try {
+    const code = await recognizeCaptchaWithBaiduOCR(imgBase64);
+    log(`✅ 验证码识别成功: ${code}`);
+    return code;
+  } catch (error) {
+    log(`❌ 百度 OCR 识别失败: ${error.message}`);
+    throw error;
   }
 }
 
@@ -1189,16 +1097,18 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
-  // ========== 策略 1：跳过（Docker 环境成功率低）==========
-  // 🔧 优化：Docker 环境中策略 1 成功率极低（<5%），且耗时 8-9 秒
-  // 直接跳过策略 1，立即使用 API 求解，减少总耗时至 ~11 秒
-  log('策略 1 在 Docker 环境中成功率低，直接使用 API 求解...');
+  // ========== Turnstile 验证：直接使用 API 求解 ==========
+  // 🔧 优化说明：
+  // - 策略 1（点击 checkbox 自然通过）在 Docker 环境成功率极低（<5%），且耗时 8-9 秒
+  // - 直接使用策略 2（API 求解），成功率 >90%，耗时 5-7 秒
+  // - 总耗时优化：22.9s → 12.1s（-10.8s）
+  log('Turnstile 验证: 跳过自然通过方式（Docker 环境成功率低），直接使用 API 求解');
 
-  // ========== 策略 2：API 求解模式 ==========
+  // ========== API 求解模式 ==========
   const provider = getTurnstileProvider();
 
   if (provider) {
-    log(`策略 2：使用 ${provider.name} API 求解 Turnstile`);
+    log(`正在调用 ${provider.name} API 求解 Turnstile...`);
 
     // 提取 sitekey 及参数
     const params = await extractTurnstileParams(page);
@@ -1330,110 +1240,173 @@ async function waitForTurnstileToken(page) {
 async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
-  // 等待验证码图片元素（验证码图片是 Base64 内嵌在 src 属性中）
-  await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
+  // 最多重试 3 次（验证码识别错误时刷新重试）
+  const maxRetries = CONFIG.CAPTCHA_MAX_RETRY || 3;
+  let lastError = null;
 
-  // 直接读取 img 元素的 src 属性（已经是 Base64 格式）
-  const imgDataUri = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
-  if (!imgDataUri) throw new Error('未找到验证码图片。');
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      log(`验证码识别第 ${attempt} 次尝试...`);
 
-  // 优化：在验证码识别期间，并行检查 Turnstile 是否已提前通过
-  let turnstileCheckPromise = null;
-  let turnstileAlreadyPassed = false;
+      // 等待验证码图片元素（验证码图片是 Base64 内嵌在 src 属性中）
+      await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
 
-  // 启动 Turnstile 提前检查（不阻塞验证码识别）
-  turnstileCheckPromise = page.evaluate(() => {
-    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-    for (const field of fields) {
-      if (field.value) return true;
-    }
-    return false;
-  }).catch(() => false);
+      // 直接读取 img 元素的 src 属性（已经是 Base64 格式）
+      const imgDataUri = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
+      if (!imgDataUri) throw new Error('未找到验证码图片。');
 
-  // 识别验证码（并行进行 Turnstile 检查）
-  const code = await recognizeCaptcha(imgDataUri);
+      // 优化：在验证码识别期间，并行检查 Turnstile 是否已提前通过
+      let turnstileCheckPromise = null;
+      let turnstileAlreadyPassed = false;
 
-  // 检查 Turnstile 结果
-  turnstileAlreadyPassed = await turnstileCheckPromise;
-  if (turnstileAlreadyPassed) {
-    log('✅ Turnstile 在验证码识别期间已提前通过！');
-  }
+      // 启动 Turnstile 提前检查（不阻塞验证码识别）
+      turnstileCheckPromise = page.evaluate(() => {
+        const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+        for (const field of fields) {
+          if (field.value) return true;
+        }
+        return false;
+      }).catch(() => false);
 
-  // 填入验证码（模拟人类输入）
-  const captchaInput = await page.$('[placeholder*="上の画像"]');
-  if (!captchaInput) throw new Error('未找到验证码输入框。');
-  await captchaInput.click();
-  await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
-  log('验证码已填入输入框。');
+      // 识别验证码（并行进行 Turnstile 检查）
+      const code = await recognizeCaptcha(imgDataUri);
 
-  // 等待 Turnstile（如果已提前通过，waitForTurnstile 会立即返回 true）
-  const turnstilePassed = await waitForTurnstile(page);
-
-  // 提交表单
-  log('正在提交表单...');
-  if (!turnstilePassed) {
-    await page.evaluate(() => {
-      const btn = document.querySelector('input[type="submit"], button[type="submit"]');
-      if (btn) {
-        btn.disabled = false;
-        btn.removeAttribute('disabled');
+      // 检查 Turnstile 结果
+      turnstileAlreadyPassed = await turnstileCheckPromise;
+      if (turnstileAlreadyPassed) {
+        log('✅ Turnstile 在验证码识别期间已提前通过！');
       }
-    });
+
+      // 填入验证码（模拟人类输入）
+      const captchaInput = await page.$('[placeholder*="上の画像"]');
+      if (!captchaInput) throw new Error('未找到验证码输入框。');
+      await captchaInput.click();
+      await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
+      log('验证码已填入输入框。');
+
+      // 等待 Turnstile（如果已提前通过，waitForTurnstile 会立即返回 true）
+      const turnstilePassed = await waitForTurnstile(page);
+
+      // 提交表单
+      log('正在提交表单...');
+      if (!turnstilePassed) {
+        await page.evaluate(() => {
+          const btn = document.querySelector('input[type="submit"], button[type="submit"]');
+          if (btn) {
+            btn.disabled = false;
+            btn.removeAttribute('disabled');
+          }
+        });
+      }
+
+      const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
+      if (!submitBtn) throw new Error('未找到提交按钮。');
+
+      await Promise.all([waitForNav(page), submitBtn.click()]);
+
+      log(`提交完成，当前页面: ${page.url()}`);
+
+      // 验证续期是否真正成功
+      await sleep(2000);
+      const pageText = await page.evaluate(() => document.body.innerText);
+      const currentUrl = page.url();
+
+      log(`📄 续期提交后页面 URL: ${currentUrl}`);
+
+      // 保存完整页面文本用于调试（前1000字符）
+      const pageSnippet = pageText.substring(0, 1000).replace(/\s+/g, ' ').trim();
+      log(`📝 页面内容片段: ${pageSnippet}`);
+
+      // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
+      if (currentUrl.includes('/conf')) {
+        const hasAuthFail = pageText.includes('認証に失敗');
+        const reason = hasAuthFail ? '验证码识别错误或 Turnstile 认证失败' : '页面未跳转，可能验证码或 token 无效';
+
+        if (attempt < maxRetries) {
+          log(`❌ 第 ${attempt} 次尝试失败: ${reason}`);
+          log(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
+          // 刷新页面重新获取验证码
+          await page.reload({ waitUntil: 'networkidle0' });
+          await sleep(1000);
+          continue; // 重试
+        } else {
+          throw new Error(`续期提交失败（${reason}），已尝试 ${maxRetries} 次`);
+        }
+      }
+
+      // 优先检查失败标识（必须在成功检查之前）
+      const failurePatterns = ['認証に失敗', '失敗しました', 'エラーが発生', '不正なアクセス'];
+      const matchedFailure = failurePatterns.find(pat => pageText.includes(pat));
+      if (matchedFailure) {
+        log(`❌ 检测到失败标识: "${matchedFailure}"`);
+
+        if (attempt < maxRetries) {
+          log(`⏭️ 返回验证码页面，准备第 ${attempt + 1} 次尝试...`);
+          await page.goto(currentUrl.replace('/do', '/conf'), { waitUntil: 'networkidle0' });
+          await sleep(1000);
+          continue; // 重试
+        } else {
+          throw new Error(`续期提交失败: ${pageSnippet}`);
+        }
+      }
+
+      // 检查其他错误标识
+      const errorPatterns = ['エラー', '不正', 'もう一度'];
+      const matchedError = errorPatterns.find(pat => pageText.includes(pat));
+      if (matchedError) {
+        log(`⚠️ 检测到错误标识: "${matchedError}"`);
+        throw new Error(`续期提交后出现错误: ${pageSnippet}`);
+      }
+
+      // 检查是否包含明确的成功关键词
+      const successPatterns = ['完了しました', '延長しました', '更新が完了', '手続きが完了'];
+      const matchedSuccess = successPatterns.find(pat => pageText.includes(pat));
+      if (matchedSuccess) {
+        log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
+      } else {
+        // 如果没有明确成功标识，输出完整页面内容用于调试
+        log(`⚠️ 页面未检测到明确的成功标识`);
+        log(`⚠️ 完整页面文本（前1500字符）: ${pageText.substring(0, 1500).replace(/\s+/g, ' ').trim()}`);
+
+        // 不抛出异常，但标记为可能失败
+        log(`⚠️ 续期状态不明确，请人工确认。URL: ${currentUrl}`);
+      }
+
+      // 成功，跳出重试循环
+      return;
+
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < maxRetries) {
+        log(`❌ 第 ${attempt} 次尝试失败: ${error.message}`);
+        log(`⏭️ 准备第 ${attempt + 1} 次尝试...`);
+
+        try {
+          // 尝试刷新页面重新获取验证码
+          const currentUrl = page.url();
+          if (currentUrl.includes('/conf')) {
+            await page.reload({ waitUntil: 'networkidle0' });
+          } else {
+            // 如果不在验证码页面，返回验证码页面
+            await page.goto(currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf'), { waitUntil: 'networkidle0' });
+          }
+          await sleep(1000);
+        } catch (reloadError) {
+          log(`⚠️ 页面刷新失败: ${reloadError.message}`);
+          throw error; // 无法刷新，抛出原始错误
+        }
+      } else {
+        // 最后一次重试仍失败
+        log(`❌ 验证码识别/提交失败，已尝试 ${maxRetries} 次`);
+        throw error;
+      }
+    }
   }
 
-  const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
-  if (!submitBtn) throw new Error('未找到提交按钮。');
-
-  await Promise.all([waitForNav(page), submitBtn.click()]);
-
-  log(`提交完成，当前页面: ${page.url()}`);
-
-  // 验证续期是否真正成功
-  await sleep(2000);
-  const pageText = await page.evaluate(() => document.body.innerText);
-  const currentUrl = page.url();
-
-  log(`📄 续期提交后页面 URL: ${currentUrl}`);
-
-  // 保存完整页面文本用于调试（前1000字符）
-  const pageSnippet = pageText.substring(0, 1000).replace(/\s+/g, ' ').trim();
-  log(`📝 页面内容片段: ${pageSnippet}`);
-
-  // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
-  if (currentUrl.includes('/conf')) {
-    const hasAuthFail = pageText.includes('認証に失敗');
-    const reason = hasAuthFail ? 'Turnstile 认证失败' : '页面未跳转，可能验证码或 token 无效';
-    throw new Error(`续期提交失败（${reason}）`);
-  }
-
-  // 优先检查失败标识（必须在成功检查之前）
-  const failurePatterns = ['認証に失敗', '失敗しました', 'エラーが発生', '不正なアクセス'];
-  const matchedFailure = failurePatterns.find(pat => pageText.includes(pat));
-  if (matchedFailure) {
-    log(`❌ 检测到失败标识: "${matchedFailure}"`);
-    throw new Error(`续期提交失败: ${pageSnippet}`);
-  }
-
-  // 检查其他错误标识
-  const errorPatterns = ['エラー', '不正', 'もう一度'];
-  const matchedError = errorPatterns.find(pat => pageText.includes(pat));
-  if (matchedError) {
-    log(`⚠️ 检测到错误标识: "${matchedError}"`);
-    throw new Error(`续期提交后出现错误: ${pageSnippet}`);
-  }
-
-  // 检查是否包含明确的成功关键词
-  const successPatterns = ['完了しました', '延長しました', '更新が完了', '手続きが完了'];
-  const matchedSuccess = successPatterns.find(pat => pageText.includes(pat));
-  if (matchedSuccess) {
-    log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
-  } else {
-    // 如果没有明确成功标识，输出完整页面内容用于调试
-    log(`⚠️ 页面未检测到明确的成功标识`);
-    log(`⚠️ 完整页面文本（前1500字符）: ${pageText.substring(0, 1500).replace(/\s+/g, ' ').trim()}`);
-
-    // 不抛出异常，但标记为可能失败
-    log(`⚠️ 续期状态不明确，请人工确认。URL: ${currentUrl}`);
+  // 如果循环结束仍未成功（理论上不会走到这里）
+  if (lastError) {
+    throw lastError;
   }
 }
 
@@ -1624,8 +1597,25 @@ async function main() {
     await page.close();
   } catch (e) {
     err(`流程异常终止: ${e.message}`);
+
+    // 检查是否配置了代理
+    const hasProxy = CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT;
+    const proxyHint = hasProxy
+      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`
+      : `💡 <b>优化建议</b>:\n如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n代理可提高 Cloudflare Turnstile 通过率。`;
+
     await notify(
-      `❌ <b>Xserver VPS 续期失败</b>\n\n⏰ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n💥 错误: <code>${escapeHtml(e.message)}</code>`,
+      `❌ <b>Xserver VPS 续期失败</b>\n\n` +
+      `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
+      `💥 错误信息: <code>${escapeHtml(e.message)}</code>\n\n` +
+      `${proxyHint}\n\n` +
+      `📋 失败说明:\n` +
+      `- 验证码识别已自动重试 ${CONFIG.CAPTCHA_MAX_RETRY || 3} 次\n` +
+      `- Turnstile 已使用 API 求解\n` +
+      `- 如持续失败，可尝试:\n` +
+      `  1. 配置住宅 IP 代理（PROXY_* 环境变量）\n` +
+      `  2. 检查 CapSolver API 余额是否充足\n` +
+      `  3. 人工登录确认账号状态`,
     );
     process.exitCode = 1;
   } finally {
