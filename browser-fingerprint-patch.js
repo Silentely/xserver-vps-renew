@@ -8,7 +8,7 @@
  * - Device Memory: 8 GB
  * - Screen Resolution: 1440x900
  * - Color Depth: 30
- * - Timezone: Asia/Shanghai
+ * - Timezone: Asia/Tokyo (Xserver 服务器位于日本)
  *
  * 用途：在 Puppeteer 启动时注入，伪装成真实浏览器环境
  */

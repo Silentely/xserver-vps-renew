@@ -421,7 +421,7 @@ async function solveTurnstileViaAPI(websiteURL, params) {
   };
 
   // 传递浏览器 UA 给 API（仅 2Captcha 支持，CapSolver 会忽略）
-  task.userAgent = WINDOWS_UA;
+  task.userAgent = DEFAULT_UA;
 
   // 2Captcha 带代理模式：添加住宅代理参数
   if (provider.supportsProxy) {
@@ -974,7 +974,7 @@ async function main() {
       '--disable-renderer-backgrounding',
       '--window-size=1440,900',  // 🔧 优化：使用真实浏览器调试的分辨率
       '--window-position=0,0',
-      '--tz=Asia/Shanghai',       // 🆕 添加：时区设置
+      '--tz=Asia/Tokyo',         // 🔧 修正：Xserver 位于日本，使用东京时区
     ];
 
     // 加载 turnstile-patch 扩展

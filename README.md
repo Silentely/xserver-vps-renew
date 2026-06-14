@@ -23,7 +23,7 @@
 mkdir xserver-vps-renew && cd xserver-vps-renew
 
 # 2. 下载 docker-compose.yml
-curl -O https://raw.githubusercontent.com/your-repo/xserver-vps-renew/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
 # 3. 创建环境变量
 cat > .env <<EOF
@@ -43,7 +43,7 @@ docker logs -f xserver-vps-renew
 需要 Node.js 22+ 和 Chrome 浏览器：
 
 ```bash
-git clone https://github.com/your-repo/xserver-vps-renew.git
+git clone https://github.com/Silentely/xserver-vps-renew.git
 cd xserver-vps-renew
 npm install
 
@@ -141,10 +141,10 @@ node xserver-vps-renew.mjs
 
 ```bash
 # 拉取最新版本
-docker pull ghcr.io/your-username/xserver-vps-renew:latest
+docker pull ghcr.io/silentely/xserver-vps-renew:latest
 
 # 拉取特定 commit 版本
-docker pull ghcr.io/your-username/xserver-vps-renew:sha-abc1234
+docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 ```
 
 ### 镜像标签策略
