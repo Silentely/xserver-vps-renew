@@ -344,7 +344,85 @@ async function handleRenewalConfirm(page, renewUrl) {
 // ============================================================
 
 /**
- * 使用百度 OCR API 识别验证码（保底方案）
+ * 平假名数字映射表（Xserver 验证码使用平假名书写数字）
+ */
+const HIRAGANA_NUMBER_MAP = {
+  // 完整平假名
+  'ぜろ': '0', 'れい': '0',
+  'いち': '1',
+  'に': '2',
+  'さん': '3',
+  'よん': '4', 'し': '4',
+  'ご': '5',
+  'ろく': '6',
+  'なな': '7', 'しち': '7',
+  'はち': '8',
+  'きゅう': '9', 'く': '9',
+
+  // 可能的片段（OCR 识别错误时的备选）
+  'いちご': '15',  // 常见组合
+  'さんろく': '36',
+  'きゅうろく': '96',
+};
+
+/**
+ * 尝试将平假名文本转换为数字（如果 OCR 返回平假名）
+ * @param {string} text - OCR 识别结果
+ * @returns {string|null} - 转换后的数字，失败返回 null
+ */
+function convertHiraganaToNumber(text) {
+  if (!text || /^\d+$/.test(text)) {
+    // 已经是纯数字，直接返回
+    return text;
+  }
+
+  log(`🔄 检测到可能的平假名内容，尝试转换: "${text}"`);
+
+  // 移除空格和特殊字符
+  const cleanText = text.replace(/[\s\-_]/g, '');
+
+  // 方法 1：完整匹配
+  if (HIRAGANA_NUMBER_MAP[cleanText]) {
+    const converted = HIRAGANA_NUMBER_MAP[cleanText];
+    log(`✅ 平假名转换成功（完整匹配）: "${cleanText}" → ${converted}`);
+    return converted;
+  }
+
+  // 方法 2：逐字匹配并拼接
+  let result = '';
+  let i = 0;
+  while (i < cleanText.length) {
+    let matched = false;
+
+    // 尝试匹配 3 字符、2 字符、1 字符
+    for (let len = 3; len >= 1; len--) {
+      const substr = cleanText.substring(i, i + len);
+      if (HIRAGANA_NUMBER_MAP[substr]) {
+        result += HIRAGANA_NUMBER_MAP[substr];
+        i += len;
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) {
+      // 无法匹配，跳过当前字符
+      log(`⚠️ 无法匹配字符: "${cleanText[i]}"`);
+      i++;
+    }
+  }
+
+  if (result.length >= 4) {
+    log(`✅ 平假名转换成功（逐字匹配）: "${cleanText}" → ${result}`);
+    return result;
+  }
+
+  log(`❌ 平假名转换失败: "${text}"`);
+  return null;
+}
+
+/**
+ * 使用百度 OCR API 识别验证码（保底方案，支持平假名识别）
  * @param {string} imgBase64 - Base64 编码的图片数据
  * @returns {Promise<string>} - 识别的验证码
  */
@@ -368,8 +446,11 @@ async function recognizeCaptchaWithBaiduOCR(imgBase64) {
     throw new Error(`百度 OCR API 响应 ${res.status}: ${errorText}`);
   }
 
-  const code = (await res.text()).trim();
-  log(`百度 OCR 返回结果: "${code}" (长度: ${code.length})`);
+  const rawCode = (await res.text()).trim();
+  log(`百度 OCR 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
+
+  // 尝试转换平假名（如果存在）
+  const code = convertHiraganaToNumber(rawCode) || rawCode;
 
   if (code && code.length >= 4) {
     log(`✅ 百度 OCR 识别成功: ${code}`);
@@ -392,7 +473,7 @@ async function recognizeCaptchaWith2Captcha(imgBase64) {
   const apiKey = CONFIG.TWOCAPTCHA_API_KEY;
   const apiBase = 'https://api.2captcha.com';
 
-  // 步骤 1：创建识别任务（使用 API v2）
+  // 步骤 1：创建识别任务（使用 API v2，增加日语平假名提示）
   log('正在提交验证码到 2Captcha...');
   const createTaskUrl = `${apiBase}/createTask`;
   const createTaskPayload = {
@@ -405,10 +486,14 @@ async function recognizeCaptchaWith2Captcha(imgBase64) {
       numeric: 1, // 1 = 仅数字
       math: false,
       minLength: 6,
-      maxLength: 6
+      maxLength: 6,
+      // 关键优化：增加日语说明和平假名提示
+      comment: 'Japanese hiragana numbers written in image. Convert to digits: いち=1, に=2, さん=3, よん/し=4, ご=5, ろく=6, なな/しち=7, はち=8, きゅう/く=9, ぜろ/れい=0'
     },
-    languagePool: 'ja' // 日语
+    languagePool: 'ja' // 指定日语识别员
   };
+
+  log(`📋 2Captcha 任务配置: 日语池 + 平假名转换提示`);
 
   const createTaskRes = await fetch(createTaskUrl, {
     method: 'POST',
@@ -448,8 +533,12 @@ async function recognizeCaptchaWith2Captcha(imgBase64) {
     // errorId === 0 表示成功
     if (resultData.errorId === 0) {
       if (resultData.status === 'ready') {
-        const code = resultData.solution.text;
-        log(`验证码识别成功: ${code} (耗时 ${(i + 1) * pollInterval / 1000}s)`);
+        const rawCode = resultData.solution.text;
+        log(`验证码识别成功: ${rawCode} (耗时 ${(i + 1) * pollInterval / 1000}s)`);
+
+        // 尝试转换平假名（如果人工识别员返回了平假名）
+        const code = convertHiraganaToNumber(rawCode) || rawCode;
+
         return code;
       } else if (resultData.status === 'processing') {
         log(`等待人工识别... (${i + 1}/${maxPolls})`);
