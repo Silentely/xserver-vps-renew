@@ -43,7 +43,7 @@ const CONFIG = {
   // 验证码识别服务（OCR）
   GOOGLE_VISION_API_KEY: process.env.GOOGLE_VISION_API_KEY || '',      // Google Cloud Vision API
   OCRSPACE_API_KEY: process.env.OCRSPACE_API_KEY || '',                // OCR.space API Key
-  CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',  // TensorFlow.js OCR 模型（默认）
+  CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',  // Keras 模型 API（Cloud Run）
 
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
@@ -344,7 +344,7 @@ async function handleRenewalConfirm(page, renewUrl) {
 }
 
 // ============================================================
-// 步骤 4：验证码识别（TensorFlow.js 模型）
+// 步骤 4：验证码识别（Keras 模型 API）
 // ============================================================
 
 /**
@@ -480,16 +480,16 @@ function convertHiraganaToNumber(text) {
 }
 
 /**
- * 使用 TensorFlow.js 模型识别验证码
+ * 使用 Keras 模型 API 识别验证码（Cloud Run）
  * @param {string} imgBase64 - Base64 编码的图片数据
  * @returns {Promise<string>} - 识别的验证码
  */
 async function recognizeCaptchaWithBaiduOCR(imgBase64) {
   if (!CONFIG.CAPTCHA_API) {
-    throw new Error('未配置 CAPTCHA_API，无法使用 TensorFlow.js 模型识别');
+    throw new Error('未配置 CAPTCHA_API，无法使用 Keras 模型 API 识别');
   }
 
-  log(`使用 TensorFlow.js 模型识别验证码: ${CONFIG.CAPTCHA_API}`);
+  log(`使用 Keras 模型 API 识别验证码: ${CONFIG.CAPTCHA_API}`);
 
   const res = await fetch(CONFIG.CAPTCHA_API, {
     method: 'POST',
@@ -497,25 +497,25 @@ async function recognizeCaptchaWithBaiduOCR(imgBase64) {
     headers: { 'Content-Type': 'text/plain' },
   });
 
-  log(`TensorFlow.js 模型响应状态: ${res.status}`);
+  log(`Keras 模型 API 响应状态: ${res.status}`);
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`TensorFlow.js 模型响应 ${res.status}: ${errorText}`);
+    throw new Error(`Keras 模型 API 响应 ${res.status}: ${errorText}`);
   }
 
   const rawCode = (await res.text()).trim();
-  log(`TensorFlow.js 模型返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
+  log(`Keras 模型 API 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
 
   // 使用统一标准化函数
   const code = normalizeCaptchaCode(rawCode);
 
   if (code) {
-    log(`✅ TensorFlow.js 模型识别成功: ${code}`);
+    log(`✅ Keras 模型 API 识别成功: ${code}`);
     return code;
   }
 
-  throw new Error(`TensorFlow.js 模型返回无效结果: "${rawCode}"`);
+  throw new Error(`Keras 模型 API 返回无效结果: "${rawCode}"`);
 }
 
 /**
@@ -681,17 +681,17 @@ async function recognizeCaptcha(imgSrc) {
   }
 
   if (!CONFIG.CAPTCHA_API) {
-    throw new Error('未配置 TensorFlow.js 模型 API（需要 CAPTCHA_API）');
+    throw new Error('未配置 Keras 模型 API（需要 CAPTCHA_API）');
   }
 
-  log('使用 TensorFlow.js 模型识别验证码...');
+  log('使用 Keras 模型 API 识别验证码...');
 
   try {
     const code = await recognizeCaptchaWithBaiduOCR(imgBase64);
     log(`✅ 验证码识别成功: ${code}`);
     return code;
   } catch (error) {
-    log(`❌ TensorFlow.js 模型识别失败: ${error.message}`);
+    log(`❌ Keras 模型 API 识别失败: ${error.message}`);
     throw error;
   }
 }

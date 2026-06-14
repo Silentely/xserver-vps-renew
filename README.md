@@ -7,7 +7,7 @@
 - ✅ 自动检测免费 VPS 到期日，仅在到期前一天执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ **图形验证码 OCR 识别** - 使用 TensorFlow.js 模型识别（准确率 95%+，完全免费）
+- ✅ **图形验证码 OCR 识别** - 使用 Keras 模型识别（Cloud Run API，准确率 95%+，完全免费）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证双策略：
   - **策略 1**：点击 checkbox 自然通过（优先）
@@ -69,12 +69,14 @@ node xserver-vps-renew.mjs
 
 ### 验证码识别策略
 
-**TensorFlow.js OCR 模型**（已内置，完全免费）：
-- 使用训练好的 TensorFlow.js 模型识别日文平假名数字验证码
+**Keras 模型 API**（Cloud Run 部署，完全免费）：
+- 使用训练好的 Keras 模型识别日文平假名数字验证码
+- 部署在 Google Cloud Run（无服务器）
 - 准确率：95%+
 - 响应速度：0.5 秒
-- 成本：完全免费
+- 成本：完全免费（Cloud Run 免费额度内）
 - 自动识别失败重试（最多 3 次）
+- 未来可优化：内置 TensorFlow.js 模型到 Docker 实现离线推理
 
 ### Turnstile 双策略
 
@@ -101,7 +103,7 @@ node xserver-vps-renew.mjs
 
 | 变量 | 说明 | 费用 |
 |------|------|------|
-| `CAPTCHA_API` | TensorFlow.js OCR 模型 API（已内置默认值，无需配置） | 完全免费 |
+| `CAPTCHA_API` | Keras 模型 API（Cloud Run 部署，已内置默认值，无需配置） | 完全免费 |
 
 ### 可选 - Turnstile API 求解
 
@@ -219,13 +221,13 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 |------|------|---------|---------|----------------|
 | 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
 |------|------|---------|---------|----------------|
-| TensorFlow.js 模型 | 验证码识别 | 无限制 | $0 | **$0**（完全免费） |
+| Keras 模型 API | 验证码识别（Cloud Run） | 无限制 | $0 | **$0**（完全免费） |
 | CapSolver | Turnstile 验证（推荐） | 无 | ~$0.002/次 | ~$0.06 |
 | 2Captcha | Turnstile 验证（备选） | 无 | ~$0.002/次 | ~$0.06 |
 
 **总计**：
-- **推荐配置**（TensorFlow.js + CapSolver）：**~$0.06/月**
-- **完全免费**（仅 TensorFlow.js，无 Turnstile API）：**$0/月**
+- **推荐配置**（Keras 模型 API + CapSolver）：**~$0.06/月**
+- **完全免费**（仅 Keras 模型 API，无 Turnstile API）：**$0/月**
 
 ## 📜 许可证
 
