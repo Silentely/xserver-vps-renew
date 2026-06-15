@@ -80,6 +80,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
     env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_|CAPSOLVER_|TWOCAPTCHA_|PROXY_)' > "$ENV_FILE"
 
     # 创建 cron 执行脚本
+    # 使用命名管道将 cron 输出同时写入文件和 stdout（确保 docker logs 可见）
     cat > /app/cron-run.sh <<'CRONSCRIPT'
 #!/bin/bash
 set -e
@@ -90,8 +91,11 @@ cd /app && ./entrypoint.sh --once
 CRONSCRIPT
     chmod +x /app/cron-run.sh
 
-    # 写入 crontab
-    echo "$CRON_SCHEDULE /app/cron-run.sh >> /var/log/xserver-renew.log 2>&1" | crontab -
+    # 确保日志文件存在（tail -f 需要文件已存在）
+    touch /var/log/xserver-renew.log
+
+    # 写入 crontab：输出同时写文件和 stdout（通过 tee）
+    echo "$CRON_SCHEDULE /app/cron-run.sh 2>&1 | tee -a /var/log/xserver-renew.log" | crontab -
 
     echo "$LOG_PREFIX cron 已配置，容器将持续运行。"
 
