@@ -84,7 +84,7 @@ function t(text) {
     'use strict';
  
     // 给脚本日志添加统一前缀，便于识别
-    const LOG_PREFIX = "[VPS续期脚本]";
+    const LOG_PREFIX = "[xserver-vps-renew]";
  
     let isRunning = false;
  

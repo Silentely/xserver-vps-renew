@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-LOG_PREFIX="[entrypoint]"
+LOG_PREFIX="[xserver-vps-renew]"
 
 # ============================================================
 # 启动虚拟显示器（Xvfb）
@@ -86,7 +86,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
 set -e
 source /app/.env.cron
 export $(cut -d= -f1 /app/.env.cron)
-echo "[cron] ====== 定时任务触发 $(date -Iseconds) ======"
+echo "[xserver-vps-renew] ====== 定时任务触发 $(date -Iseconds) ======"
 cd /app && ./entrypoint.sh --once
 CRONSCRIPT
     chmod +x /app/cron-run.sh

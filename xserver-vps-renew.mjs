@@ -106,8 +106,8 @@ function findChromePath() {
 // ============================================================
 
 const ts = () => new Date().toISOString();
-const log = (msg) => console.log(`[VPS续期] ${ts()} ${msg}`);
-const err = (msg) => console.error(`[VPS续期] ${ts()} ❌ ${msg}`);
+const log = (msg) => console.log(`[xserver-vps-renew] ${ts()} ${msg}`);
+const err = (msg) => console.error(`[xserver-vps-renew] ${ts()} ❌ ${msg}`);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {
