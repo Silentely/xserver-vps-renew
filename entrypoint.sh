@@ -6,12 +6,17 @@ LOG_PREFIX="[xserver-vps-renew]"
 # ============================================================
 # 启动虚拟显示器（Xvfb）
 # Xvfb 提供虚拟 X11 显示（headless:false 模式需要）
+# 🔧 修复：检测 Xvfb 是否已运行，避免 cron 触发时重复启动
 # ============================================================
-echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
-rm -f /tmp/.X99-lock 2>/dev/null || true
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
-XVFB_PID=$!
-sleep 1
+if ! pgrep -f "Xvfb :99" > /dev/null; then
+    echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
+    rm -f /tmp/.X99-lock 2>/dev/null || true
+    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+    XVFB_PID=$!
+    sleep 1
+else
+    echo "$LOG_PREFIX Xvfb 已在运行，跳过启动"
+fi
 
 # ============================================================
 # 显示定时任务信息
@@ -37,6 +42,7 @@ show_cron_schedule() {
 
 # ============================================================
 # 执行续期脚本（Chrome 由 puppeteer.launch 管理）
+# 🔧 修复：执行成功后显示下次续期时间
 # ============================================================
 run_renew() {
     echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
@@ -44,6 +50,13 @@ run_renew() {
     # 执行续期脚本，捕获退出码
     if node /app/xserver-vps-renew.mjs; then
         echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
+
+        # 显示下次执行时间（仅在 cron 模式下）
+        if [ -n "$CRON_SCHEDULE" ]; then
+            NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
+            echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
+        fi
+
         return 0
     else
         EXIT_CODE=$?

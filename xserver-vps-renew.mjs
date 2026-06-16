@@ -103,11 +103,31 @@ function findChromePath() {
 
 // ============================================================
 // 日志
+// 🔧 优化：使用环境变量时区（默认东京时区），统一日志时间格式
 // ============================================================
 
-const ts = () => new Date().toISOString();
-const log = (msg) => console.log(`[xserver-vps-renew] ${ts()} ${msg}`);
-const err = (msg) => console.error(`[xserver-vps-renew] ${ts()} ❌ ${msg}`);
+const LOG_TIMEZONE = process.env.TZ || 'Asia/Tokyo';
+
+/**
+ * 格式化时间戳（按环境变量时区）
+ * @returns {string} 格式化后的时间字符串（YYYY-MM-DD HH:mm:ss）
+ */
+const ts = () => {
+  const now = new Date();
+  return now.toLocaleString('ja-JP', {
+    timeZone: LOG_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).replace(/\//g, '-');
+};
+
+const log = (msg) => console.log(`[VPS续期] ${ts()} ${msg}`);
+const err = (msg) => console.error(`[VPS续期] ${ts()} ❌ ${msg}`);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {
