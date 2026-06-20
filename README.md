@@ -26,14 +26,13 @@ mkdir xserver-vps-renew && cd xserver-vps-renew
 # 2. 下载 docker-compose.yml
 curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
-# 3. 创建环境变量（至少配置一个 OCR 服务）
+# 3. 创建环境变量
 cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
 
-# 验证码识别（推荐配置 Google Vision 或 OCR.space）
-GOOGLE_VISION_API_KEY=你的Google密钥  # 推荐，准确率最高
-# OCRSPACE_API_KEY=你的OCRspace密钥  # 备选，免费额度大
+# 验证码识别（必须配置 Keras 模型 API 地址）
+CAPTCHA_API=你的 Cloud Run 端点地址
 EOF
 
 # 4. 启动容器（每天东京时间 08:00 自动执行）
@@ -55,7 +54,7 @@ npm install
 # 设置环境变量
 export XSERVER_MEMBER_ID="你的会员ID"
 export XSERVER_PASSWORD="你的密码"
-export GOOGLE_VISION_API_KEY="你的Google密钥"  # 或 OCRSPACE_API_KEY
+export CAPTCHA_API="你的 Cloud Run 端点地址"
 
 # 运行脚本
 node xserver-vps-renew.mjs
@@ -69,23 +68,24 @@ node xserver-vps-renew.mjs
 
 ### 验证码识别策略
 
-**Keras 模型 API**（Cloud Run 部署，完全免费）：
+**Keras 模型 API**（Cloud Run 部署）：
 - 使用训练好的 Keras 模型识别日文平假名数字验证码
 - 部署在 Google Cloud Run（无服务器）
 - 准确率：95%+
 - 响应速度：0.5 秒
 - 成本：完全免费（Cloud Run 免费额度内）
 - 自动识别失败重试（最多 3 次）
-- 未来可优化：内置 TensorFlow.js 模型到 Docker 实现离线推理
+
+> `CAPTCHA_API` 环境变量必须配置。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。
 
 ### Turnstile 双策略
 
 1. **策略 1**：尝试点击 Turnstile checkbox 让其自然通过（3-15秒）
    - 使用 rebrowser-puppeteer + Stealth 插件
    - 注入真实浏览器指纹（deviceMemory、WebGL、Canvas 等）
-   - 成功率：30-70%（优化后）
+   - 成功率：Docker 环境 <5%，本地桌面环境较高
 
-2. **策略 2**：API 求解（策略 1 失败时降级）
+2. **策略 2**：API 求解（策略 1 失败时降级）—— Docker 部署的主要方式
    - 支持 CapSolver 和 2Captcha
    - 自动提取 sitekey 并调用 API
    - 成功率：>90%
@@ -103,7 +103,7 @@ node xserver-vps-renew.mjs
 
 | 变量 | 说明 | 费用 |
 |------|------|------|
-| `CAPTCHA_API` | Keras 模型 API（Cloud Run 部署，已内置默认值，无需配置） | 完全免费 |
+| `CAPTCHA_API` | Keras 模型 API（Cloud Run 部署，必须配置） | 完全免费 |
 
 ### 可选 - Turnstile API 求解
 
@@ -149,7 +149,11 @@ node xserver-vps-renew.mjs
 ├── .env.example                   # 环境变量模板
 ├── .github/workflows/
 │   └── docker-publish.yml         # CI：自动构建并推送镜像
-└── TURNSTILE-ANALYSIS.md          # Turnstile 技术分析文档
+├── .docs/
+│   ├── TURNSTILE-ANALYSIS.md      # Turnstile 技术分析文档
+│   └── FINAL-REPORT.md            # 优化完成报告
+├── CHANGELOG.md                   # 变更日志
+└── RUNBOOK.md                     # 故障排查手册
 ```
 
 ## 🐳 Docker 镜像
@@ -169,6 +173,13 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 - `latest` - 最新稳定版本
 - `sha-<commit>` - 特定 commit 版本（前 7 位）
 
+### 手动触发续期
+
+```bash
+# 手动触发一次续期
+docker compose run --rm xserver-renew ./entrypoint.sh --once
+```
+
 ## 🔧 技术细节
 
 ### 反检测技术栈
@@ -182,7 +193,13 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
    - Canvas 指纹优化
 4. **turnstile-patch 扩展** - 修复 CDP 鼠标事件 screenX/Y 异常
 
-详细技术分析：[TURNSTILE-ANALYSIS.md](./TURNSTILE-ANALYSIS.md)
+详细技术分析：[TURNSTILE-ANALYSIS.md](./.docs/TURNSTILE-ANALYSIS.md)
+
+### Docker 环境注意事项
+
+- Chrome 以 root 用户运行时需要 `--no-sandbox` 参数（Docker 镜像已默认包含）
+- `headless: false` 需要 X11 显示服务器；Docker 镜像已内置 Xvfb
+- 截图保存到容器内 `/app/screenshots`，通过 docker-compose 挂载到宿主机 `./screenshots`
 
 ## 🐛 故障排查
 
@@ -193,15 +210,9 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 **原因**：图形验证码识别错误（6 位平假名数字）
 
 **解决方法**：
-1. 确保已配置至少一个 OCR 服务：
-   - `GOOGLE_VISION_API_KEY`（推荐，准确率最高）
-   - `OCRSPACE_API_KEY`（备选，免费额度大）
-2. 检查 API 密钥是否有效和余额充足
-3. 查看日志中的投票结果，如有全分歧情况说明验证码质量较差
-
-**注册地址**：
-- Google Cloud Vision: https://console.cloud.google.com/
-- OCR.space: https://ocr.space/ocrapi
+1. 确保已配置 `CAPTCHA_API` 环境变量（指向 Keras 模型 API 端点）
+2. 检查 Cloud Run 服务是否正常运行
+3. 查看日志中的识别结果，如有连续失败可等待 Cloud Run 冷启动完成后重试
 
 ### Turnstile 无法自动通过
 
@@ -217,8 +228,6 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 
 ## 💰 成本估算
 
-| 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
-|------|------|---------|---------|----------------|
 | 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
 |------|------|---------|---------|----------------|
 | Keras 模型 API | 验证码识别（Cloud Run） | 无限制 | $0 | **$0**（完全免费） |

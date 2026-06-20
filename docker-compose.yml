@@ -8,9 +8,19 @@ services:
       - CRON_SCHEDULE=0 23 * * *  # 每天东京时间 23:00 (UTC 14:00, 北京时间 22:00)
     volumes:
       - chrome-data:/data/chrome-profile
-      - ./screenshots:/tmp
+      - ./screenshots:/app/screenshots
     shm_size: "2gb"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "cron"]
+      interval: 30m
+      timeout: 10s
+      retries: 3
 
 volumes:
   chrome-data:

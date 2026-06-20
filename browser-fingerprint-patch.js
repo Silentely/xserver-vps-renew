@@ -83,10 +83,12 @@ async function injectBrowserFingerprint(page) {
         if (ctx) {
           const imageData = ctx.getImageData(0, 0, this.width, this.height);
           for (let i = 0; i < imageData.data.length; i += 4) {
-            // 每个像素添加 ±1 的随机噪声
-            imageData.data[i] += Math.random() > 0.5 ? 1 : -1;
-            imageData.data[i + 1] += Math.random() > 0.5 ? 1 : -1;
-            imageData.data[i + 2] += Math.random() > 0.5 ? 1 : -1;
+            for (let c = 0; c < 3; c++) {
+              const val = imageData.data[i + c];
+              if (val > 0 && val < 255) {
+                imageData.data[i + c] += Math.random() > 0.5 ? 1 : -1;
+              }
+            }
           }
           ctx.putImageData(imageData, 0, 0);
         }
@@ -130,7 +132,7 @@ async function injectBrowserFingerprint(page) {
     // ============================================================
     if (!navigator.languages || navigator.languages.length === 0) {
       Object.defineProperty(navigator, 'languages', {
-        get: () => ['zh-CN', 'zh', 'en-US', 'en'],
+        get: () => ['ja', 'ja-JP', 'en-US', 'en'],
         configurable: true,
         enumerable: true
       });
@@ -183,7 +185,10 @@ async function injectBrowserFingerprint(page) {
     // 10. 隐藏自动化特征
     // ============================================================
     // 删除 navigator.webdriver（Stealth 插件已处理，这里加强）
-    delete navigator.__proto__.webdriver;
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => false,
+      configurable: true,
+    });
 
     // 修复 chrome.runtime（有些检测会查找扩展 API）
     if (window.chrome && !window.chrome.runtime) {

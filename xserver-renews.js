@@ -11,6 +11,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @grant        unsafeWindow
+// @grant        GM_registerMenuCommand
 // @license MIT
 // @downloadURL https://update.greasyfork.org/scripts/554644/Extend%20VPS%20Expiration.user.js
 // @updateURL https://update.greasyfork.org/scripts/554644/Extend%20VPS%20Expiration.meta.js
@@ -85,7 +87,19 @@ function t(text) {
  
     // 给脚本日志添加统一前缀，便于识别
     const LOG_PREFIX = "[xserver-vps-renew]";
- 
+
+    // 注册菜单命令：配置 CAPTCHA API 地址
+    if (typeof GM_registerMenuCommand !== 'undefined') {
+        GM_registerMenuCommand('配置 CAPTCHA API 地址', () => {
+            const current = GM_getValue('captcha_api_url', '');
+            const url = prompt('请输入 CAPTCHA API 地址:', current);
+            if (url) {
+                GM_setValue('captcha_api_url', url);
+                alert('已保存！刷新页面生效。');
+            }
+        });
+    }
+
     let isRunning = false;
  
     GM_addStyle(`
@@ -240,7 +254,9 @@ function t(text) {
         try {
             // 计算今天和明天的日期，格式为 yyyy-mm-dd (瑞典时区格式更稳定)
             const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
-            const tomorrow = new Date(Date.now() + 86400000).toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
+            const tomorrowDate = new Date();
+            tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+            const tomorrow = tomorrowDate.toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
             const row = document.querySelector('tr:has(.freeServerIco)');
  
             if (!row) {
@@ -334,7 +350,11 @@ function t(text) {
  
             while (retryCount < maxRetries) {
                 try {
-                    const response = await fetch('https://captcha-120546510085.asia-northeast1.run.app', {
+                    const captchaApiUrl = GM_getValue('captcha_api_url', '');
+                    if (!captchaApiUrl) {
+                        throw new Error('未配置 CAPTCHA API 地址，请在脚本菜单中设置');
+                    }
+                    const response = await fetch(captchaApiUrl, {
                         method: 'POST',
                         body: img.src,
                         headers: {

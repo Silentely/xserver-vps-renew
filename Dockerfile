@@ -24,8 +24,8 @@ VOLUME /data/chrome-profile
 WORKDIR /app
 
 # 先复制 package.json 安装依赖（利用 Docker 缓存层）
-COPY package.json .
-RUN npm install --omit=dev && npm cache clean --force
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
 # 复制项目文件
 COPY xserver-vps-renew.mjs .
@@ -38,13 +38,15 @@ ENV TZ=Asia/Tokyo \
     CHROME_PATH=/usr/bin/google-chrome-stable \
     CHROME_USER_DATA=/data/chrome-profile \
     CDP_URL=http://127.0.0.1:9222 \
-    CAPSOLVER_API_KEY= \
-    TWOCAPTCHA_API_KEY= \
     PROXY_TYPE= \
     PROXY_ADDRESS= \
     PROXY_PORT= \
     PROXY_LOGIN= \
-    PROXY_PASSWORD= \
     DISPLAY=:99
+
+# 注意：容器以 root 运行，因为 cron 守护进程和 /var/log 写入需要 root 权限
+# Chrome 通过 --no-sandbox 在容器内安全运行
+HEALTHCHECK --interval=30m --timeout=10s --retries=3 \
+  CMD pgrep -f "cron" || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]

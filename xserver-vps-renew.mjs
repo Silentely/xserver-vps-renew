@@ -21,10 +21,10 @@
 import { addExtra } from 'puppeteer-extra';
 import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { setTimeout as sleep } from 'timers/promises';
-import { existsSync, rmSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { existsSync, rmSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
@@ -41,9 +41,7 @@ const CONFIG = {
   PASSWORD: process.env.XSERVER_PASSWORD || '',
 
   // 验证码识别服务（OCR）
-  GOOGLE_VISION_API_KEY: process.env.GOOGLE_VISION_API_KEY || '',      // Google Cloud Vision API
-  OCRSPACE_API_KEY: process.env.OCRSPACE_API_KEY || '',                // OCR.space API Key
-  CAPTCHA_API: process.env.CAPTCHA_API || 'https://captcha-120546510085.asia-northeast1.run.app',  // Keras 模型 API（Cloud Run）
+  CAPTCHA_API: process.env.CAPTCHA_API || '',  // Keras 模型 API（Cloud Run）
 
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
@@ -72,6 +70,20 @@ const CONFIG = {
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
 };
 
+// 启动时基础配置校验
+if (CONFIG.PROXY_PORT && !/^\d+$/.test(CONFIG.PROXY_PORT)) {
+  throw new Error(`PROXY_PORT 必须是数字，当前值: "${CONFIG.PROXY_PORT}"`);
+}
+
+/** 验证码标准长度 */
+const CAPTCHA_LENGTH = 6;
+
+/** 预编译的验证码格式正则（避免运行时重复编译） */
+const CAPTCHA_PATTERN = new RegExp(`^\\d{${CAPTCHA_LENGTH}}$`);
+
+/** 运行时计算代理配置状态 */
+const HAS_PROXY = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
+
 // ============================================================
 // 常量
 // ============================================================
@@ -79,9 +91,6 @@ const CONFIG = {
 // 🔧 优化：使用真实浏览器调试发现的 UA (Chrome 149 on macOS)
 // 基于 Browser Relay 调试收集的真实指纹数据
 const MACOS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
-
-// 备用：Windows UA (如果需要伪装成 Windows 环境)
-const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
 
 // 默认使用 macOS UA（与调试环境一致）
 const DEFAULT_UA = MACOS_UA;
@@ -143,16 +152,24 @@ async function notify(message) {
 
   const url = `https://api.telegram.org/bot${CONFIG.TG_BOT_TOKEN}/sendMessage`;
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CONFIG.TG_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+    let res;
+    try {
+      res = await fetch(url, {
+        signal: controller.signal,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CONFIG.TG_CHAT_ID,
+          text: message,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!res.ok) {
       const body = await res.text();
@@ -172,7 +189,9 @@ async function notify(message) {
 
 /** 等待导航完成 */
 async function waitForNav(page, timeout = CONFIG.NAVIGATION_TIMEOUT) {
-  return page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout }).catch(() => {});
+  return page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout }).catch((e) => {
+    log(`⚠️ 导航等待异常（已忽略）: ${e.message}`);
+  });
 }
 
 /** 获取元素文本 */
@@ -253,27 +272,23 @@ async function checkRenewalNeeded(page) {
 
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
   const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
-  const tomorrow = new Date(Date.now() + 86_400_000).toLocaleDateString('sv', {
-    timeZone: 'Asia/Tokyo',
-  });
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = tomorrowDate.toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
   log(`今天日期（东京时区）: ${today}`);
   log(`明天日期（东京时区）: ${tomorrow}`);
 
   const result = await page.evaluate(() => {
     const row = document.querySelector('tr:has(.freeServerIco)');
     if (!row) {
-      console.log('❌ 未找到免费 VPS 条目（.freeServerIco）');
       return null;
     }
-
-    console.log('✅ 找到免费 VPS 条目');
 
     const termEl = row.querySelector('.contract__term');
     const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
 
     // 提取 VPS 规格信息
     const cells = row.querySelectorAll('td');
-    console.log(`📊 表格列数: ${cells.length}`);
 
     let serverName = null;
     let plan = null;
@@ -281,19 +296,16 @@ async function checkRenewalNeeded(page) {
     // 遍历所有单元格，根据内容特征判断
     cells.forEach((cell, idx) => {
       const text = cell.textContent.replace(/\s+/g, ' ').trim(); // 移除多余空白符
-      console.log(`  单元格[${idx}]: "${text.substring(0, 80)}"`);
 
       // 判断规格：包含内存/CPU/存储信息
       if ((text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe'))
           && text.length > 10) {
         plan = text;
-        console.log(`  → 识别为规格: "${plan}"`);
       }
 
       // 判断服务器名：包含 host/vps 关键词，且长度较短
       if ((text.includes('host') || text.includes('vps-')) && text.length < 30) {
         serverName = text;
-        console.log(`  → 识别为服务器名: "${serverName}"`);
       }
     });
 
@@ -330,6 +342,10 @@ async function checkRenewalNeeded(page) {
   }
 
   const renewUrl = result.detailHref.replace('detail?id', 'freevps/extend/index?id_vps');
+  const parsedRenewUrl = new URL(renewUrl);
+  if (parsedRenewUrl.origin !== CONFIG.BASE_URL) {
+    throw new Error(`续期 URL 来源异常: ${parsedRenewUrl.origin} (预期: ${CONFIG.BASE_URL})`);
+  }
   log(`需要续期！URL: ${renewUrl}`);
 
   // 返回续期 URL 和 VPS 信息
@@ -408,13 +424,13 @@ function normalizeCaptchaCode(rawText) {
   });
 
   // 步骤 3: 如果已经是纯数字，直接返回
-  if (/^\d{6}$/.test(text)) {
+  if (CAPTCHA_PATTERN.test(text)) {
     return text;
   }
 
   // 步骤 4: 尝试平假名转换（支持混合内容：数字 + 平假名）
   const convertedFromHiragana = convertHiraganaToNumber(text);
-  if (convertedFromHiragana && /^\d{6}$/.test(convertedFromHiragana)) {
+  if (convertedFromHiragana && CAPTCHA_PATTERN.test(convertedFromHiragana)) {
     return convertedFromHiragana;
   }
 
@@ -426,7 +442,7 @@ function normalizeCaptchaCode(rawText) {
 
   // 步骤 5: 提取所有数字字符（处理混合内容）
   const digitsOnly = text.replace(/\D/g, '');
-  if (/^\d{6}$/.test(digitsOnly)) {
+  if (CAPTCHA_PATTERN.test(digitsOnly)) {
     log(`⚠️ 从混合内容提取数字: "${rawText}" → "${digitsOnly}"`);
     return digitsOnly;
   }
@@ -504,18 +520,26 @@ function convertHiraganaToNumber(text) {
  * @param {string} imgBase64 - Base64 编码的图片数据
  * @returns {Promise<string>} - 识别的验证码
  */
-async function recognizeCaptchaWithBaiduOCR(imgBase64) {
+async function recognizeCaptchaWithKerasAPI(imgBase64) {
   if (!CONFIG.CAPTCHA_API) {
     throw new Error('未配置 CAPTCHA_API，无法使用 Keras 模型 API 识别');
   }
 
   log(`使用 Keras 模型 API 识别验证码: ${CONFIG.CAPTCHA_API}`);
 
-  const res = await fetch(CONFIG.CAPTCHA_API, {
-    method: 'POST',
-    body: imgBase64,
-    headers: { 'Content-Type': 'text/plain' },
-  });
+  const captchaController = new AbortController();
+  const captchaTimeout = setTimeout(() => captchaController.abort(), 30_000);
+  let res;
+  try {
+    res = await fetch(CONFIG.CAPTCHA_API, {
+      method: 'POST',
+      body: imgBase64,
+      headers: { 'Content-Type': 'text/plain' },
+      signal: captchaController.signal,
+    });
+  } finally {
+    clearTimeout(captchaTimeout);
+  }
 
   log(`Keras 模型 API 响应状态: ${res.status}`);
 
@@ -539,159 +563,10 @@ async function recognizeCaptchaWithBaiduOCR(imgBase64) {
 }
 
 /**
- * 使用 Google Cloud Vision API 识别验证码
- * @param {string} imgBase64 - Base64 编码的图片数据
- * @returns {Promise<string>} - 识别的验证码
- */
-async function recognizeCaptchaWithGoogleVision(imgBase64) {
-  if (!CONFIG.GOOGLE_VISION_API_KEY) {
-    throw new Error('未配置 GOOGLE_VISION_API_KEY');
-  }
-
-  log('使用 Google Cloud Vision API 识别验证码...');
-  const apiKey = CONFIG.GOOGLE_VISION_API_KEY;
-  const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
-
-  const payload = {
-    requests: [{
-      image: {
-        content: imgBase64.replace(/^data:image\/\w+;base64,/, '')
-      },
-      features: [{ type: 'TEXT_DETECTION', maxResults: 1 }],
-      imageContext: {
-        languageHints: ['ja']  // 日语优化
-      }
-    }]
-  };
-
-  const startTime = Date.now();
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Google Vision API 响应 ${res.status}: ${errorText}`);
-  }
-
-  const data = await res.json();
-  const elapsedTime = Date.now() - startTime;
-
-  // 增强响应结构防御
-  if (!data?.responses?.[0]) {
-    throw new Error('Google Vision API 返回无效响应结构');
-  }
-
-  const response = data.responses[0];
-
-  if (response.error) {
-    throw new Error(`Google Vision API 错误: ${response.error.message}`);
-  }
-
-  if (!response.textAnnotations || response.textAnnotations.length === 0) {
-    throw new Error('Google Vision API 未检测到文本');
-  }
-
-  const rawText = response.textAnnotations[0].description.trim();
-  log(`Google Vision API 原始结果: "${rawText}" (耗时 ${elapsedTime}ms)`);
-
-  // 使用统一标准化函数
-  const code = normalizeCaptchaCode(rawText);
-
-  if (code) {
-    log(`✅ Google Vision API 识别成功: ${code}`);
-    return code;
-  }
-
-  throw new Error(`Google Vision API 返回无效结果: "${rawText}"`);
-}
-
-/**
- * 使用 OCR.space Engine 3 识别验证码
- * @param {string} imgBase64 - Base64 编码的图片数据
- * @returns {Promise<string>} - 识别的验证码
- */
-async function recognizeCaptchaWithOCRSpace(imgBase64) {
-  if (!CONFIG.OCRSPACE_API_KEY) {
-    throw new Error('未配置 OCRSPACE_API_KEY');
-  }
-
-  log('使用 OCR.space Engine 3 识别验证码...');
-  const apiKey = CONFIG.OCRSPACE_API_KEY;
-  const url = 'https://api.ocr.space/parse/image';
-
-  const formData = new URLSearchParams();
-  formData.append('apikey', apiKey);
-  formData.append('language', 'jpn');
-  formData.append('OCREngine', '3');  // Engine 3 专门优化日语
-  formData.append('scale', 'true');    // 自动放大低分辨率图片
-  formData.append('isOverlayRequired', 'false');
-  formData.append('base64Image', imgBase64);
-
-  const startTime = Date.now();
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formData
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`OCR.space API 响应 ${res.status}: ${errorText}`);
-  }
-
-  const data = await res.json();
-  const elapsedTime = Date.now() - startTime;
-
-  if (data.IsErroredOnProcessing) {
-    throw new Error(`OCR.space 处理错误: ${data.ErrorMessage || data.ErrorDetails || 'Unknown error'}`);
-  }
-
-  if (!data.ParsedResults || data.ParsedResults.length === 0) {
-    throw new Error('OCR.space 未返回识别结果');
-  }
-
-  const rawText = data.ParsedResults[0].ParsedText.trim();
-  log(`OCR.space Engine 3 原始结果: "${rawText}" (耗时 ${elapsedTime}ms)`);
-
-  // 使用统一标准化函数
-  const code = normalizeCaptchaCode(rawText);
-
-  if (code) {
-    log(`✅ OCR.space Engine 3 识别成功: ${code}`);
-    return code;
-  }
-
-  throw new Error(`OCR.space 返回无效结果: "${rawText}"`);
-}
-
-/**
- * 验证码识别主函数（2Captcha 优先 + 百度 OCR 保底）
- * @param {string} imgSrc - 验证码图片 src（Base64 格式）
+ * 验证码识别（Keras 模型 API）
+ * @param {string} imgSrc - Base64 编码的验证码图片（data:image/... 格式）
  * @returns {Promise<string>} - 识别的 6 位数字验证码
- */
-/**
- * 带超时的 Promise 包装
- * @param {Promise} promise - 原始 Promise
- * @param {number} timeoutMs - 超时时间（毫秒）
- * @param {string} name - 服务名称（用于日志）
- * @returns {Promise} - 包装后的 Promise
- */
-function withTimeout(promise, timeoutMs, name) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`${name} 超时 (${timeoutMs}ms)`)), timeoutMs)
-    )
-  ]);
-}
-
-/**
- * 智能验证码识别（双 OCR 并行 + 投票机制）
- * @param {string} imgSrc - Base64 编码的图片数据
- * @returns {Promise<string>} - 识别的 6 位数字验证码
+ * @throws {Error} - CAPTCHA_API 未配置或识别失败时抛出异常
  */
 async function recognizeCaptcha(imgSrc) {
   // 如果已经是 Base64，直接使用；否则需要下载图片转 Base64
@@ -707,7 +582,7 @@ async function recognizeCaptcha(imgSrc) {
   log('使用 Keras 模型 API 识别验证码...');
 
   try {
-    const code = await recognizeCaptchaWithBaiduOCR(imgBase64);
+    const code = await recognizeCaptchaWithKerasAPI(imgBase64);
     log(`✅ 验证码识别成功: ${code}`);
     return code;
   } catch (error) {
@@ -729,6 +604,9 @@ async function recognizeCaptcha(imgSrc) {
 /**
  * 获取 Turnstile 求解服务商配置
  * 优先使用 CapSolver，备选 2Captcha，均无密钥则返回 null
+ *
+ * 注意：内部动态检测代理状态（而非使用 HAS_PROXY 常量），
+ * 以便在测试中通过修改 CONFIG 来验证不同配置组合
  */
 function getTurnstileProvider() {
   const hasProxy = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
@@ -825,7 +703,8 @@ async function solveTurnstileViaAPI(websiteURL, params) {
     task.proxyPort = parseInt(CONFIG.PROXY_PORT, 10);
     if (CONFIG.PROXY_LOGIN) task.proxyLogin = CONFIG.PROXY_LOGIN;
     if (CONFIG.PROXY_PASSWORD) task.proxyPassword = CONFIG.PROXY_PASSWORD;
-    log(`${provider.name} 使用住宅代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
+    const maskedProxyAddr = CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*');
+    log(`${provider.name} 使用住宅代理: ${CONFIG.PROXY_TYPE}://${maskedProxyAddr}:${CONFIG.PROXY_PORT}`);
   }
 
   // CapSolver 使用 metadata 传递 action/cdata
@@ -844,6 +723,9 @@ async function solveTurnstileViaAPI(websiteURL, params) {
 
   // Mask 敏感信息后记录日志
   const taskForLog = { ...task };
+  if (taskForLog.proxyAddress) {
+    taskForLog.proxyAddress = taskForLog.proxyAddress.replace(/.(?=.{4})/g, '*');
+  }
   if (taskForLog.proxyPassword) {
     taskForLog.proxyPassword = '***';
   }
@@ -1059,6 +941,21 @@ async function clickTurnstileFallback(page) {
   }
 }
 
+/**
+ * 获取页面中已有的 Turnstile token
+ * @param {Page} page - Puppeteer Page 对象
+ * @returns {Promise<string>} - token 值，无 token 返回空字符串
+ */
+async function getTurnstileToken(page) {
+  return page.evaluate(() => {
+    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+    for (const field of fields) {
+      if (field.value) return field.value;
+    }
+    return '';
+  }).catch(() => '');
+}
+
 async function waitForTurnstile(page) {
   log('正在处理 Cloudflare Turnstile...');
 
@@ -1085,14 +982,7 @@ async function waitForTurnstile(page) {
   }
 
   // 令牌是否已经存在
-  // 🔧 优化：读取所有字段，返回第一个有值的
-  const existingToken = await page.evaluate(() => {
-    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-    for (const field of fields) {
-      if (field.value) return field.value;
-    }
-    return '';
-  }).catch(() => '');
+  const existingToken = await getTurnstileToken(page);
 
   if (existingToken) {
     log('Turnstile 令牌已就绪。');
@@ -1182,14 +1072,7 @@ async function waitForTurnstile(page) {
       await sleep(2000);
 
       // 验证 token 是否生效
-      // 🔧 优化：读取所有字段，返回第一个有值的
-      const verifyToken = await page.evaluate(() => {
-        const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-        for (const field of fields) {
-          if (field.value) return field.value;
-        }
-        return '';
-      }).catch(() => '');
+      const verifyToken = await getTurnstileToken(page);
 
       if (verifyToken) {
         log(`Turnstile token 验证成功！token 长度: ${verifyToken.length}`);
@@ -1223,16 +1106,10 @@ async function waitForTurnstile(page) {
  */
 async function waitForTurnstileToken(page) {
   const startTime = Date.now();
+  let lastClickTime = Date.now();
   while (Date.now() - startTime < CONFIG.TURNSTILE_TIMEOUT) {
     // 🔧 优化：读取所有 cf-turnstile-response 字段，返回第一个有值的
-    // 调试发现页面有两个字段，需要读取有值的那个
-    const token = await page.evaluate(() => {
-      const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-      for (const field of fields) {
-        if (field.value) return field.value;
-      }
-      return '';
-    }).catch(() => '');
+    const token = await getTurnstileToken(page);
 
     if (token) {
       log(`Turnstile 令牌已生成！（耗时 ${Date.now() - startTime}ms）`);
@@ -1240,10 +1117,11 @@ async function waitForTurnstileToken(page) {
     }
 
     // 每 10 秒重试点击一次
-    const elapsed = Date.now() - startTime;
-    if (elapsed > 10000 && elapsed % 10000 < 1000) {
-      log(`令牌未生成，第 ${Math.floor(elapsed / 10000)} 次重试点击...`);
+    const now = Date.now();
+    if (now - lastClickTime >= 10000) {
+      log(`令牌未生成，重试点击...`);
       await clickTurnstileFallback(page);
+      lastClickTime = now;
     }
 
     await sleep(1000);
@@ -1477,12 +1355,12 @@ async function main() {
 
     // 当配置了代理时，让浏览器也走同一代理
     // 确保浏览器提交表单的出口 IP 与 2Captcha 工人求解 token 时的 IP 一致
-    const hasProxy = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
-    if (hasProxy) {
+    if (HAS_PROXY) {
       const proxyScheme = CONFIG.PROXY_TYPE === 'socks5' ? 'socks5' :
         CONFIG.PROXY_TYPE === 'socks4' ? 'socks4' : 'http';
       chromeArgs.push(`--proxy-server=${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
-      log(`浏览器代理已配置: ${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
+      const maskedAddr = CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*');
+      log(`浏览器代理已配置: ${proxyScheme}://${maskedAddr}:${CONFIG.PROXY_PORT}`);
     }
 
     // rebrowser-puppeteer-core + Stealth 插件启动，修复 Runtime.Enable 泄露
@@ -1504,7 +1382,7 @@ async function main() {
     log('✅ 浏览器指纹补丁已注入！');
 
     // 代理需要认证时，通过 page.authenticate 传递凭据
-    if (hasProxy && CONFIG.PROXY_LOGIN) {
+    if (HAS_PROXY && CONFIG.PROXY_LOGIN) {
       await page.authenticate({
         username: CONFIG.PROXY_LOGIN,
         password: CONFIG.PROXY_PASSWORD,
@@ -1565,7 +1443,6 @@ async function main() {
 
       if (expireTd && expireTd.nextElementSibling) {
         const dateText = expireTd.nextElementSibling.textContent.trim();
-        console.log('方法1找到日期:', dateText);
         return dateText;
       }
 
@@ -1573,7 +1450,6 @@ async function main() {
       const allText = document.body.textContent;
       const dateMatches = allText.match(/\d{4}-\d{2}-\d{2}/g);
       if (dateMatches && dateMatches.length > 0) {
-        console.log('方法2找到日期:', dateMatches);
         // 返回最后一个日期（通常是新到期日）
         return dateMatches[dateMatches.length - 1];
       }
@@ -1583,11 +1459,9 @@ async function main() {
       if (jpDateMatch) {
         const [, year, month, day] = jpDateMatch;
         const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        console.log('方法3找到日期:', formattedDate);
         return formattedDate;
       }
 
-      console.log('所有方法均未找到日期');
       return null;
     });
 
@@ -1601,7 +1475,8 @@ async function main() {
 
     // 计算下次运行时间（明天同一时间）
     const now = new Date();
-    const nextRun = new Date(now.getTime() + 86_400_000);
+    const nextRun = new Date(now);
+    nextRun.setDate(nextRun.getDate() + 1);
     const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
 
     await notify(
@@ -1619,9 +1494,8 @@ async function main() {
     err(`流程异常终止: ${e.message}`);
 
     // 检查是否配置了代理
-    const hasProxy = CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT;
-    const proxyHint = hasProxy
-      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`
+    const proxyHint = HAS_PROXY
+      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*')}:${CONFIG.PROXY_PORT}`
       : `💡 <b>优化建议</b>:\n如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n代理可提高 Cloudflare Turnstile 通过率。`;
 
     await notify(
@@ -1648,4 +1522,18 @@ async function main() {
   }
 }
 
-main();
+// 仅在直接执行时运行 main()，支持 import 测试
+if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
+  main();
+}
+
+export {
+  normalizeCaptchaCode,
+  convertHiraganaToNumber,
+  escapeHtml,
+  findChromePath,
+  getTurnstileProvider,
+  getTurnstileToken,
+  HAS_PROXY,
+  CONFIG,
+};
