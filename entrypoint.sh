@@ -47,24 +47,21 @@ show_cron_schedule() {
 run_renew() {
     echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
 
-    # 执行续期脚本，捕获退出码
-    if node /app/xserver-vps-renew.mjs; then
-        echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
+    local EXIT_CODE=0
+    node /app/xserver-vps-renew.mjs || EXIT_CODE=$?
 
-        # 显示下次执行时间（仅在 cron 模式下）
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
         if [ -n "$CRON_SCHEDULE" ]; then
             NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
             echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
         fi
-
-        return 0
     else
-        EXIT_CODE=$?
         echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
-        return $EXIT_CODE
     fi
 
     echo "$LOG_PREFIX ====== 执行完毕 $(date -Iseconds) ======"
+    return $EXIT_CODE
 }
 
 # ============================================================
@@ -91,16 +88,43 @@ if [ -n "$CRON_SCHEDULE" ]; then
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
     env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_|CAPSOLVER_|TWOCAPTCHA_|PROXY_)' > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
 
     # 创建 cron 执行脚本
     # 使用命名管道将 cron 输出同时写入文件和 stdout（确保 docker logs 可见）
     cat > /app/cron-run.sh <<'CRONSCRIPT'
 #!/bin/bash
-set -e
-source /app/.env.cron
-export $(cut -d= -f1 /app/.env.cron)
-echo "[xserver-vps-renew] ====== 定时任务触发 $(date -Iseconds) ======"
-cd /app && ./entrypoint.sh --once
+LOG_PREFIX="[xserver-vps-renew]"
+
+exec 9>/tmp/xserver-renew.lock
+if ! flock -n 9; then
+    echo "$LOG_PREFIX ⏭️ 上一次执行仍在运行，跳过"
+    exit 0
+fi
+
+set -a
+if ! source /app/.env.cron 2>/dev/null; then
+    set +a
+    echo "$LOG_PREFIX ❌ 无法加载 .env.cron" >&2
+    exit 1
+fi
+set +a
+
+echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
+
+MAX_RETRIES=3
+for i in $(seq 1 $MAX_RETRIES); do
+    if cd /app && ./entrypoint.sh --once; then
+        echo "$LOG_PREFIX ✅ 续期成功"
+        exit 0
+    fi
+    if [ $i -lt $MAX_RETRIES ]; then
+        echo "$LOG_PREFIX ⚠️ 第 $i 次失败，等待 30 秒后重试..."
+        sleep 30
+    fi
+done
+echo "$LOG_PREFIX ❌ 续期失败，已重试 $MAX_RETRIES 次"
+exit 1
 CRONSCRIPT
     chmod +x /app/cron-run.sh
 

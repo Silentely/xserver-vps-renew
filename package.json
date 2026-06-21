@@ -6,11 +6,17 @@
   "description": "Xserver VPS 自动续期 - Puppeteer Stealth 版本",
   "scripts": {
     "start": "node xserver-vps-renew.mjs",
-    "start:launch": "node xserver-vps-renew.mjs --launch"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "rebrowser-puppeteer-core": "^24.8.1",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "rebrowser-puppeteer-core": "^24.8.1"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "vitest": "^4.1.9"
   }
 }
