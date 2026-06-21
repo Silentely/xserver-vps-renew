@@ -7,7 +7,7 @@
 - ✅ 自动检测免费 VPS 到期日，仅在到期前一天执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ **图形验证码 OCR 识别** - 使用 Keras 模型识别（Cloud Run API，准确率 95%+，完全免费）
+- ✅ **图形验证码识别** - Keras 模型 API（Cloud Run，准确率 95%+，完全免费）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证双策略：
   - **策略 1**：点击 checkbox 自然通过（优先）
@@ -26,7 +26,7 @@ mkdir xserver-vps-renew && cd xserver-vps-renew
 # 2. 下载 docker-compose.yml
 curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
-# 3. 创建环境变量
+# 3. 创建环境变量（必填 XSERVER_MEMBER_ID、XSERVER_PASSWORD、CAPTCHA_API）
 cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
@@ -63,7 +63,7 @@ node xserver-vps-renew.mjs
 ## 📊 工作流程
 
 ```
-登录 → 检查到期日 → 续期申请 → 验证码识别（OCR 并行） → Turnstile 通过 → 提交
+登录 → 检查到期日 → 续期申请 → 验证码识别（Keras API） → Turnstile 通过 → 提交
 ```
 
 ### 验证码识别策略
@@ -149,9 +149,6 @@ node xserver-vps-renew.mjs
 ├── .env.example                   # 环境变量模板
 ├── .github/workflows/
 │   └── docker-publish.yml         # CI：自动构建并推送镜像
-├── .docs/
-│   ├── TURNSTILE-ANALYSIS.md      # Turnstile 技术分析文档
-│   └── FINAL-REPORT.md            # 优化完成报告
 ├── CHANGELOG.md                   # 变更日志
 └── RUNBOOK.md                     # 故障排查手册
 ```
@@ -193,7 +190,7 @@ docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
    - Canvas 指纹优化
 4. **turnstile-patch 扩展** - 修复 CDP 鼠标事件 screenX/Y 异常
 
-详细技术分析：[TURNSTILE-ANALYSIS.md](./.docs/TURNSTILE-ANALYSIS.md)
+详细技术分析见仓库源码及浏览器指纹补丁实现
 
 ### Docker 环境注意事项
 
@@ -231,8 +228,8 @@ docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
 | 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（30次） |
 |------|------|---------|---------|----------------|
 | Keras 模型 API | 验证码识别（Cloud Run） | 无限制 | $0 | **$0**（完全免费） |
-| CapSolver | Turnstile 验证（推荐） | 无 | ~$0.002/次 | ~$0.06 |
-| 2Captcha | Turnstile 验证（备选） | 无 | ~$0.002/次 | ~$0.06 |
+| CapSolver | Turnstile 验证（推荐） | — | ~$0.002/次 | ~$0.06 |
+| 2Captcha | Turnstile 验证（备选） | — | ~$0.002/次 | ~$0.06 |
 
 **总计**：
 - **推荐配置**（Keras 模型 API + CapSolver）：**~$0.06/月**

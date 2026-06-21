@@ -9,7 +9,7 @@ docker logs --tail 50 xserver-vps-renew | grep -E "(✅|❌)"
 ## 手动触发续期
 
 ```bash
-docker compose run --rm xserver-renew ./entrypoint.sh --once
+docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
 ```
 
 ## 回滚到上一个镜像版本
@@ -39,7 +39,7 @@ docker exec xserver-vps-renew du -sh /app/screenshots
 
 ```bash
 docker exec xserver-vps-renew pgrep -f chrome
-# 如果无响应，重启容器
+# 如果无输出，说明无 Chrome 进程，重启容器
 docker compose restart
 ```
 
