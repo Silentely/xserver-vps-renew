@@ -17,6 +17,10 @@ jobs:
       packages: write
 
     steps:
+      - name: Prepare image name (lowercase)
+        id: prep
+        run: echo "image_name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -34,7 +38,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.prep.outputs.image_name }}
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
@@ -57,7 +61,7 @@ jobs:
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          image-ref: ${{ env.REGISTRY }}/${{ steps.prep.outputs.image_name }}:latest
           severity: CRITICAL,HIGH
           exit-code: 1
         continue-on-error: false
