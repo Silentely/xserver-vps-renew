@@ -176,8 +176,8 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 ### 手动触发续期
 
 ```bash
-# 手动触发一次续期
-docker compose run --rm xserver-renew ./entrypoint.sh --once
+# 手动触发一次续期（禁用 cron 模式，仅执行一次）
+docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
 ```
 
 ## 🔧 技术细节

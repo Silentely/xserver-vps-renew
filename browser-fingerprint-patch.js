@@ -130,13 +130,11 @@ async function injectBrowserFingerprint(page) {
     // ============================================================
     // 6. 修复 navigator.languages
     // ============================================================
-    if (!navigator.languages || navigator.languages.length === 0) {
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['ja', 'ja-JP', 'en-US', 'en'],
-        configurable: true,
-        enumerable: true
-      });
-    }
+    Object.defineProperty(navigator, 'languages', {
+      get: () => ['ja-JP', 'ja', 'en-US', 'en'],
+      configurable: true,
+      enumerable: true
+    });
 
     // ============================================================
     // 7. 修复 screen.colorDepth
@@ -185,10 +183,14 @@ async function injectBrowserFingerprint(page) {
     // 10. 隐藏自动化特征
     // ============================================================
     // 删除 navigator.webdriver（Stealth 插件已处理，这里加强）
-    Object.defineProperty(navigator, 'webdriver', {
-      get: () => false,
-      configurable: true,
-    });
+    try {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+        configurable: true,
+      });
+    } catch (e) {
+      // webdriver 属性在某些 Chrome 版本中不可配置，由 Stealth 插件处理
+    }
 
     // 修复 chrome.runtime（有些检测会查找扩展 API）
     if (window.chrome && !window.chrome.runtime) {

@@ -102,11 +102,13 @@ if ! flock -n 9; then
     exit 0
 fi
 
+set -a
 if ! source /app/.env.cron 2>/dev/null; then
+    set +a
     echo "$LOG_PREFIX ❌ 无法加载 .env.cron" >&2
     exit 1
 fi
-export $(cut -d= -f1 /app/.env.cron)
+set +a
 
 echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
 

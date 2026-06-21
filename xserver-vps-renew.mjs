@@ -271,10 +271,10 @@ async function checkRenewalNeeded(page) {
   }
 
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
-  const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
-  const tomorrowDate = new Date();
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrow = tomorrowDate.toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
+  // 使用 UTC+9 偏移计算，避免本地时区 DST 切换导致日期偏差
+  const tokyoTime = Date.now() + 9 * 3600000;
+  const today = new Date(tokyoTime).toISOString().slice(0, 10);
+  const tomorrow = new Date(tokyoTime + 86400000).toISOString().slice(0, 10);
   log(`今天日期（东京时区）: ${today}`);
   log(`明天日期（东京时区）: ${tomorrow}`);
 
@@ -947,13 +947,19 @@ async function clickTurnstileFallback(page) {
  * @returns {Promise<string>} - token 值，无 token 返回空字符串
  */
 async function getTurnstileToken(page) {
-  return page.evaluate(() => {
-    const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-    for (const field of fields) {
-      if (field.value) return field.value;
-    }
+  try {
+    return await page.evaluate(() => {
+      const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
+      for (const field of fields) {
+        if (field.value) return field.value;
+      }
+      return '';
+    });
+  } catch (error) {
+    // 保持函数对外行为不变（返回空字符串），但记录错误以便排查页面 / 执行上下文问题
+    console.error('[getTurnstileToken] Failed to evaluate Turnstile token:', error);
     return '';
-  }).catch(() => '');
+  }
 }
 
 async function waitForTurnstile(page) {
@@ -1473,10 +1479,8 @@ async function main() {
 
     log('🎉 续期流程全部完成！');
 
-    // 计算下次运行时间（明天同一时间）
-    const now = new Date();
-    const nextRun = new Date(now);
-    nextRun.setDate(nextRun.getDate() + 1);
+    // 计算下次运行时间（明天同一时间，使用 UTC 偏移避免 DST 问题）
+    const nextRun = new Date(Date.now() + 86400000);
     const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
 
     await notify(
@@ -1523,7 +1527,7 @@ async function main() {
 }
 
 // 仅在直接执行时运行 main()，支持 import 测试
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }
 

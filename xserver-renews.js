@@ -252,11 +252,11 @@ function t(text) {
         updateStatusElement("正在检查续期状态...");
  
         try {
-            // 计算今天和明天的日期，格式为 yyyy-mm-dd (瑞典时区格式更稳定)
-            const today = new Date().toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
-            const tomorrowDate = new Date();
-            tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-            const tomorrow = tomorrowDate.toLocaleDateString('sv', { timeZone: 'Asia/Tokyo' });
+            // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
+            // 使用 UTC+9 偏移计算，避免客户端本地时区 DST 切换导致日期偏差
+            const tokyoTime = Date.now() + 9 * 3600000;
+            const today = new Date(tokyoTime).toISOString().slice(0, 10);
+            const tomorrow = new Date(tokyoTime + 86400000).toISOString().slice(0, 10);
             const row = document.querySelector('tr:has(.freeServerIco)');
  
             if (!row) {
@@ -344,23 +344,33 @@ function t(text) {
             updateStatusElement("正在识别验证码，请稍候...");
  
             // 调用外部API识别验证码
+            // 静态配置验证提前，避免无意义重试
+            const captchaApiUrl = GM_getValue('captcha_api_url', '');
+            if (!captchaApiUrl) {
+                throw new Error('未配置 CAPTCHA API 地址，请在脚本菜单中设置');
+            }
+
             let codeResponse;
             const maxRetries = 3;
             let retryCount = 0;
- 
+
             while (retryCount < maxRetries) {
                 try {
-                    const captchaApiUrl = GM_getValue('captcha_api_url', '');
-                    if (!captchaApiUrl) {
-                        throw new Error('未配置 CAPTCHA API 地址，请在脚本菜单中设置');
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+                    let response;
+                    try {
+                        response = await fetch(captchaApiUrl, {
+                            method: 'POST',
+                            body: img.src,
+                            headers: {
+                                'Content-Type': 'text/plain'
+                            },
+                            signal: controller.signal,
+                        });
+                    } finally {
+                        clearTimeout(timeoutId);
                     }
-                    const response = await fetch(captchaApiUrl, {
-                        method: 'POST',
-                        body: img.src,
-                        headers: {
-                            'Content-Type': 'text/plain'
-                        }
-                    });
  
                     if (!response.ok) {
                         throw new Error(`API请求失败: ${response.status}`);
