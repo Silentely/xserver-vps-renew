@@ -25,7 +25,9 @@ WORKDIR /app
 
 # 先复制 package.json 安装依赖（利用 Docker 缓存层）
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm install -g npm@latest \
+    && npm ci --omit=dev \
+    && npm cache clean --force
 
 # 复制项目文件
 COPY xserver-vps-renew.mjs .
