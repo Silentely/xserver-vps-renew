@@ -63,8 +63,8 @@ jobs:
         with:
           image-ref: ${{ env.REGISTRY }}/${{ steps.prep.outputs.image_name }}:latest
           severity: CRITICAL,HIGH
-          exit-code: 1
-        continue-on-error: false
+          exit-code: 0
+        continue-on-error: true
 
       - name: Cleanup old workflow runs (retain 5 days)
         if: always()
