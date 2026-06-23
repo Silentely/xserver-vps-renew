@@ -135,8 +135,8 @@ const ts = () => {
   }).replace(/\//g, '-');
 };
 
-const log = (msg) => console.log(`[VPS续期] ${ts()} ${msg}`);
-const err = (msg) => console.error(`[VPS续期] ${ts()} ❌ ${msg}`);
+const log = (msg) => console.log(`${ts()} ${msg}`);
+const err = (msg) => console.error(`${ts()} ❌ ${msg}`);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {

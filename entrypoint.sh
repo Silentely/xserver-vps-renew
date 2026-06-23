@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-LOG_PREFIX="[xserver-vps-renew]"
+LOG_PREFIX=""
 
 # ============================================================
 # 启动虚拟显示器（Xvfb）
@@ -94,7 +94,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
     # 使用命名管道将 cron 输出同时写入文件和 stdout（确保 docker logs 可见）
     cat > /app/cron-run.sh <<'CRONSCRIPT'
 #!/bin/bash
-LOG_PREFIX="[xserver-vps-renew]"
+LOG_PREFIX=""
 
 exec 9>/tmp/xserver-renew.lock
 if ! flock -n 9; then
