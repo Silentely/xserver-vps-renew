@@ -1,21 +1,19 @@
 #!/bin/bash
 set -e
 
-LOG_PREFIX=""
-
 # ============================================================
 # 启动虚拟显示器（Xvfb）
 # Xvfb 提供虚拟 X11 显示（headless:false 模式需要）
 # 🔧 修复：检测 Xvfb 是否已运行，避免 cron 触发时重复启动
 # ============================================================
 if ! pgrep -f "Xvfb :99" > /dev/null; then
-    echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
+    echo "启动 Xvfb 虚拟显示器..."
     rm -f /tmp/.X99-lock 2>/dev/null || true
     Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
     XVFB_PID=$!
     sleep 1
 else
-    echo "$LOG_PREFIX Xvfb 已在运行，跳过启动"
+    echo "Xvfb 已在运行，跳过启动"
 fi
 
 # ============================================================
@@ -45,22 +43,22 @@ show_cron_schedule() {
 # 🔧 修复：执行成功后显示下次续期时间
 # ============================================================
 run_renew() {
-    echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
+    echo "====== 开始执行续期 $(date -Iseconds) ======"
 
     local EXIT_CODE=0
     node /app/xserver-vps-renew.mjs || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 0 ]; then
-        echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
+        echo "✅ 续期检查完成（成功或无需续期）"
         if [ -n "$CRON_SCHEDULE" ]; then
             NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
-            echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
+            echo "⏭️ 下次续期检查: $NEXT_RUN"
         fi
     else
-        echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
+        echo "❌ 续期失败，退出码: $EXIT_CODE"
     fi
 
-    echo "$LOG_PREFIX ====== 执行完毕 $(date -Iseconds) ======"
+    echo "====== 执行完毕 $(date -Iseconds) ======"
     return $EXIT_CODE
 }
 
@@ -68,7 +66,7 @@ run_renew() {
 # 信号处理（优雅退出）
 # ============================================================
 cleanup() {
-    echo "$LOG_PREFIX 收到退出信号，正在清理..."
+    echo "收到退出信号，正在清理..."
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
     exit 0
 }
@@ -79,11 +77,11 @@ trap cleanup SIGTERM SIGINT
 # ============================================================
 if [ -n "$CRON_SCHEDULE" ]; then
     # 定时模式：先立即执行一次，然后定时调度
-    echo "$LOG_PREFIX 🕐 定时模式: $CRON_SCHEDULE"
+    echo "🕐 定时模式: $CRON_SCHEDULE"
 
     # 显示定时任务信息
     SCHEDULE_INFO=$(show_cron_schedule "$CRON_SCHEDULE")
-    echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
+    echo "⏭️ 定时任务: $SCHEDULE_INFO"
 
     # 将环境变量传递给 cron 子进程
     ENV_FILE="/app/.env.cron"
@@ -94,36 +92,34 @@ if [ -n "$CRON_SCHEDULE" ]; then
     # 使用命名管道将 cron 输出同时写入文件和 stdout（确保 docker logs 可见）
     cat > /app/cron-run.sh <<'CRONSCRIPT'
 #!/bin/bash
-LOG_PREFIX=""
-
 exec 9>/tmp/xserver-renew.lock
 if ! flock -n 9; then
-    echo "$LOG_PREFIX ⏭️ 上一次执行仍在运行，跳过"
+    echo "⏭️ 上一次执行仍在运行，跳过"
     exit 0
 fi
 
 set -a
 if ! source /app/.env.cron 2>/dev/null; then
     set +a
-    echo "$LOG_PREFIX ❌ 无法加载 .env.cron" >&2
+    echo "❌ 无法加载 .env.cron" >&2
     exit 1
 fi
 set +a
 
-echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
+echo "====== 定时任务触发 $(date -Iseconds) ======"
 
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
     if cd /app && ./entrypoint.sh --once; then
-        echo "$LOG_PREFIX ✅ 续期成功"
+        echo "✅ 续期成功"
         exit 0
     fi
     if [ $i -lt $MAX_RETRIES ]; then
-        echo "$LOG_PREFIX ⚠️ 第 $i 次失败，等待 30 秒后重试..."
+        echo "⚠️ 第 $i 次失败，等待 30 秒后重试..."
         sleep 30
     fi
 done
-echo "$LOG_PREFIX ❌ 续期失败，已重试 $MAX_RETRIES 次"
+echo "❌ 续期失败，已重试 $MAX_RETRIES 次"
 exit 1
 CRONSCRIPT
     chmod +x /app/cron-run.sh
@@ -134,32 +130,32 @@ CRONSCRIPT
     # 写入 crontab：输出同时写文件和 stdout（通过 tee）
     echo "$CRON_SCHEDULE /app/cron-run.sh 2>&1 | tee -a /var/log/xserver-renew.log" | crontab -
 
-    echo "$LOG_PREFIX cron 已配置，容器将持续运行。"
+    echo "cron 已配置，容器将持续运行。"
 
     # 立即执行第一次检查（失败最多重试 3 次）
-    echo "$LOG_PREFIX 启动后立即检查一次到期情况..."
+    echo "启动后立即检查一次到期情况..."
     RETRY_COUNT=0
     MAX_RETRIES=3
 
     while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         if run_renew; then
-            echo "$LOG_PREFIX ✅ 首次检查成功，进入定时模式"
+            echo "✅ 首次检查成功，进入定时模式"
             break
         else
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "$LOG_PREFIX ⚠️ 第 $RETRY_COUNT 次失败，等待 10 秒后重试..."
+                echo "⚠️ 第 $RETRY_COUNT 次失败，等待 10 秒后重试..."
                 sleep 10
             else
-                echo "$LOG_PREFIX ❌ 失败 $MAX_RETRIES 次，跳过本次续期，等待下次定时执行"
+                echo "❌ 失败 $MAX_RETRIES 次，跳过本次续期，等待下次定时执行"
             fi
         fi
     done
 
     # 启动 cron 并保持前台
     cron
-    echo "$LOG_PREFIX cron 守护进程已启动，等待下次调度..."
-    echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
+    echo "cron 守护进程已启动，等待下次调度..."
+    echo "⏭️ 定时任务: $SCHEDULE_INFO"
     tail -f /var/log/xserver-renew.log 2>/dev/null &
     wait
 else
@@ -168,7 +164,7 @@ else
         run_renew
     else
         # 单次模式：执行完毕后退出
-        echo "$LOG_PREFIX 单次执行模式"
+        echo "单次执行模式"
         run_renew
         cleanup
     fi
