@@ -1490,8 +1490,7 @@ async function main() {
       `📦 VPS 规格: ${escapeHtml(renewalData.vpsInfo.plan || '未知')}\n` +
       `📅 原到期日: ${escapeHtml(renewalData.vpsInfo.expireDate || '未知')}\n` +
       `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
-      `⏭️ 下次执行: ${nextRunStr}\n` +
-      `📋 续期页面: ${escapeHtml(page.url())}`,
+      `⏭️ 下次执行: ${nextRunStr}`,
     );
     await page.close();
   } catch (e) {
