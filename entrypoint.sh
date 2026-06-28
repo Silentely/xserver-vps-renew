@@ -4,6 +4,13 @@ set -e
 LOG_PREFIX="[xserver-vps-renew]"
 
 # ============================================================
+# 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
+# ============================================================
+if [ "$ENABLE_DIAGNOSTICS" = "true" ] && [ -x /app/diagnostics.sh ]; then
+    /app/diagnostics.sh
+fi
+
+# ============================================================
 # 启动虚拟显示器（Xvfb）
 # Xvfb 提供虚拟 X11 显示（headless:false 模式需要）
 # 🔧 修复：检测 Xvfb 是否已运行，避免 cron 触发时重复启动
