@@ -34,7 +34,8 @@ COPY xserver-vps-renew.mjs .
 COPY browser-fingerprint-patch.js .
 COPY turnstile-patch/ turnstile-patch/
 COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
+COPY diagnostics.sh .
+RUN chmod +x entrypoint.sh diagnostics.sh
 
 ENV TZ=Asia/Tokyo \
     CHROME_PATH=/usr/bin/google-chrome-stable \
