@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 LOG_PREFIX="[xserver-vps-renew]"
 
@@ -147,7 +147,7 @@ CRONSCRIPT
     touch /var/log/xserver-renew.log
 
     # 写入 crontab：输出同时写文件和 stdout（通过 tee）
-    echo "$CRON_SCHEDULE /app/cron-run.sh 2>&1 | tee -a /var/log/xserver-renew.log" | crontab -
+    echo "$CRON_SCHEDULE /app/cron-run.sh 2>&1 | tee -a /var/log/xserver-renew.log" > /app/crontab
 
     echo "$LOG_PREFIX cron 已配置，容器将持续运行。"
 
@@ -157,7 +157,7 @@ CRONSCRIPT
     MAX_RETRIES=3
 
     while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-        if run_renew; then
+        if /app/cron-run.sh; then
             echo "$LOG_PREFIX ✅ 首次检查成功，进入定时模式"
             break
         else
@@ -171,8 +171,8 @@ CRONSCRIPT
         fi
     done
 
-    # 启动 cron 并保持前台
-    cron
+    # 启动 supercronic 并保持前台
+    exec supercronic /app/crontab
     echo "$LOG_PREFIX cron 守护进程已启动，等待下次调度..."
     echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
     tail -f /var/log/xserver-renew.log 2>/dev/null &
