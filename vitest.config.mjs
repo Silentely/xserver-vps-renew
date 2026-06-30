@@ -6,6 +6,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['xserver-vps-renew.mjs', 'src/**/*.mjs'],
+      thresholds: {
+        branches: 25,
+        functions: 30,
+        lines: 30,
+        statements: 30,
+      },
     },
   },
 });

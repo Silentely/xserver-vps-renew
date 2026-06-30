@@ -52,22 +52,13 @@ jobs:
       - name: Shellcheck static analysis
         run: |
           sudo apt-get update -qq && sudo apt-get install -qq -y shellcheck
-          shellcheck -S warning entrypoint.sh diagnostics.sh || true
+          shellcheck -S warning entrypoint.sh diagnostics.sh
 
       - name: Run unit tests
         run: npm test
 
-      - name: Coverage gate
-        run: |
-          npm run test:coverage 2>&1 | tail -20
-          # 提取分支覆盖率并与阈值比较
-          BRANCH_COVERAGE=$(npm run test:coverage 2>&1 | grep "^Branches" | awk '{print $2}' | sed 's/%//')
-          echo "Branch coverage: ${BRANCH_COVERAGE}%"
-          if [ "$(echo "$BRANCH_COVERAGE < 25" | bc -l)" = "1" ]; then
-            echo "❌ 分支覆盖率 ${BRANCH_COVERAGE}% 低于阈值 25%"
-            exit 1
-          fi
-          echo "✅ 分支覆盖率通过门禁（${BRANCH_COVERAGE}% >= 25%）"
+      - name: Run tests with coverage gate
+        run: npm run test:coverage
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -84,8 +75,8 @@ jobs:
         with:
           image-ref: ${{ env.REGISTRY }}/${{ steps.prep.outputs.image_name }}:latest
           severity: CRITICAL,HIGH
-          exit-code: 0
-        continue-on-error: true
+          exit-code: 1
+          ignore-unfixed: true
 
       - name: Cleanup old workflow runs (retain 5 days)
         if: always()
