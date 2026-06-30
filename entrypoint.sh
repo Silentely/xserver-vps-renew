@@ -92,12 +92,7 @@ if [ -n "$CRON_SCHEDULE" ]; then
     SCHEDULE_INFO=$(show_cron_schedule "$CRON_SCHEDULE")
     echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
 
-    # 将环境变量传递给 cron 子进程
-    ENV_FILE="/app/.env.cron"
-    env | grep -E '^(XSERVER_|CAPTCHA_|CDP_|CHROME_|DISPLAY|TZ|PATH|NODE_|TG_|CAPSOLVER_|TWOCAPTCHA_|PROXY_)' > "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-
-    # 创建 cron 执行脚本
+    # 创建 cron 执行脚本（通过环境变量白名单内联导出，不落盘敏感信息）
     # 使用命名管道将 cron 输出同时写入文件和 stdout（确保 docker logs 可见）
     cat > /app/cron-run.sh <<'CRONSCRIPT'
 #!/bin/bash
@@ -109,13 +104,26 @@ if ! flock -n 9; then
     exit 0
 fi
 
-set -a
-if ! source /app/.env.cron 2>/dev/null; then
-    set +a
-    echo "$LOG_PREFIX ❌ 无法加载 .env.cron" >&2
-    exit 1
-fi
-set +a
+# 从父进程环境继承所需变量（白名单内联导出，避免凭据落盘）
+export XSERVER_MEMBER_ID="${XSERVER_MEMBER_ID:-}"
+export XSERVER_PASSWORD="${XSERVER_PASSWORD:-}"
+export CAPTCHA_API="${CAPTCHA_API:-}"
+export CAPSOLVER_API_KEY="${CAPSOLVER_API_KEY:-}"
+export TWOCAPTCHA_API_KEY="${TWOCAPTCHA_API_KEY:-}"
+export TG_BOT_TOKEN="${TG_BOT_TOKEN:-}"
+export TG_CHAT_ID="${TG_CHAT_ID:-}"
+export PROXY_TYPE="${PROXY_TYPE:-}"
+export PROXY_ADDRESS="${PROXY_ADDRESS:-}"
+export PROXY_PORT="${PROXY_PORT:-}"
+export PROXY_LOGIN="${PROXY_LOGIN:-}"
+export PROXY_PASSWORD="${PROXY_PASSWORD:-}"
+export CHROME_PATH="${CHROME_PATH:-}"
+export CHROME_USER_DATA="${CHROME_USER_DATA:-}"
+export TZ="${TZ:-Asia/Tokyo}"
+export CRON_SCHEDULE="${CRON_SCHEDULE:-}"
+export RENEWAL_STATUS_FILE="${RENEWAL_STATUS_FILE:-}"
+export ALERT_AFTER_FAILURES="${ALERT_AFTER_FAILURES:-}"
+export ENABLE_DIAGNOSTICS="${ENABLE_DIAGNOSTICS:-}"
 
 echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
 
