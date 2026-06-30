@@ -2,11 +2,12 @@
 set -euo pipefail
 
 LOG_PREFIX="[xserver-vps-renew]"
+XVFB_PID=""
 
 # ============================================================
 # 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
 # ============================================================
-if [ "$ENABLE_DIAGNOSTICS" = "true" ] && [ -x /app/diagnostics.sh ]; then
+if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] && [ -x /app/diagnostics.sh ]; then
     /app/diagnostics.sh
 fi
 

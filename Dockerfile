@@ -31,6 +31,7 @@ RUN npm install -g npm@latest \
 
 # 复制项目文件
 COPY xserver-vps-renew.mjs .
+COPY src/ src/
 COPY browser-fingerprint-patch.js .
 COPY turnstile-patch/ turnstile-patch/
 COPY entrypoint.sh .
@@ -45,7 +46,8 @@ ENV TZ=Asia/Tokyo \
     PROXY_ADDRESS= \
     PROXY_PORT= \
     PROXY_LOGIN= \
-    DISPLAY=:99
+    DISPLAY=:99 \
+    ENABLE_DIAGNOSTICS=
 
 # 创建非 root 用户（Chrome 在容器内以非 root 运行更安全）
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
