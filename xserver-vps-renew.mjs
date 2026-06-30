@@ -820,7 +820,7 @@ async function handleCaptchaPage(page) {
           await sleep(1000);
           continue; // 重试
         } else {
-          throw new Error(`续期提交失败: ${pageSnippet}`);
+          throw new Error(`续期提交失败: ${matchedFailure}`);
         }
       }
 
@@ -829,7 +829,7 @@ async function handleCaptchaPage(page) {
       const matchedError = errorPatterns.find(pat => pageText.includes(pat));
       if (matchedError) {
         log(`⚠️ 检测到错误标识: "${matchedError}"`);
-        throw new Error(`续期提交后出现错误: ${pageSnippet}`);
+        throw new Error(`续期提交后出现错误: ${matchedError}`);
       }
 
       // 检查是否包含明确的成功关键词
