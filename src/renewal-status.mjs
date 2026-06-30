@@ -3,7 +3,7 @@
  * 负责续期记录读写、健康状态查询、连续失败统计
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /** 默认状态文件路径 */
@@ -24,13 +24,17 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
   try {
     const data = readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(data);
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.records)) {
+      return { records: [], lastRecord: null };
+    }
     return {
-      records: Array.isArray(parsed.records) ? parsed.records : [],
-      lastRecord: Array.isArray(parsed.records) && parsed.records.length > 0
-        ? parsed.records[parsed.records.length - 1]
-        : null,
+      records: parsed.records,
+      lastRecord: parsed.records.length > 0 ? parsed.records[parsed.records.length - 1] : null,
     };
-  } catch {
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn(`[renewal-status] 读取状态文件异常: ${error.message}，重置为空记录`);
+    }
     return { records: [], lastRecord: null };
   }
 }
@@ -47,7 +51,10 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
   const trimmed = records.slice(-maxRecords);
   const dir = dirname(filePath);
   try { mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
-  writeFileSync(filePath, JSON.stringify({ records: trimmed }, null, 2), 'utf8');
+  // 使用 write-to-temp-then-rename 保证原子性 + 文件权限 0600
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify({ records: trimmed }, null, 2), { encoding: 'utf8', mode: 0o600 });
+  renameSync(tmpPath, filePath);
 }
 
 /**

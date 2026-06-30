@@ -5,6 +5,7 @@ const mockFs = {
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
   existsSync: vi.fn(),
   rmSync: vi.fn(),
 };
@@ -162,6 +163,22 @@ describe('readRenewalStatus', () => {
     expect(result.records).toEqual([]);
     expect(result.lastRecord).toBeNull();
   });
+
+  it('文件权限不足时返回空状态', () => {
+    const error = new Error('EACCES: permission denied');
+    error.code = 'EACCES';
+    mockFs.readFileSync.mockImplementation(() => { throw error; });
+    const result = readRenewalStatus('/root/forbidden.json');
+    expect(result.records).toEqual([]);
+    expect(result.lastRecord).toBeNull();
+  });
+
+  it('文件内容为空字符串时返回空状态', () => {
+    mockFs.readFileSync.mockReturnValue('');
+    const result = readRenewalStatus(TEST_FILE);
+    expect(result.records).toEqual([]);
+    expect(result.lastRecord).toBeNull();
+  });
 });
 
 describe('writeRenewalStatus', () => {
@@ -169,6 +186,7 @@ describe('writeRenewalStatus', () => {
     mockFs.readFileSync.mockReset();
     mockFs.writeFileSync.mockReset();
     mockFs.mkdirSync.mockReset();
+    mockFs.renameSync.mockReset();
   });
 
   it('追加新记录并写入文件', () => {
