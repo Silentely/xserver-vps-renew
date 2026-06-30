@@ -185,7 +185,12 @@ const err = (msg) => console.error(`${ts()} ❌ ${msg}`);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ============================================================

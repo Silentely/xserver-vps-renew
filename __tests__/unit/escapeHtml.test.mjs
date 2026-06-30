@@ -21,4 +21,17 @@ describe('escapeHtml', () => {
   it('does not modify safe strings', () => {
     expect(escapeHtml('host123')).toBe('host123');
   });
+
+  it('escapes double quotes', () => {
+    expect(escapeHtml('a"b')).toBe('a&quot;b');
+  });
+
+  it('escapes single quotes', () => {
+    expect(escapeHtml("a'b")).toBe('a&#39;b');
+  });
+
+  it('escapes all HTML special chars together', () => {
+    expect(escapeHtml('<a href="x">\'y\'</a>'))
+      .toBe('&lt;a href=&quot;x&quot;&gt;&#39;y&#39;&lt;/a&gt;');
+  });
 });
