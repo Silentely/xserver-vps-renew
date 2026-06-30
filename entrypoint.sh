@@ -36,8 +36,9 @@ show_cron_schedule() {
     fi
 
     # 解析 cron 表达式显示易读时间
-    local minute=$(echo "$cron_expr" | awk '{print $1}')
-    local hour=$(echo "$cron_expr" | awk '{print $2}')
+    local minute hour
+    minute=$(echo "$cron_expr" | awk '{print $1}')
+    hour=$(echo "$cron_expr" | awk '{print $2}')
 
     # 如果是简单的时间表达式（如 "30 20 * * *"），显示易读格式
     if [[ "$minute" =~ ^[0-9]+$ ]] && [[ "$hour" =~ ^[0-9]+$ ]]; then
