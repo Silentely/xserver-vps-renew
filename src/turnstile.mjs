@@ -250,39 +250,58 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
 
 /**
  * 将 Turnstile token 注入页面并触发回调
- * 仅注入 input/textarea 元素并调用 turnstile.reset()，不触发事件或启用提交按钮
- * （Docker 环境下 Xserver 的 Standalone Turnstile 不需要额外事件触发）
+ * 1. 注入 token 到所有匹配的 input/textarea（含 reCAPTCHA 兼容模式）
+ * 2. 触发 input/change 事件通知表单框架
+ * 3. 通过 data-callback 调用 Turnstile 回调函数
+ * 4. 启用被禁用的提交按钮
  * @param {object} page - Puppeteer page 对象
  * @param {string} token - Turnstile token
  * @param {Function} logger - 日志函数
  * @returns {Promise<boolean>} - 是否成功注入
  */
 export async function injectTurnstileToken(page, token, logger = () => {}) {
-  const injected = await page.evaluate((tk) => {
-    const input = document.querySelector('input[name="cf-turnstile-response"]')
-      || document.querySelector('textarea[name="cf-turnstile-response"]');
-    if (input) {
-      input.value = tk;
+  const injected = await page.evaluate((tkn) => {
+    // 注入 token 到所有匹配的 input/textarea 元素
+    const selectors = [
+      'input[name="cf-turnstile-response"]',
+      'textarea[name="cf-turnstile-response"]',
+      'input[name="g-recaptcha-response"]',
+    ];
+
+    let injectedCount = 0;
+    for (const sel of selectors) {
+      const els = document.querySelectorAll(sel);
+      els.forEach((el) => {
+        el.value = tkn;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        injectedCount++;
+      });
     }
 
-    if (window.turnstile && window.turnstile.reset) {
-      const widgets = document.querySelectorAll('.cf-turnstile');
-      if (widgets.length > 0) {
-        const widgetId = widgets[0].getAttribute('data-widget-id') || '0';
-        try {
-          window.turnstile.reset(widgetId);
-        } catch { /* 忽略 */ }
+    // 通过 data-callback 调用 Turnstile 回调函数
+    let callbackCalled = false;
+    try {
+      const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
+      if (cfDiv) {
+        const callbackName = cfDiv.getAttribute('data-callback');
+        if (callbackName && typeof window[callbackName] === 'function') {
+          window[callbackName](tkn);
+          callbackCalled = true;
+        }
       }
+    } catch { /* 忽略回调异常 */ }
+
+    // 启用提交按钮（某些表单在 token 注入前禁用提交）
+    const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
+    if (submitBtn && submitBtn.disabled) {
+      submitBtn.disabled = false;
+      submitBtn.removeAttribute('disabled');
     }
 
-    return !!input;
+    return { injectedCount, callbackCalled };
   }, token);
 
-  if (injected) {
-    logger('Turnstile token 已注入页面');
-  } else {
-    logger('⚠️ 未找到 cf-turnstile-response 输入框');
-  }
-
-  return injected;
+  logger(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
+  return injected.injectedCount > 0;
 }

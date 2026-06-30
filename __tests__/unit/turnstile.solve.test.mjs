@@ -232,7 +232,7 @@ describe('solveTurnstileViaAPI', () => {
 describe('injectTurnstileToken', () => {
   it('成功注入 token 到 input 元素', async () => {
     const mockPage = {
-      evaluate: vi.fn().mockResolvedValue(true),
+      evaluate: vi.fn().mockResolvedValue({ injectedCount: 2, callbackCalled: true }),
     };
 
     const result = await injectTurnstileToken(mockPage, 'test-token-123');
@@ -246,7 +246,7 @@ describe('injectTurnstileToken', () => {
 
   it('注入失败时记录警告日志', async () => {
     const mockPage = {
-      evaluate: vi.fn().mockResolvedValue(false),
+      evaluate: vi.fn().mockResolvedValue({ injectedCount: 0, callbackCalled: false }),
     };
     const logger = vi.fn();
 
@@ -254,20 +254,20 @@ describe('injectTurnstileToken', () => {
 
     expect(result).toBe(false);
     expect(logger).toHaveBeenCalledWith(
-      expect.stringContaining('未找到 cf-turnstile-response'),
+      expect.stringContaining('0 个元素'),
     );
   });
 
   it('注入成功时记录成功日志', async () => {
     const mockPage = {
-      evaluate: vi.fn().mockResolvedValue(true),
+      evaluate: vi.fn().mockResolvedValue({ injectedCount: 2, callbackCalled: true }),
     };
     const logger = vi.fn();
 
     await injectTurnstileToken(mockPage, 'test-token', logger);
 
     expect(logger).toHaveBeenCalledWith(
-      expect.stringContaining('已注入页面'),
+      expect.stringContaining('2 个元素'),
     );
   });
 
