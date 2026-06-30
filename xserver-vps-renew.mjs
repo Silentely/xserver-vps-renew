@@ -237,11 +237,15 @@ async function notify(message) {
 // 工具函数
 // ============================================================
 
-/** 等待导航完成 */
+/** 等待导航完成，返回布尔值表示导航是否成功 */
 async function waitForNav(page, timeout = CONFIG.NAVIGATION_TIMEOUT) {
-  return page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout }).catch((e) => {
+  try {
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout });
+    return true;
+  } catch (e) {
     log(`⚠️ 导航等待异常（已忽略）: ${e.message}`);
-  });
+    return false;
+  }
 }
 
 /** 获取元素文本 */
@@ -784,9 +788,8 @@ async function handleCaptchaPage(page) {
 
       log(`📄 续期提交后页面 URL: ${currentUrl}`);
 
-      // 保存完整页面文本用于调试（前1000字符）
-      const pageSnippet = pageText.substring(0, 1000).replace(/\s+/g, ' ').trim();
-      log(`📝 页面内容片段: ${pageSnippet}`);
+      // 仅记录页面 URL 和状态，不输出页面内容（避免日志泄露）
+      void pageText; // 保留变量供后续模式匹配使用
 
       // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
       if (currentUrl.includes('/conf')) {
@@ -836,8 +839,7 @@ async function handleCaptchaPage(page) {
         log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
       } else {
         // 如果没有明确成功标识，输出完整页面内容用于调试
-        log(`⚠️ 页面未检测到明确的成功标识`);
-        log(`⚠️ 完整页面文本（前1500字符）: ${pageText.substring(0, 1500).replace(/\s+/g, ' ').trim()}`);
+        log(`⚠️ 页面未检测到明确的成功标识，URL: ${currentUrl}`);
 
         // 不抛出异常，但标记为可能失败
         log(`⚠️ 续期状态不明确，请人工确认。URL: ${currentUrl}`);

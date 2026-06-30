@@ -9,9 +9,10 @@
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
 - ✅ **图形验证码识别** - Keras 模型 API（Cloud Run，准确率 95%+，完全免费）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
-- ✅ Cloudflare Turnstile 人机验证双策略：
-  - **策略 1**：API 求解（优先，成功率 >90%）
-  - **策略 2**：等待自行通过（降级，无 API 密钥时）
+- ✅ Cloudflare Turnstile 人机验证：
+  - **CapSolver API**（优先）：配置 `CAPSOLVER_API_KEY` 后自动使用 `AntiTurnstileTaskProxyLess`
+  - **2Captcha API**（备选）：配置 `TWOCAPTCHA_API_KEY` 后使用 `TurnstileTask` 或 `TurnstileTaskProxyless`
+  - **降级**：无 API 密钥时等待自然通过（仅适用于本地浏览器环境）
 - ✅ Telegram 通知，续期结果即时推送
 - ✅ Docker 部署，内置 cron 定时调度，开箱即用
 
@@ -78,17 +79,13 @@ node xserver-vps-renew.mjs
 
 > `CAPTCHA_API` 环境变量必须配置。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。
 
-### Turnstile 双策略
+### Turnstile 求解策略
 
-1. **策略 1**：尝试点击 Turnstile checkbox 让其自然通过（3-15秒）
-   - 使用 rebrowser-puppeteer + Stealth 插件
-   - 注入真实浏览器指纹（deviceMemory、WebGL、Canvas 等）
-   - 成功率：Docker 环境 <5%，本地桌面环境较高
+Docker 部署环境下直接使用 API 求解（跳过自然通过方式，因为 Docker 环境成功率低）：
 
-2. **策略 2**：API 求解（策略 1 失败时降级）—— Docker 部署的主要方式
-   - 支持 CapSolver 和 2Captcha
-   - 自动提取 sitekey 并调用 API
-   - 成功率：>90%
+1. **CapSolver API**（优先）：配置 `CAPSOLVER_API_KEY` 后自动使用 `AntiTurnstileTaskProxyLess`
+2. **2Captcha API**（备选）：配置 `TWOCAPTCHA_API_KEY` 后使用 `TurnstileTask` 或 `TurnstileTaskProxyless`
+3. **降级**：无 API 密钥时等待自然通过（仅适用于本地浏览器环境）
 
 ## ⚙️ 环境变量
 
