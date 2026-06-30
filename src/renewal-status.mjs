@@ -3,7 +3,7 @@
  * 负责续期记录读写、健康状态查询、连续失败统计
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, accessSync, constants } from 'node:fs';
 import { dirname } from 'node:path';
 
 /** 默认状态文件路径 */
@@ -51,6 +51,10 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
   const trimmed = records.slice(-maxRecords);
   const dir = dirname(filePath);
   try { mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
+  // 检查目录写权限，提前给出友好提示
+  try { accessSync(dir, constants.W_OK); } catch {
+    console.error(`[renewal-status] ❌ 目录 ${dir} 不可写，请检查挂载卷权限（容器内需 appuser 可写）`);
+  }
   // 使用 write-to-temp-then-rename 保证原子性 + 文件权限 0600
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, JSON.stringify({ records: trimmed }, null, 2), { encoding: 'utf8', mode: 0o600 });

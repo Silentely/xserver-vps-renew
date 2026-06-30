@@ -50,9 +50,10 @@ ENV TZ=Asia/Tokyo \
     ENABLE_DIAGNOSTICS=
 
 # 创建非 root 用户（Chrome 在容器内以非 root 运行更安全）
+# /data/ 目录需要 appuser 可写（renewal-status.json 持久化）
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
     && mkdir -p /data/chrome-profile /var/log \
-    && chown -R appuser:appuser /app /data/chrome-profile /var/log
+    && chown -R appuser:appuser /data /app /var/log
 
 # 安装 supercronic（支持非 root 的 cron 替代品）
 ARG SUPERCRONIC_VERSION=v0.2.34
