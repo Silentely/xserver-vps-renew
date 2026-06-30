@@ -53,15 +53,15 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
     && chown -R appuser:appuser /app /data/chrome-profile /var/log
 
 # 安装 supercronic（支持非 root 的 cron 替代品）
-SUPERCRONIC_VERSION=v0.2.34
+ARG SUPERCRONIC_VERSION=v0.2.34
 RUN set -e \
     && arch=$(uname -m) \
     && case "$arch" in \
-       x86_64)  ARCH=amd64 ;; \
-       aarch64) ARCH=arm64 ;; \
+       x86_64)  ARCH_SUFFIX=amd64 ;; \
+       aarch64) ARCH_SUFFIX=arm64 ;; \
        *) echo "不支持的架构: $arch" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}" \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH_SUFFIX}" \
       -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic
 
