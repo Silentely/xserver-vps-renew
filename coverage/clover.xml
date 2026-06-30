@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1782805391546" clover="3.2.0">
-  <project timestamp="1782805391546" name="All files">
-    <metrics statements="624" coveredstatements="198" conditionals="434" coveredconditionals="183" methods="75" coveredmethods="23" elements="1133" coveredelements="404" complexity="0" loc="624" ncloc="624" packages="2" files="4" classes="4"/>
+<coverage generated="1782805534776" clover="3.2.0">
+  <project timestamp="1782805534776" name="All files">
+    <metrics statements="623" coveredstatements="198" conditionals="434" coveredconditionals="183" methods="75" coveredmethods="23" elements="1132" coveredelements="404" complexity="0" loc="623" ncloc="623" packages="2" files="4" classes="4"/>
     <package name="xserver-vps-renew">
-      <metrics statements="429" coveredstatements="20" conditionals="251" coveredconditionals="42" methods="50" coveredmethods="4"/>
+      <metrics statements="428" coveredstatements="20" conditionals="251" coveredconditionals="42" methods="50" coveredmethods="4"/>
       <file name="xserver-vps-renew.mjs" path="/Users/adair/Projects/xserver-vps-renew/xserver-vps-renew.mjs">
-        <metrics statements="429" coveredstatements="20" conditionals="251" coveredconditionals="42" methods="50" coveredmethods="4"/>
+        <metrics statements="428" coveredstatements="20" conditionals="251" coveredconditionals="42" methods="50" coveredmethods="4"/>
         <line num="58" count="0" type="stmt"/>
         <line num="63" count="0" type="stmt"/>
         <line num="68" count="0" type="stmt"/>
@@ -390,51 +390,50 @@
         <line num="1000" count="0" type="stmt"/>
         <line num="1003" count="0" type="stmt"/>
         <line num="1004" count="0" type="stmt"/>
-        <line num="1005" count="0" type="stmt"/>
-        <line num="1007" count="0" type="stmt"/>
-        <line num="1009" count="0" type="stmt"/>
-        <line num="1010" count="0" type="cond" truecount="0" falsecount="2"/>
-        <line num="1012" count="0" type="cond" truecount="0" falsecount="4"/>
+        <line num="1006" count="0" type="stmt"/>
+        <line num="1008" count="0" type="stmt"/>
+        <line num="1009" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1011" count="0" type="cond" truecount="0" falsecount="4"/>
+        <line num="1012" count="0" type="stmt"/>
         <line num="1013" count="0" type="stmt"/>
-        <line num="1014" count="0" type="stmt"/>
+        <line num="1017" count="0" type="stmt"/>
         <line num="1018" count="0" type="stmt"/>
-        <line num="1019" count="0" type="stmt"/>
-        <line num="1020" count="0" type="cond" truecount="0" falsecount="4"/>
-        <line num="1022" count="0" type="stmt"/>
-        <line num="1026" count="0" type="stmt"/>
-        <line num="1027" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1019" count="0" type="cond" truecount="0" falsecount="4"/>
+        <line num="1021" count="0" type="stmt"/>
+        <line num="1025" count="0" type="stmt"/>
+        <line num="1026" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1027" count="0" type="stmt"/>
         <line num="1028" count="0" type="stmt"/>
         <line num="1029" count="0" type="stmt"/>
-        <line num="1030" count="0" type="stmt"/>
-        <line num="1033" count="0" type="stmt"/>
-        <line num="1036" count="0" type="cond" truecount="0" falsecount="2"/>
-        <line num="1037" count="0" type="stmt"/>
-        <line num="1039" count="0" type="stmt"/>
-        <line num="1042" count="0" type="stmt"/>
+        <line num="1032" count="0" type="stmt"/>
+        <line num="1035" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1036" count="0" type="stmt"/>
+        <line num="1038" count="0" type="stmt"/>
+        <line num="1041" count="0" type="stmt"/>
+        <line num="1044" count="0" type="stmt"/>
         <line num="1045" count="0" type="stmt"/>
-        <line num="1046" count="0" type="stmt"/>
-        <line num="1049" count="0" type="stmt"/>
+        <line num="1048" count="0" type="stmt"/>
+        <line num="1055" count="0" type="stmt"/>
         <line num="1056" count="0" type="stmt"/>
-        <line num="1057" count="0" type="stmt"/>
-        <line num="1059" count="0" type="stmt"/>
-        <line num="1068" count="0" type="stmt"/>
-        <line num="1070" count="0" type="stmt"/>
-        <line num="1073" count="0" type="stmt"/>
+        <line num="1058" count="0" type="stmt"/>
+        <line num="1067" count="0" type="stmt"/>
+        <line num="1069" count="0" type="stmt"/>
+        <line num="1072" count="0" type="stmt"/>
+        <line num="1076" count="0" type="stmt"/>
         <line num="1077" count="0" type="stmt"/>
-        <line num="1078" count="0" type="stmt"/>
+        <line num="1080" count="0" type="stmt"/>
         <line num="1081" count="0" type="stmt"/>
-        <line num="1082" count="0" type="stmt"/>
-        <line num="1085" count="0" type="cond" truecount="0" falsecount="2"/>
-        <line num="1089" count="0" type="stmt"/>
-        <line num="1103" count="0" type="stmt"/>
-        <line num="1105" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1084" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1088" count="0" type="stmt"/>
+        <line num="1102" count="0" type="stmt"/>
+        <line num="1104" count="0" type="cond" truecount="0" falsecount="2"/>
+        <line num="1105" count="0" type="stmt"/>
         <line num="1106" count="0" type="stmt"/>
-        <line num="1107" count="0" type="stmt"/>
-        <line num="1110" count="0" type="stmt"/>
-        <line num="1120" count="3" type="cond" truecount="2" falsecount="0"/>
-        <line num="1122" count="3" type="cond" truecount="2" falsecount="0"/>
-        <line num="1125" count="3" type="cond" truecount="3" falsecount="1"/>
-        <line num="1126" count="0" type="stmt"/>
+        <line num="1109" count="0" type="stmt"/>
+        <line num="1119" count="3" type="cond" truecount="2" falsecount="0"/>
+        <line num="1121" count="3" type="cond" truecount="2" falsecount="0"/>
+        <line num="1124" count="3" type="cond" truecount="3" falsecount="1"/>
+        <line num="1125" count="0" type="stmt"/>
       </file>
     </package>
     <package name="xserver-vps-renew.src">
