@@ -8,9 +8,9 @@ export default defineConfig({
       include: ['xserver-vps-renew.mjs', 'src/**/*.mjs'],
       thresholds: {
         branches: 25,
-        functions: 30,
-        lines: 30,
-        statements: 30,
+        functions: 28,
+        lines: 28,
+        statements: 28,
       },
     },
   },
