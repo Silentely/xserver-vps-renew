@@ -10,8 +10,8 @@
 - ✅ **图形验证码识别** - Keras 模型 API（Cloud Run，准确率 95%+，完全免费）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证双策略：
-  - **策略 1**：点击 checkbox 自然通过（优先）
-  - **策略 2**：API 求解（降级）
+  - **策略 1**：API 求解（优先，成功率 >90%）
+  - **策略 2**：等待自行通过（降级，无 API 密钥时）
 - ✅ Telegram 通知，续期结果即时推送
 - ✅ Docker 部署，内置 cron 定时调度，开箱即用
 
@@ -136,19 +136,33 @@ node xserver-vps-renew.mjs
 | `CRON_SCHEDULE` | 未设置（不启用定时） | Cron 表达式，使用容器本地时间（由 TZ 控制）<br>示例：`0 8 * * *` = 每天东京时间 08:00<br>示例：`0 23 * * *` = 每天东京时间 23:00 |
 | `TZ` | `Asia/Tokyo` | 时区，影响 cron 执行时间和日志时间戳 |
 
+### 可选 - 监控与持久化
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `RENEWAL_STATUS_FILE` | `/data/renewal-status.json` | 续期记录持久化文件路径，记录每次续期时间、结果、到期日 |
+| `ALERT_AFTER_FAILURES` | `3` | 连续失败达到此次值时，Telegram 告警升级为【告警升级】 |
+
 ## 🏗️ 项目结构
 
 ```
-├── xserver-vps-renew.mjs          # 主脚本（Puppeteer Stealth 版）
+├── xserver-vps-renew.mjs          # 主脚本（编排入口：浏览器操作 + 流程控制）
+├── src/                           # 可复用模块
+│   ├── captcha.mjs                # 验证码处理（标准化/识别/平假名转换）
+│   ├── turnstile.mjs              # Turnstile 求解（参数构建/API 调用/token 注入）
+│   └── renewal-status.mjs         # 续期结果持久化与健康检查
 ├── browser-fingerprint-patch.js   # 浏览器指纹补丁
 ├── xserver-renews.js              # 油猴脚本版（浏览器端）
 ├── turnstile-patch/               # Turnstile 扩展（修复 screenX/Y）
+├── __tests__/unit/                 # 单元测试（Vitest）
 ├── Dockerfile                     # 容器构建文件
 ├── docker-compose.yml             # 编排配置（定时模式）
 ├── entrypoint.sh                  # 容器入口
+├── diagnostics.sh                 # 容器环境诊断脚本
+├── vitest.config.mjs              # 测试配置
 ├── .env.example                   # 环境变量模板
 ├── .github/workflows/
-│   └── docker-publish.yml         # CI：自动构建并推送镜像
+│   └── docker-publish.yml         # CI：自动构建 + 测试 + 覆盖率门禁 + 镜像推送
 ├── CHANGELOG.md                   # 变更日志
 └── RUNBOOK.md                     # 故障排查手册
 ```
@@ -176,6 +190,43 @@ docker pull ghcr.io/silentely/xserver-vps-renew:sha-abc1234
 # 手动触发一次续期（禁用 cron 模式，仅执行一次）
 docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
 ```
+
+## 🧪 测试
+
+```bash
+# 运行单元测试
+npm test
+
+# 覆盖率报告
+npm run test:coverage
+
+# 监听模式（开发时）
+npm run test:watch
+```
+
+测试覆盖 `src/` 模块中的纯函数（验证码标准化、Turnstile 参数构建、续期状态读写等）。浏览器操作流程需集成测试或手动验证。
+
+## 📊 监控
+
+续期结果自动持久化到 `RENEWAL_STATUS_FILE`（默认 `/data/renewal-status.json`），保留最近 30 条记录：
+
+```json
+{
+  "records": [
+    {
+      "timestamp": "2026-06-30T15:00:00.000Z",
+      "success": true,
+      "serverName": "vps-xxx",
+      "plan": "1GB",
+      "oldExpireDate": "2026-07-01",
+      "newExpireDate": "2026-07-31",
+      "errorMessage": null
+    }
+  ]
+}
+```
+
+当连续失败次数 ≥ `ALERT_AFTER_FAILURES`（默认 3）时，Telegram 告警会附加 `🚨 【告警升级】` 标记和连续失败次数，提示人工介入。
 
 ## 🔧 技术细节
 

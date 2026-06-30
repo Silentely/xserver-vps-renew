@@ -27,6 +27,57 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 
+// 模块化拆分
+import {
+  recognizeCaptcha as _recognizeCaptcha,
+} from './src/captcha.mjs';
+import {
+  getTurnstileProvider as _getTurnstileProvider,
+  extractTurnstileParams as _extractTurnstileParams,
+  buildTurnstileTask as _buildTurnstileTask,
+  maskTaskForLog as _maskTaskForLog,
+  solveTurnstileViaAPI as _solveTurnstileViaAPI,
+  injectTurnstileToken as _injectTurnstileToken,
+} from './src/turnstile.mjs';
+import {
+  readRenewalStatus,
+  writeRenewalStatus,
+  buildRenewalRecord,
+  countConsecutiveFailures,
+  getRenewalStatus,
+  DEFAULT_STATUS_FILE,
+  DEFAULT_ALERT_AFTER_FAILURES,
+} from './src/renewal-status.mjs';
+
+// ============================================================
+// 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
+// ============================================================
+
+/** 验证码识别包装（注入 CONFIG 和 log） */
+async function recognizeCaptcha(imgSrc) {
+  return _recognizeCaptcha(imgSrc, CONFIG.CAPTCHA_API, log);
+}
+
+/** Turnstile 服务商选择包装（注入 CONFIG） */
+function getTurnstileProvider() {
+  return _getTurnstileProvider(CONFIG);
+}
+
+/** Turnstile 参数提取包装（注入 log） */
+async function extractTurnstileParams(page) {
+  return _extractTurnstileParams(page, log);
+}
+
+/** Turnstile API 求解包装（注入 CONFIG 和 log） */
+async function solveTurnstileViaAPI(websiteURL, params) {
+  return _solveTurnstileViaAPI(websiteURL, params, CONFIG, log, CONFIG.TURNSTILE_API_TIMEOUT);
+}
+
+/** Turnstile token 注入包装（注入 log） */
+async function injectTurnstileToken(page, token) {
+  return _injectTurnstileToken(page, token, log);
+}
+
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
 const puppeteer = addExtra(rebrowserPuppeteer);
@@ -74,12 +125,6 @@ const CONFIG = {
 if (CONFIG.PROXY_PORT && !/^\d+$/.test(CONFIG.PROXY_PORT)) {
   throw new Error(`PROXY_PORT 必须是数字，当前值: "${CONFIG.PROXY_PORT}"`);
 }
-
-/** 验证码标准长度 */
-const CAPTCHA_LENGTH = 6;
-
-/** 预编译的验证码格式正则（避免运行时重复编译） */
-const CAPTCHA_PATTERN = new RegExp(`^\\d{${CAPTCHA_LENGTH}}$`);
 
 /** 运行时计算代理配置状态 */
 const HAS_PROXY = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
@@ -380,491 +425,9 @@ async function handleRenewalConfirm(page, renewUrl) {
 }
 
 // ============================================================
-// 步骤 4：验证码识别（Keras 模型 API）
+// 步骤 4-6：验证码识别 + Turnstile 求解（已拆分为独立模块）
+// 详见 src/captcha.mjs 和 src/turnstile.mjs
 // ============================================================
-
-/**
- * 平假名数字映射表（Xserver 验证码使用平假名书写数字）
- */
-const HIRAGANA_NUMBER_MAP = {
-  // 完整平假名
-  'ぜろ': '0', 'れい': '0',
-  'いち': '1',
-  'に': '2',
-  'さん': '3',
-  'よん': '4', 'し': '4',
-  'ご': '5',
-  'ろく': '6',
-  'なな': '7', 'しち': '7',
-  'はち': '8',
-  'きゅう': '9', 'く': '9',
-
-  // 可能的片段（OCR 识别错误时的备选）
-  'いちご': '15',  // 常见组合
-  'さんろく': '36',
-  'きゅうろく': '96',
-};
-
-/**
- * 统一验证码结果标准化（处理各种 OCR 输出格式）
- * @param {string} rawText - OCR 原始识别结果
- * @returns {string|null} - 标准化后的 6 位纯数字，失败返回 null
- */
-function normalizeCaptchaCode(rawText) {
-  if (!rawText || typeof rawText !== 'string') {
-    return null;
-  }
-
-  // 步骤 1: 基础清理（移除空白和常见分隔符）
-  let text = rawText.trim().replace(/[\s\-_]/g, '');
-
-  // 步骤 2: 全角数字转半角
-  text = text.replace(/[０-９]/g, (char) => {
-    return String.fromCharCode(char.charCodeAt(0) - 0xFEE0);
-  });
-
-  // 步骤 3: 如果已经是纯数字，直接返回
-  if (CAPTCHA_PATTERN.test(text)) {
-    return text;
-  }
-
-  // 步骤 4: 尝试平假名转换（支持混合内容：数字 + 平假名）
-  const convertedFromHiragana = convertHiraganaToNumber(text);
-  if (convertedFromHiragana && CAPTCHA_PATTERN.test(convertedFromHiragana)) {
-    return convertedFromHiragana;
-  }
-
-  // 步骤 4.5: 如果平假名转换后长度不足 6 位，但 >= 4 位，尝试智能补全
-  if (convertedFromHiragana && /^\d{4,5}$/.test(convertedFromHiragana)) {
-    log(`⚠️ 平假名转换结果不足 6 位: "${convertedFromHiragana}" (长度 ${convertedFromHiragana.length})`);
-    // 不自动补全，返回 null，让其他 OCR 提供完整结果
-  }
-
-  // 步骤 5: 提取所有数字字符（处理混合内容）
-  const digitsOnly = text.replace(/\D/g, '');
-  if (CAPTCHA_PATTERN.test(digitsOnly)) {
-    log(`⚠️ 从混合内容提取数字: "${rawText}" → "${digitsOnly}"`);
-    return digitsOnly;
-  }
-
-  // 无法标准化为 6 位数字
-  return null;
-}
-
-/**
- * 尝试将平假名文本转换为数字（支持数字 + 平假名混合内容）
- * @param {string} text - OCR 识别结果
- * @returns {string|null} - 转换后的数字，失败返回 null
- */
-function convertHiraganaToNumber(text) {
-  if (!text || /^\d+$/.test(text)) {
-    // 已经是纯数字，直接返回
-    return text;
-  }
-
-  log(`🔄 检测到可能的平假名内容，尝试转换: "${text}"`);
-
-  // 移除空格和特殊字符
-  const cleanText = text.replace(/[\s\-_]/g, '');
-
-  // 方法 1：完整匹配
-  if (HIRAGANA_NUMBER_MAP[cleanText]) {
-    const converted = HIRAGANA_NUMBER_MAP[cleanText];
-    log(`✅ 平假名转换成功（完整匹配）: "${cleanText}" → ${converted}`);
-    return converted;
-  }
-
-  // 方法 2：逐字匹配并拼接（支持混合内容：数字 + 平假名）
-  let result = '';
-  let i = 0;
-  while (i < cleanText.length) {
-    let matched = false;
-
-    // 优先检查：如果当前字符已经是数字，直接保留
-    if (/^\d$/.test(cleanText[i])) {
-      result += cleanText[i];
-      i++;
-      matched = true;
-      continue;
-    }
-
-    // 尝试匹配 3 字符、2 字符、1 字符的平假名
-    for (let len = 3; len >= 1; len--) {
-      const substr = cleanText.substring(i, i + len);
-      if (HIRAGANA_NUMBER_MAP[substr]) {
-        result += HIRAGANA_NUMBER_MAP[substr];
-        i += len;
-        matched = true;
-        break;
-      }
-    }
-
-    if (!matched) {
-      // 无法匹配，跳过当前字符
-      log(`⚠️ 无法匹配字符: "${cleanText[i]}"`);
-      i++;
-    }
-  }
-
-  if (result.length >= 4) {
-    log(`✅ 平假名转换成功（逐字匹配）: "${cleanText}" → ${result}`);
-    return result;
-  }
-
-  log(`❌ 平假名转换失败: "${text}"`);
-  return null;
-}
-
-/**
- * 使用 Keras 模型 API 识别验证码（Cloud Run）
- * @param {string} imgBase64 - Base64 编码的图片数据
- * @returns {Promise<string>} - 识别的验证码
- */
-async function recognizeCaptchaWithKerasAPI(imgBase64) {
-  if (!CONFIG.CAPTCHA_API) {
-    throw new Error('未配置 CAPTCHA_API，无法使用 Keras 模型 API 识别');
-  }
-
-  log(`使用 Keras 模型 API 识别验证码: ${CONFIG.CAPTCHA_API}`);
-
-  const captchaController = new AbortController();
-  const captchaTimeout = setTimeout(() => captchaController.abort(), 30_000);
-  let res;
-  try {
-    res = await fetch(CONFIG.CAPTCHA_API, {
-      method: 'POST',
-      body: imgBase64,
-      headers: { 'Content-Type': 'text/plain' },
-      signal: captchaController.signal,
-    });
-  } finally {
-    clearTimeout(captchaTimeout);
-  }
-
-  log(`Keras 模型 API 响应状态: ${res.status}`);
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Keras 模型 API 响应 ${res.status}: ${errorText}`);
-  }
-
-  const rawCode = (await res.text()).trim();
-  log(`Keras 模型 API 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
-
-  // 使用统一标准化函数
-  const code = normalizeCaptchaCode(rawCode);
-
-  if (code) {
-    log(`✅ Keras 模型 API 识别成功: ${code}`);
-    return code;
-  }
-
-  throw new Error(`Keras 模型 API 返回无效结果: "${rawCode}"`);
-}
-
-/**
- * 验证码识别（Keras 模型 API）
- * @param {string} imgSrc - Base64 编码的验证码图片（data:image/... 格式）
- * @returns {Promise<string>} - 识别的 6 位数字验证码
- * @throws {Error} - CAPTCHA_API 未配置或识别失败时抛出异常
- */
-async function recognizeCaptcha(imgSrc) {
-  // 如果已经是 Base64，直接使用；否则需要下载图片转 Base64
-  let imgBase64 = imgSrc;
-  if (!imgSrc.startsWith('data:image/')) {
-    throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
-  }
-
-  if (!CONFIG.CAPTCHA_API) {
-    throw new Error('未配置 Keras 模型 API（需要 CAPTCHA_API）');
-  }
-
-  log('使用 Keras 模型 API 识别验证码...');
-
-  try {
-    const code = await recognizeCaptchaWithKerasAPI(imgBase64);
-    log(`✅ 验证码识别成功: ${code}`);
-    return code;
-  } catch (error) {
-    log(`❌ Keras 模型 API 识别失败: ${error.message}`);
-    throw error;
-  }
-}
-
-// ============================================================
-// 步骤 5：Turnstile 处理（CapSolver / 2Captcha API 令牌求解）
-// ============================================================
-// 核心思路：
-//   1. 从页面 .cf-turnstile[data-sitekey] 提取 Turnstile sitekey
-//   2. 调用 CapSolver 或 2Captcha API 的 createTask 创建求解任务
-//   3. 轮询 getTaskResult 获取 token
-//   4. 将 token 注入到 input[name="cf-turnstile-response"] 并触发回调
-//   5. 无 API 密钥时降级为简单点击尝试
-
-/**
- * 获取 Turnstile 求解服务商配置
- * 优先使用 CapSolver，备选 2Captcha，均无密钥则返回 null
- *
- * 注意：内部动态检测代理状态（而非使用 HAS_PROXY 常量），
- * 以便在测试中通过修改 CONFIG 来验证不同配置组合
- */
-function getTurnstileProvider() {
-  const hasProxy = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
-
-  if (CONFIG.CAPSOLVER_API_KEY) {
-    return {
-      name: 'CapSolver',
-      apiBase: 'https://api.capsolver.com',
-      clientKey: CONFIG.CAPSOLVER_API_KEY,
-      taskType: 'AntiTurnstileTaskProxyLess', // CapSolver 不支持代理
-      supportsProxy: false,
-    };
-  }
-  if (CONFIG.TWOCAPTCHA_API_KEY) {
-    return {
-      name: '2Captcha',
-      apiBase: 'https://api.2captcha.com',
-      clientKey: CONFIG.TWOCAPTCHA_API_KEY,
-      taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
-      supportsProxy: hasProxy,
-    };
-  }
-  return null;
-}
-
-/**
- * 从页面提取 Turnstile 参数
- * Standalone Turnstile 只需 sitekey（从 HTML data-sitekey 属性获取）
- * 同时提取 data-action / data-cdata 等可选属性
- * 返回 { sitekey, action, cData, chlPageData } 或 null
- */
-async function extractTurnstileParams(page) {
-  // 从 .cf-turnstile 元素的 data-* 属性提取所有参数
-  const params = await page.evaluate(() => {
-    const el = document.querySelector('.cf-turnstile[data-sitekey]')
-      || document.querySelector('[data-sitekey]');
-    if (!el) return null;
-    return {
-      sitekey: el.getAttribute('data-sitekey') || '',
-      action: el.getAttribute('data-action') || '',
-      cData: el.getAttribute('data-cdata') || '',
-      chlPageData: el.getAttribute('data-chlpagedata') || '',
-      callbackName: el.getAttribute('data-callback') || '',
-    };
-  });
-
-  if (params && params.sitekey) {
-    log(`Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
-      `action=${params.action || '(空)'}, callback=${params.callbackName || '(空)'}`);
-    return params;
-  }
-
-  // 降级：正则匹配页面源码
-  const html = await page.content();
-  const match = html.match(/data-sitekey=["']([0-9a-zA-Z_-]+)["']/);
-  if (match) {
-    log(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
-    return { sitekey: match[1], action: '', cData: '', chlPageData: '', callbackName: '' };
-  }
-
-  return null;
-}
-
-/**
- * 通过 CapSolver / 2Captcha API 求解 Turnstile token
- *
- * 流程：createTask → 轮询 getTaskResult → 返回 { token, userAgent }
- * 使用原生 fetch()，不引入额外依赖
- *
- * @param {string} websiteURL - 目标页面 URL
- * @param {object} params - { sitekey, action, cData, chlPageData }
- * @returns {{ token: string, userAgent: string|null }}
- */
-async function solveTurnstileViaAPI(websiteURL, params) {
-  const provider = getTurnstileProvider();
-  if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
-
-  log(`使用 ${provider.name} 求解 Turnstile (sitekey=${params.sitekey.substring(0, 12)}...)`);
-
-  // 构建任务参数
-  const task = {
-    type: provider.taskType,
-    websiteURL,
-    websiteKey: params.sitekey,
-  };
-
-  // 传递浏览器 UA 给 API（仅 2Captcha 支持，CapSolver 会忽略）
-  task.userAgent = DEFAULT_UA;
-
-  // 2Captcha 带代理模式：添加住宅代理参数
-  if (provider.supportsProxy) {
-    task.proxyType = CONFIG.PROXY_TYPE;
-    task.proxyAddress = CONFIG.PROXY_ADDRESS;
-    task.proxyPort = parseInt(CONFIG.PROXY_PORT, 10);
-    if (CONFIG.PROXY_LOGIN) task.proxyLogin = CONFIG.PROXY_LOGIN;
-    if (CONFIG.PROXY_PASSWORD) task.proxyPassword = CONFIG.PROXY_PASSWORD;
-    const maskedProxyAddr = CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*');
-    log(`${provider.name} 使用住宅代理: ${CONFIG.PROXY_TYPE}://${maskedProxyAddr}:${CONFIG.PROXY_PORT}`);
-  }
-
-  // CapSolver 使用 metadata 传递 action/cdata
-  if (provider.name === 'CapSolver') {
-    if (params.action || params.cData) {
-      task.metadata = {};
-      if (params.action) task.metadata.action = params.action;
-      if (params.cData) task.metadata.cdata = params.cData;
-    }
-  } else {
-    // 2Captcha 使用顶层 action/data/pagedata
-    if (params.action) task.action = params.action;
-    if (params.cData) task.data = params.cData;
-    if (params.chlPageData) task.pagedata = params.chlPageData;
-  }
-
-  // Mask 敏感信息后记录日志
-  const taskForLog = { ...task };
-  if (taskForLog.proxyAddress) {
-    taskForLog.proxyAddress = taskForLog.proxyAddress.replace(/.(?=.{4})/g, '*');
-  }
-  if (taskForLog.proxyPassword) {
-    taskForLog.proxyPassword = '***';
-  }
-  if (taskForLog.proxyLogin) {
-    taskForLog.proxyLogin = '***';
-  }
-  log(`${provider.name} 任务参数: ${JSON.stringify(taskForLog)}`);
-
-  // 创建求解任务
-  const createRes = await fetch(`${provider.apiBase}/createTask`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      clientKey: provider.clientKey,
-      task,
-    }),
-  });
-
-  if (!createRes.ok) {
-    throw new Error(`${provider.name} createTask HTTP 错误: ${createRes.status}`);
-  }
-
-  const createData = await createRes.json();
-  if (createData.errorId && createData.errorId !== 0) {
-    throw new Error(`${provider.name} createTask 错误: ${createData.errorDescription || createData.errorCode || JSON.stringify(createData)}`);
-  }
-
-  const taskId = createData.taskId;
-  if (!taskId) {
-    throw new Error(`${provider.name} createTask 未返回 taskId: ${JSON.stringify(createData)}`);
-  }
-
-  log(`${provider.name} 任务已创建: taskId=${taskId}`);
-
-  // 轮询获取结果（间隔 3 秒，最多轮询 TURNSTILE_API_TIMEOUT 毫秒）
-  const startTime = Date.now();
-  const pollInterval = 3000;
-  const maxPolls = Math.ceil(CONFIG.TURNSTILE_API_TIMEOUT / pollInterval);
-
-  for (let i = 1; i <= maxPolls; i++) {
-    await sleep(pollInterval);
-
-    const elapsed = Date.now() - startTime;
-    if (elapsed > CONFIG.TURNSTILE_API_TIMEOUT) {
-      throw new Error(`${provider.name} 求解超时（${CONFIG.TURNSTILE_API_TIMEOUT}ms）`);
-    }
-
-    const resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientKey: provider.clientKey,
-        taskId,
-      }),
-    });
-
-    if (!resultRes.ok) {
-      log(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
-      continue;
-    }
-
-    const resultData = await resultRes.json();
-
-    if (resultData.errorId && resultData.errorId !== 0) {
-      throw new Error(`${provider.name} getTaskResult 错误: ${resultData.errorDescription || resultData.errorCode}`);
-    }
-
-    if (resultData.status === 'ready' && resultData.solution) {
-      const token = resultData.solution.token;
-      if (!token) {
-        throw new Error(`${provider.name} 返回 ready 但 solution.token 为空`);
-      }
-      const userAgent = resultData.solution.userAgent || null;
-      log(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
-        (userAgent ? `，UA: ${userAgent.substring(0, 50)}...` : ''));
-      return { token, userAgent };
-    }
-
-    // 任务仍在处理中
-    log(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
-  }
-
-  throw new Error(`${provider.name} 轮询次数耗尽，求解失败`);
-}
-
-/**
- * 将 Turnstile token 注入页面并触发回调
- *
- * 注入目标：input[name="cf-turnstile-response"] 或同名 textarea
- * 触发回调：通过 window.turnstile API 或 widgetId 调用 callback
- */
-async function injectTurnstileToken(page, token) {
-  const injected = await page.evaluate((tkn) => {
-    // 注入 token 到所有匹配的 input/textarea 元素
-    const selectors = [
-      'input[name="cf-turnstile-response"]',
-      'textarea[name="cf-turnstile-response"]',
-      'input[name="g-recaptcha-response"]', // Turnstile reCAPTCHA 兼容模式
-    ];
-
-    let injectedCount = 0;
-    for (const sel of selectors) {
-      const els = document.querySelectorAll(sel);
-      els.forEach((el) => {
-        el.value = tkn;
-        // 触发事件通知表单框架 token 已变更
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        injectedCount++;
-      });
-    }
-
-    // 尝试调用 Turnstile 回调函数
-    let callbackCalled = false;
-    try {
-      // 通过 data-callback 属性找到回调函数名
-      const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
-      if (cfDiv) {
-        const callbackName = cfDiv.getAttribute('data-callback');
-        if (callbackName && typeof window[callbackName] === 'function') {
-          window[callbackName](tkn);
-          callbackCalled = true;
-        }
-      }
-    } catch (_) { /* 忽略回调异常 */ }
-
-    // 启用提交按钮（某些表单在 token 注入前禁用提交）
-    const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
-    if (submitBtn && submitBtn.disabled) {
-      submitBtn.disabled = false;
-      submitBtn.removeAttribute('disabled');
-    }
-
-    return { injectedCount, callbackCalled };
-  }, token);
-
-  log(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
-  return injected.injectedCount > 0;
-}
 
 /**
  * 模拟人类鼠标移动轨迹（贝塞尔曲线 + 随机抖动）
@@ -956,8 +519,7 @@ async function getTurnstileToken(page) {
       return '';
     });
   } catch (error) {
-    // 保持函数对外行为不变（返回空字符串），但记录错误以便排查页面 / 执行上下文问题
-    console.error('[getTurnstileToken] Failed to evaluate Turnstile token:', error);
+    err(`获取 Turnstile token 失败: ${error.message}`);
     return '';
   }
 }
@@ -1439,7 +1001,6 @@ async function main() {
 
     // 提取续期后的到期时间
     log('正在提取续期后的新到期日...');
-    const pageContent = await page.content();
     log(`📄 当前页面 URL: ${page.url()}`);
 
     const newExpireDate = await page.evaluate(() => {
@@ -1483,6 +1044,17 @@ async function main() {
     const nextRun = new Date(Date.now() + 86400000);
     const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
 
+    // 持久化续期成功记录
+    const successRecord = buildRenewalRecord({
+      success: true,
+      serverName: renewalData.vpsInfo.serverName,
+      plan: renewalData.vpsInfo.plan,
+      oldExpireDate: renewalData.vpsInfo.expireDate,
+      newExpireDate,
+    });
+    writeRenewalStatus(successRecord);
+    log(`📝 续期记录已保存: ${RENEWAL_STATUS_FILE}`);
+
     await notify(
       `✅ <b>Xserver VPS 续期成功</b>\n\n` +
       `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
@@ -1496,16 +1068,29 @@ async function main() {
   } catch (e) {
     err(`流程异常终止: ${e.message}`);
 
+    // 持久化续期失败记录
+    const failRecord = buildRenewalRecord({
+      success: false,
+      errorMessage: e.message,
+    });
+    writeRenewalStatus(failRecord);
+    log(`📝 失败记录已保存: ${RENEWAL_STATUS_FILE}`);
+
+    // 告警升级：连续失败达到阈值时发送升级告警
+    const { consecutiveFailures } = getRenewalStatus();
+    const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
+
     // 检查是否配置了代理
     const proxyHint = HAS_PROXY
       ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*')}:${CONFIG.PROXY_PORT}`
       : `💡 <b>优化建议</b>:\n如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n代理可提高 Cloudflare Turnstile 通过率。`;
 
     await notify(
-      `❌ <b>Xserver VPS 续期失败</b>\n\n` +
+      `${isEscalation ? '🚨 <b>【告警升级】</b>' : '❌'} <b>Xserver VPS 续期失败</b>\n\n` +
       `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
-      `💥 错误信息: <code>${escapeHtml(e.message)}</code>\n\n` +
-      `${proxyHint}\n\n` +
+      `💥 错误信息: <code>${escapeHtml(e.message)}</code>\n` +
+      `${isEscalation ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}` +
+      `\n${proxyHint}\n\n` +
       `📋 失败说明:\n` +
       `- 验证码识别已自动重试 ${CONFIG.CAPTCHA_MAX_RETRY || 3} 次\n` +
       `- Turnstile 已使用 API 求解\n` +
@@ -1525,18 +1110,27 @@ async function main() {
   }
 }
 
+// ============================================================
+// 续期结果持久化与监控（已拆分为独立模块）
+// 详见 src/renewal-status.mjs
+// ============================================================
+
+/** 状态文件路径（从环境变量读取，与模块默认值保持一致） */
+const RENEWAL_STATUS_FILE = process.env.RENEWAL_STATUS_FILE || DEFAULT_STATUS_FILE;
+/** 连续失败告警阈值 */
+const ALERT_AFTER_CONSECUTIVE_FAILURES = parseInt(process.env.ALERT_AFTER_FAILURES || String(DEFAULT_ALERT_AFTER_FAILURES), 10);
+
 // 仅在直接执行时运行 main()，支持 import 测试
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main();
 }
 
 export {
-  normalizeCaptchaCode,
-  convertHiraganaToNumber,
   escapeHtml,
   findChromePath,
-  getTurnstileProvider,
+  cleanChromeLocks,
   getTurnstileToken,
   HAS_PROXY,
   CONFIG,
+  DEFAULT_UA,
 };

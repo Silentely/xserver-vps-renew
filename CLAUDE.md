@@ -1,0 +1,262 @@
+# Xserver VPS 自动续期工具
+
+> 自动为 Xserver 免费 VPS 执行续期操作，基于 Puppeteer Stealth + rebrowser-patches 绕过 Cloudflare Turnstile 检测。
+
+## 变更记录 (Changelog)
+
+| 日期 | 变更内容 |
+|------|----------|
+| 2026-06-30 | 初始化架构文档，扫描全仓生成根级 CLAUDE.md |
+
+---
+
+## 项目愿景
+
+通过自动化浏览器操作，每日检查 Xserver 免费 VPS 到期状态并在临近到期时自动完成续期流程（登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交），避免因忘记续期导致 VPS 被回收。
+
+---
+
+## 架构总览
+
+### 技术栈
+
+| 类别 | 技术选型 |
+|------|----------|
+| 运行时 | Node.js 22 (ESM) |
+| 浏览器自动化 | rebrowser-puppeteer-core + puppeteer-extra Stealth |
+| 验证码识别 | Keras 模型 API（Cloud Run 部署） |
+| Turnstile 求解 | CapSolver API（优先）/ 2Captcha API（备选） |
+| 通知 | Telegram Bot API |
+| 容器化 | Docker + docker-compose |
+| 定时调度 | cron（容器内） |
+| 测试 | Vitest |
+| 依赖更新 | Renovate |
+| CI/CD | GitHub Actions → GHCR |
+
+### 目录结构
+
+```
+xserver-vps-renew/
+├── xserver-vps-renew.mjs      # 编排入口（浏览器操作 + 流程控制 + 通知）
+├── src/                       # 可复用模块
+│   ├── captcha.mjs            # 验证码处理（标准化/识别/平假名转换）
+│   ├── turnstile.mjs          # Turnstile 求解（参数构建/API 调用/token 注入）
+│   └── renewal-status.mjs     # 续期结果持久化与健康检查
+├── browser-fingerprint-patch.js  # 浏览器指纹注入补丁
+├── xserver-renews.js           # GreasyFork 用户脚本版本（参考实现）
+├── turnstile-patch/            # Chrome 扩展：修复 CDP MouseEvent 坐标异常
+│   ├── manifest.json
+│   └── content.js
+├── entrypoint.sh               # Docker 入口脚本（定时/单次模式）
+├── diagnostics.sh              # 容器网络与环境诊断脚本
+├── Dockerfile                  # 容器构建文件
+├── docker-compose.yml          # 容器编排配置
+├── package.json                # 依赖与脚本
+├── vitest.config.mjs           # 测试配置
+├── renovate.json               # 自动依赖更新配置
+├── .env.example                # 环境变量模板
+├── .github/workflows/          # CI/CD
+│   └── docker-publish.yml
+└── __tests__/unit/             # 单元测试（9 个文件，111 个用例）
+    ├── buildTurnstileTask.test.mjs
+    ├── cleanChromeLocks.test.mjs
+    ├── convertHiraganaToNumber.test.mjs
+    ├── escapeHtml.test.mjs
+    ├── findChromePath.test.mjs
+    ├── getTurnstileProvider.test.mjs
+    ├── normalizeCaptchaCode.test.mjs
+    ├── normalizeCaptchaCode.edge.test.mjs
+    └── renewalStatus.test.mjs
+```
+
+### 系统结构图
+
+```mermaid
+graph TD
+    A["xserver-vps-renew<br/>(根目录)"] --> B["xserver-vps-renew.mjs<br/>核心续期脚本"];
+    A --> C["browser-fingerprint-patch.js<br/>指纹补丁"];
+    A --> D["turnstile-patch/<br/>CDP MouseEvent 修复扩展"];
+    A --> E["entrypoint.sh<br/>容器入口"];
+    A --> F["Dockerfile / docker-compose.yml<br/>部署配置"];
+    A --> G["__tests__/<br/>单元测试"];
+    A --> H["xserver-renews.js<br/>GreasyFork 用户脚本版"];
+
+    B -->|"依赖"| C;
+    B -->|"加载扩展"| D;
+    B -->|"启动 Chrome + Stealth"| I["Chrome Browser"];
+    I -->|"访问"| J["Xserver 官网"];
+    B -->|"验证码识别"| K["Keras API (Cloud Run)"];
+    B -->|"Turnstile 求解"| L["CapSolver / 2Captcha API"];
+    B -->|"通知"| M["Telegram Bot"];
+```
+
+---
+
+## 模块索引
+
+| 路径 | 职责 | 入口/关键函数 |
+|------|------|---------------|
+| `xserver-vps-renew.mjs` | 编排入口（浏览器操作 + 流程控制 + 通知） | `main()`, `handleLogin()`, `checkRenewalNeeded()`, `handleCaptchaPage()` |
+| `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptcha()` |
+| `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `buildTurnstileTask()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
+| `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `getRenewalStatus()` |
+| `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
+| `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
+| `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / cron 调度） | `run_renew()`, `cleanup()` |
+| `diagnostics.sh` | 容器网络连通性与环境诊断 | 独立诊断脚本 |
+| `xserver-renews.js` | GreasyFork 用户脚本版本（浏览器端直接运行参考） | `main()` 路由分发 |
+
+---
+
+## 运行与开发
+
+### 本地运行
+
+```bash
+# 安装依赖
+npm install
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 填写 XSERVER_MEMBER_ID、XSERVER_PASSWORD、CAPTCHA_API
+
+# 单次执行
+npm start
+# 或
+node xserver-vps-renew.mjs
+```
+
+### Docker 部署
+
+```bash
+# 构建并启动
+docker-compose up -d
+
+# 查看日志
+docker logs -f xserver-vps-renew
+
+# 手动触发一次续期
+docker exec xserver-vps-renew ./entrypoint.sh --once
+```
+
+### 测试
+
+```bash
+# 运行测试
+npm test
+
+# 覆盖率报告
+npm run test:coverage
+
+# 监听模式
+npm run test:watch
+```
+
+---
+
+## 环境变量配置
+
+### 必填
+
+| 变量 | 说明 |
+|------|------|
+| `XSERVER_MEMBER_ID` | Xserver 会员 ID |
+| `XSERVER_PASSWORD` | Xserver 登录密码 |
+| `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run） |
+
+### 可选
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CAPSOLVER_API_KEY` | CapSolver API 密钥（Turnstile 求解，优先） | 无 |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解，备选） | 无 |
+| `PROXY_TYPE` | 代理类型：http / socks4 / socks5 | 无 |
+| `PROXY_ADDRESS` | 代理地址 | 无 |
+| `PROXY_PORT` | 代理端口 | 无 |
+| `PROXY_LOGIN` | 代理用户名 | 无 |
+| `PROXY_PASSWORD` | 代理密码 | 无 |
+| `TG_BOT_TOKEN` | Telegram Bot Token | 无 |
+| `TG_CHAT_ID` | Telegram Chat ID | 无 |
+| `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
+| `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |
+| `TZ` | 时区 | `Asia/Tokyo` |
+| `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式） | 无（单次模式） |
+| `ENABLE_DIAGNOSTICS` | 启用容器环境诊断（true/false） | 无 |
+| `RENEWAL_STATUS_FILE` | 续期记录持久化文件路径 | `/data/renewal-status.json` |
+| `ALERT_AFTER_FAILURES` | 连续失败达到此次值时触发告警升级 | `3` |
+
+---
+
+## 核心流程详解
+
+### 续期主流程 (`main()`)
+
+```
+启动 → 清理 Chrome 锁文件 → 启动 Chrome (rebrowser + Stealth)
+  → 注入浏览器指纹补丁 → 登录 → 检查到期状态
+  → [无需续期] 结束
+  → [需要续期] 续期确认 → 验证码识别 → Turnstile 求解 → 提交
+  → 提取新到期日 → Telegram 通知
+```
+
+### 验证码处理 (`handleCaptchaPage()`)
+
+1. 等待验证码图片元素（Base64 内嵌）
+2. 调用 Keras API 识别（最多重试 3 次）
+3. 验证码标准化（支持平假名转数字、全角转半角、混合内容提取）
+4. 模拟人类输入（带延迟）
+5. Turnstile 求解（CapSolver/2Captcha API）
+6. 提交表单并验证结果
+
+### Turnstile 求解策略
+
+- **首选**：CapSolver API（`AntiTurnstileTaskProxyLess`，不支持代理）
+- **备选**：2Captcha API（支持代理 `TurnstileTask` 或 `TurnstileTaskProxyless`）
+- **降级**：无 API 密钥时等待自然通过
+- 求解成功后注入 token 到页面并触发回调
+
+### 浏览器反检测措施
+
+| 措施 | 实现位置 |
+|------|----------|
+| rebrowser-patches 修复 Runtime.Enable 泄露 | `rebrowser-puppeteer-core` |
+| Stealth 插件隐藏自动化特征 | `puppeteer-extra-plugin-stealth` |
+| 浏览器指纹注入（WebGL/Canvas/Plugins 等） | `browser-fingerprint-patch.js` |
+| CDP MouseEvent.screenX/screenY 修复 | `turnstile-patch/` Chrome 扩展 |
+| 真实 UA（Chrome 149 Edge） | `CONFIG` 中 `DEFAULT_UA` |
+
+---
+
+## 测试策略
+
+- **框架**：Vitest + v8 覆盖率
+- **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
+- **已测试模块**（9 个测试文件，111 个用例）：
+  - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`
+  - `src/turnstile.mjs` — `getTurnstileProvider`、`buildTurnstileTask`、`maskTaskForLog`
+  - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
+  - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`
+- **未覆盖**：浏览器操作流程（需要 Puppeteer mock 或集成测试）
+- **CI 门禁**：分支覆盖率 ≥ 25%
+
+---
+
+## 编码规范
+
+- ESM 模块（`"type": "module"`），使用 `import`/`export`
+- 日志统一格式：`YYYY-MM-DD HH:mm:ss` 前缀（东京时区）
+- 所有用户可见输出使用简体中文
+- 环境变量通过 `CONFIG` 集中管理
+- 敏感信息（代理地址、密码）在日志中 mask 处理
+- 导出纯函数以支持单元测试
+
+---
+
+## AI 使用指引
+
+- 修改核心流程时，请先理解 `main()` 中的步骤顺序和错误处理逻辑
+- 验证码识别和 Turnstile 求解是关键路径，修改需谨慎
+- 浏览器反检测措施（指纹补丁、CDP 修复）是绕过 Cloudflare 的核心，不宜随意变更
+- 新增配置项需同步更新 `.env.example` 和本文档
+- 纯函数修改后需补充对应单元测试
+- `xserver-renews.js` 是 GreasyFork 用户脚本版本，与主脚本逻辑独立，修改时注意是否需要同步

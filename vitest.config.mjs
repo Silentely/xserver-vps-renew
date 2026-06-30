@@ -5,7 +5,7 @@ export default defineConfig({
     include: ['__tests__/**/*.test.mjs'],
     coverage: {
       provider: 'v8',
-      include: ['xserver-vps-renew.mjs'],
+      include: ['xserver-vps-renew.mjs', 'src/**/*.mjs'],
     },
   },
 });

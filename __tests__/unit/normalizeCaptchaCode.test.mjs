@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeCaptchaCode } from '../../xserver-vps-renew.mjs';
+import { normalizeCaptchaCode } from '../../src/captcha.mjs';
 
 describe('normalizeCaptchaCode', () => {
   it('returns 6-digit string unchanged', () => {

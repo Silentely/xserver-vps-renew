@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getTurnstileProvider, CONFIG } from '../../xserver-vps-renew.mjs';
+import { getTurnstileProvider } from '../../src/turnstile.mjs';
+
+// 构造一个可变 CONFIG 对象供测试修改
+const CONFIG = {
+  CAPSOLVER_API_KEY: '',
+  TWOCAPTCHA_API_KEY: '',
+  PROXY_TYPE: '',
+  PROXY_ADDRESS: '',
+  PROXY_PORT: '',
+};
 
 describe('getTurnstileProvider', () => {
   const saved = {};
@@ -29,12 +38,12 @@ describe('getTurnstileProvider', () => {
   });
 
   it('returns null when no API keys configured', () => {
-    expect(getTurnstileProvider()).toBeNull();
+    expect(getTurnstileProvider(CONFIG)).toBeNull();
   });
 
   it('returns CapSolver when CAPSOLVER_API_KEY is set', () => {
     CONFIG.CAPSOLVER_API_KEY = 'test-key';
-    const provider = getTurnstileProvider();
+    const provider = getTurnstileProvider(CONFIG);
     expect(provider.name).toBe('CapSolver');
     expect(provider.taskType).toBe('AntiTurnstileTaskProxyLess');
     expect(provider.supportsProxy).toBe(false);
@@ -42,7 +51,7 @@ describe('getTurnstileProvider', () => {
 
   it('returns 2Captcha when only TWOCAPTCHA_API_KEY is set', () => {
     CONFIG.TWOCAPTCHA_API_KEY = 'test-key';
-    const provider = getTurnstileProvider();
+    const provider = getTurnstileProvider(CONFIG);
     expect(provider.name).toBe('2Captcha');
     expect(provider.taskType).toBe('TurnstileTaskProxyless');
     expect(provider.supportsProxy).toBe(false);
@@ -51,7 +60,7 @@ describe('getTurnstileProvider', () => {
   it('prefers CapSolver over 2Captcha', () => {
     CONFIG.CAPSOLVER_API_KEY = 'cap-key';
     CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
-    expect(getTurnstileProvider().name).toBe('CapSolver');
+    expect(getTurnstileProvider(CONFIG).name).toBe('CapSolver');
   });
 
   it('enables proxy mode for 2Captcha when proxy vars set', () => {
@@ -59,7 +68,7 @@ describe('getTurnstileProvider', () => {
     CONFIG.PROXY_TYPE = 'socks5';
     CONFIG.PROXY_ADDRESS = '1.2.3.4';
     CONFIG.PROXY_PORT = '1080';
-    const provider = getTurnstileProvider();
+    const provider = getTurnstileProvider(CONFIG);
     expect(provider.taskType).toBe('TurnstileTask');
     expect(provider.supportsProxy).toBe(true);
   });
@@ -69,7 +78,7 @@ describe('getTurnstileProvider', () => {
     CONFIG.PROXY_TYPE = 'socks5';
     CONFIG.PROXY_ADDRESS = '1.2.3.4';
     // PROXY_PORT is empty, so proxy mode should not activate
-    const provider = getTurnstileProvider();
+    const provider = getTurnstileProvider(CONFIG);
     expect(provider.taskType).toBe('TurnstileTaskProxyless');
   });
 });

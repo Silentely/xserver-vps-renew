@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convertHiraganaToNumber } from '../../xserver-vps-renew.mjs';
+import { convertHiraganaToNumber } from '../../src/captcha.mjs';
 
 describe('convertHiraganaToNumber', () => {
   it('converts single hiragana digits', () => {
