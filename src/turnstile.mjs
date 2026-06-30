@@ -157,11 +157,19 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
 
   logger(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
 
-  const createRes = await fetch(`${provider.apiBase}/createTask`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientKey: provider.clientKey, task }),
-  });
+  const createController = new AbortController();
+  const createTimeout = setTimeout(() => createController.abort(), 30_000);
+  let createRes;
+  try {
+    createRes = await fetch(`${provider.apiBase}/createTask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientKey: provider.clientKey, task }),
+      signal: createController.signal,
+    });
+  } finally {
+    clearTimeout(createTimeout);
+  }
 
   if (!createRes.ok) {
     throw new Error(`${provider.name} createTask HTTP 错误: ${createRes.status}`);
@@ -189,11 +197,19 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
     }
     await sleep(pollInterval);
 
-    const resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientKey: provider.clientKey, taskId }),
-    });
+    const resultController = new AbortController();
+    const resultTimeout = setTimeout(() => resultController.abort(), 30_000);
+    let resultRes;
+    try {
+      resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientKey: provider.clientKey, taskId }),
+        signal: resultController.signal,
+      });
+    } finally {
+      clearTimeout(resultTimeout);
+    }
 
     if (!resultRes.ok) {
       logger(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
