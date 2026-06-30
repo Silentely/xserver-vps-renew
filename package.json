@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "description": "Xserver VPS 自动续期 - Puppeteer Stealth 版本",
   "scripts": {
     "start": "node xserver-vps-renew.mjs",
