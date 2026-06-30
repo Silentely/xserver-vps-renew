@@ -1,0 +1,22 @@
+# Trivy ignore file
+# 规则文档：https://aquasecurity.github.io/trivy/v0.50/docs/configuration/filtering/#trivyignore
+
+# ============================================================
+# supercronic Go stdlib 漏洞 — 第三方 cron 替代品
+# 漏洞均来自 Go 标准库 v1.24.4，supercronic 实际部署中不可利用
+# 等待上游升级 Go 版本后移除
+# ============================================================
+CVE-2025-68121
+CVE-2025-61726
+CVE-2025-61729
+CVE-2026-25679
+CVE-2026-27145
+CVE-2026-32280
+CVE-2026-32281
+CVE-2026-32283
+CVE-2026-33811
+CVE-2026-33814
+CVE-2026-39820
+CVE-2026-39836
+CVE-2026-42499
+CVE-2026-42504
