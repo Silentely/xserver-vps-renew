@@ -5,19 +5,23 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
-      - CRON_SCHEDULE=0 23 * * *  # 每天东京时间 23:00 (UTC 14:00, 北京时间 22:00)
+      - CRON_SCHEDULE=0 23 * * *
     volumes:
       - chrome-data:/data/chrome-profile
-      - ./screenshots:/app/screenshots
     shm_size: "2gb"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "cron"]
+      test: ["CMD", "pgrep", "-f", "supercronic"]
       interval: 30m
       timeout: 10s
       retries: 3

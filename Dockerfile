@@ -47,9 +47,27 @@ ENV TZ=Asia/Tokyo \
     PROXY_LOGIN= \
     DISPLAY=:99
 
-# 注意：容器以 root 运行，因为 cron 守护进程和 /var/log 写入需要 root 权限
-# Chrome 通过 --no-sandbox 在容器内安全运行
+# 创建非 root 用户（Chrome 在容器内以非 root 运行更安全）
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
+    && mkdir -p /data/chrome-profile /var/log \
+    && chown -R appuser:appuser /app /data/chrome-profile /var/log
+
+# 安装 supercronic（支持非 root 的 cron 替代品）
+SUPERCRONIC_VERSION=v0.2.34
+RUN set -e \
+    && arch=$(uname -m) \
+    && case "$arch" in \
+       x86_64)  ARCH=amd64 ;; \
+       aarch64) ARCH=arm64 ;; \
+       *) echo "不支持的架构: $arch" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}" \
+      -o /usr/local/bin/supercronic \
+    && chmod +x /usr/local/bin/supercronic
+
+USER appuser
+
 HEALTHCHECK --interval=30m --timeout=10s --retries=3 \
-  CMD pgrep -f "cron" || exit 1
+  CMD pgrep -f "supercronic" || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]
