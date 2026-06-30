@@ -43,6 +43,9 @@ jobs:
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Validate scripts
         run: |
           node --check xserver-vps-renew.mjs
