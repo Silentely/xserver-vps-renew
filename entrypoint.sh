@@ -171,12 +171,9 @@ CRONSCRIPT
         fi
     done
 
-    # 启动 supercronic 并保持前台
+    # 启动 supercronic 并保持前台（exec 替换当前进程，后续代码不可达）
+    echo "$LOG_PREFIX 🚀 supercronic 已启动，定时任务: $SCHEDULE_INFO"
     exec supercronic /app/crontab
-    echo "$LOG_PREFIX cron 守护进程已启动，等待下次调度..."
-    echo "$LOG_PREFIX ⏭️ 定时任务: $SCHEDULE_INFO"
-    tail -f /var/log/xserver-renew.log 2>/dev/null &
-    wait
 else
     if [ "$1" = "--once" ]; then
         # 被 cron 内部调用：执行一次，失败不重试

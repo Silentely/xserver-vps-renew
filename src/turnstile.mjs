@@ -5,6 +5,9 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 
+/** API 请求超时（毫秒） */
+const FETCH_TIMEOUT_MS = 30_000;
+
 /**
  * 获取 Turnstile 求解服务商配置
  * @param {object} config - CONFIG 对象
@@ -158,7 +161,7 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
   logger(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
 
   const createController = new AbortController();
-  const createTimeout = setTimeout(() => createController.abort(), 30_000);
+  const createTimeout = setTimeout(() => createController.abort(), FETCH_TIMEOUT_MS);
   let createRes;
   try {
     createRes = await fetch(`${provider.apiBase}/createTask`, {
@@ -198,7 +201,7 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
     await sleep(pollInterval);
 
     const resultController = new AbortController();
-    const resultTimeout = setTimeout(() => resultController.abort(), 30_000);
+    const resultTimeout = setTimeout(() => resultController.abort(), FETCH_TIMEOUT_MS);
     let resultRes;
     try {
       resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {

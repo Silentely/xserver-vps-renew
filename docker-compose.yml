@@ -10,11 +10,6 @@ services:
       - chrome-data:/data/chrome-profile
     shm_size: "2gb"
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: '1.0'
     logging:
       driver: json-file
       options:
