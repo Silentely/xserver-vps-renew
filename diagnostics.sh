@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # 容器网络与环境诊断脚本
 
 echo "====== 环境诊断 $(date -Iseconds) ======"
@@ -18,13 +19,16 @@ curl -s -o /dev/null -w "  直连外网: %{http_code} (%{time_total}s)\n" https:
 
 if [ -n "$PROXY_ADDRESS" ] && [ -n "$PROXY_PORT" ]; then
   PROXY_SCHEME="${PROXY_TYPE:-http}"
-  AUTH=""
   if [ -n "$PROXY_LOGIN" ] && [ -n "$PROXY_PASSWORD" ]; then
-    AUTH="${PROXY_LOGIN}:${PROXY_PASSWORD}@"
+    curl -s -o /dev/null -w "  代理连通: %{http_code} (%{time_total}s)\n" \
+      -x "${PROXY_SCHEME}://${PROXY_ADDRESS}:${PROXY_PORT}" \
+      --proxy-user "${PROXY_LOGIN}:${PROXY_PASSWORD}" \
+      https://secure.xserver.ne.jp --connect-timeout 15 || echo "  代理连通: 失败"
+  else
+    curl -s -o /dev/null -w "  代理连通: %{http_code} (%{time_total}s)\n" \
+      -x "${PROXY_SCHEME}://${PROXY_ADDRESS}:${PROXY_PORT}" \
+      https://secure.xserver.ne.jp --connect-timeout 15 || echo "  代理连通: 失败"
   fi
-  curl -s -o /dev/null -w "  代理连通: %{http_code} (%{time_total}s)\n" \
-    -x "${PROXY_SCHEME}://${AUTH}${PROXY_ADDRESS}:${PROXY_PORT}" \
-    https://secure.xserver.ne.jp --connect-timeout 15 || echo "  代理连通: 失败"
 else
   echo "  代理连通: 未配置代理，跳过"
 fi
