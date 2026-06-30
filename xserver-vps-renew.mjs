@@ -797,7 +797,7 @@ async function handleCaptchaPage(page) {
           log(`❌ 第 ${attempt} 次尝试失败: ${reason}`);
           log(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
           // 刷新页面重新获取验证码
-          await page.reload({ waitUntil: 'networkidle0' });
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           await sleep(1000);
           continue; // 重试
         } else {
@@ -813,7 +813,7 @@ async function handleCaptchaPage(page) {
 
         if (attempt < maxRetries) {
           log(`⏭️ 返回验证码页面，准备第 ${attempt + 1} 次尝试...`);
-          await page.goto(currentUrl.replace('/do', '/conf'), { waitUntil: 'networkidle0' });
+          await page.goto(currentUrl.replace('/do', '/conf'), { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           await sleep(1000);
           continue; // 重试
         } else {
@@ -857,10 +857,10 @@ async function handleCaptchaPage(page) {
           // 尝试刷新页面重新获取验证码
           const currentUrl = page.url();
           if (currentUrl.includes('/conf')) {
-            await page.reload({ waitUntil: 'networkidle0' });
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           } else {
             // 如果不在验证码页面，返回验证码页面
-            await page.goto(currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf'), { waitUntil: 'networkidle0' });
+            await page.goto(currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf'), { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           }
           await sleep(1000);
         } catch (reloadError) {
