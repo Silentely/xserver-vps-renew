@@ -12,6 +12,7 @@ npm-debug.log*
 
 # 测试结果
 test-results-*/
+coverage/
 screenshots/
 
 # 临时文件
