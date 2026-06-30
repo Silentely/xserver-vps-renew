@@ -864,7 +864,8 @@ async function handleCaptchaPage(page) {
             // 如果不在验证码页面，返回验证码页面
             await page.goto(currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf'), { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           }
-          await sleep(1000);
+          // 等待足够时间让验证码图片渲染完成（Base64 内嵌图片加载需要时间）
+          await sleep(3000);
         } catch (reloadError) {
           log(`⚠️ 页面刷新失败: ${reloadError.message}`);
           throw error; // 无法刷新，抛出原始错误

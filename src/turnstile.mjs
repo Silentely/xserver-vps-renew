@@ -222,7 +222,13 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
     const resultData = await resultRes.json();
 
     if (resultData.errorId && resultData.errorId !== 0) {
-      throw new Error(`${provider.name} getTaskResult 错误: ${resultData.errorDescription || resultData.errorCode}`);
+      const errMsg = resultData.errorDescription || resultData.errorCode;
+      // "init error" 是 CapSolver 瞬态错误，短暂等待后重试而非直接终止
+      if (errMsg === 'init error' && i < maxPolls) {
+        logger(`${provider.name} 遇到瞬态 init error，等待后重试 (${i}/${maxPolls})...`);
+        continue;
+      }
+      throw new Error(`${provider.name} getTaskResult 错误: ${errMsg}`);
     }
 
     if (resultData.status === 'ready' && resultData.solution) {

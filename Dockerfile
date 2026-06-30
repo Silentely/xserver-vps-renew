@@ -51,9 +51,10 @@ ENV TZ=Asia/Tokyo \
 
 # 创建非 root 用户（Chrome 在容器内以非 root 运行更安全）
 # /data/ 目录需要 appuser 可写（renewal-status.json 持久化）
+# /tmp/.X11-unix 需要预创建（appuser 无权创建，Xvfb 启动时会报错）
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
-    && mkdir -p /data/chrome-profile /var/log \
-    && chown -R appuser:appuser /data /app /var/log
+    && mkdir -p /data/chrome-profile /var/log /tmp/.X11-unix \
+    && chown -R appuser:appuser /data /app /var/log /tmp/.X11-unix
 
 # 安装 supercronic（支持非 root 的 cron 替代品）
 ARG SUPERCRONIC_VERSION=v0.2.34
