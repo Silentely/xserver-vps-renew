@@ -5,7 +5,7 @@
   "description": "修复 CDP Input.dispatchMouseEvent 产生的 MouseEvent.screenX/screenY 异常",
   "content_scripts": [
     {
-      "matches": ["*://*/*"],
+      "matches": ["https://secure.xserver.ne.jp/*", "https://www.xserver.ne.jp/*"],
       "js": ["content.js"],
       "run_at": "document_start",
       "all_frames": true,
