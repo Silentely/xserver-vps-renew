@@ -176,7 +176,7 @@ CRONSCRIPT
     echo "$LOG_PREFIX 🚀 supercronic 已启动，定时任务: $SCHEDULE_INFO"
     exec supercronic /app/crontab
 else
-    if [ "$1" = "--once" ]; then
+    if [ "${1:-}" = "--once" ]; then
         # 被 cron 内部调用：执行一次，失败不重试
         run_renew
     else
