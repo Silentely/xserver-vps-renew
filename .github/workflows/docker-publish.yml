@@ -44,7 +44,7 @@ jobs:
             type=sha,prefix=sha-,format=short
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Validate scripts
         run: |
