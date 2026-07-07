@@ -838,11 +838,22 @@ async function handleCaptchaPage(page) {
       if (matchedSuccess) {
         log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
       } else {
-        // 如果没有明确成功标识，输出完整页面内容用于调试
-        log(`⚠️ 页面未检测到明确的成功标识，URL: ${currentUrl}`);
+        // 页面已跳转到 /do 但无成功标识 → 续期失败，必须抛出异常
+        log(`❌ 页面未检测到明确的成功标识，URL: ${currentUrl}`);
 
-        // 不抛出异常，但标记为可能失败
-        log(`⚠️ 续期状态不明确，请人工确认。URL: ${currentUrl}`);
+        // 检测具体失败原因（信用卡未绑定、额度不足等）
+        const knownFailures = [
+          { pattern: 'クレジットカード', reason: '需要绑定信用卡才能续期' },
+          { pattern: 'カード登録', reason: '需要注册信用卡才能续期' },
+          { pattern: '決済方法', reason: '需要设置支付方式才能续期' },
+          { pattern: '無料枠', reason: '免费额度相关问题' },
+        ];
+        const matchedFailure = knownFailures.find(f => pageText.includes(f.pattern));
+        const reason = matchedFailure
+          ? matchedFailure.reason
+          : '续期状态不明确，请人工检查页面内容';
+
+        throw new Error(`${reason}。URL: ${currentUrl}`);
       }
 
       // 成功，跳出重试循环
