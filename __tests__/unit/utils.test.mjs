@@ -4,6 +4,7 @@ import {
   getTokyoDateString,
   fetchWithTimeout,
   validateRequiredConfig,
+  parsePositiveInt,
   TOKYO_OFFSET_MS,
 } from '../../src/utils.mjs';
 
@@ -43,6 +44,25 @@ describe('getTokyoDateString', () => {
   });
 });
 
+describe('parsePositiveInt', () => {
+  it('解析合法正整数', () => {
+    expect(parsePositiveInt('42', 1)).toBe(42);
+  });
+
+  it('非法值回退默认', () => {
+    expect(parsePositiveInt('abc', 7)).toBe(7);
+    expect(parsePositiveInt('', 7)).toBe(7);
+    expect(parsePositiveInt(undefined, 7)).toBe(7);
+    expect(parsePositiveInt('-1', 7)).toBe(7);
+  });
+
+  it('尊重 min/max', () => {
+    expect(parsePositiveInt('2', 10, { min: 5, max: 100 })).toBe(10);
+    expect(parsePositiveInt('200', 10, { min: 5, max: 100 })).toBe(10);
+    expect(parsePositiveInt('50', 10, { min: 5, max: 100 })).toBe(50);
+  });
+});
+
 describe('validateRequiredConfig', () => {
   const base = {
     MEMBER_ID: 'user1',
@@ -52,6 +72,15 @@ describe('validateRequiredConfig', () => {
 
   it('完整配置返回空数组', () => {
     expect(validateRequiredConfig(base)).toEqual([]);
+  });
+
+  it('配置对象无效时返回错误', () => {
+    expect(validateRequiredConfig(null)).toContain('配置对象无效');
+  });
+
+  it('CAPTCHA_API 非法 URL 时报错', () => {
+    const missing = validateRequiredConfig({ ...base, CAPTCHA_API: 'not-a-url' });
+    expect(missing.some((m) => m.includes('CAPTCHA_API'))).toBe(true);
   });
 
   it('缺少必填项时列出缺失项', () => {

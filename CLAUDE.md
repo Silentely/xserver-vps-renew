@@ -6,7 +6,8 @@
 
 | 日期 | 变更内容 |
 |------|----------|
-| 2026-07-11 | 打磨迭代：修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验、13 文件 / 169 用例 |
+| 2026-07-11 | 第二轮打磨：renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
+| 2026-07-11 | 第一轮打磨：修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验 |
 | 2026-07-11 | 文档同步：测试清单、supercronic、覆盖率阈值、Docker 非 root 运行说明 |
 | 2026-06-30 | 初始化架构文档，扫描全仓生成根级 CLAUDE.md |
 
@@ -44,6 +45,7 @@ xserver-vps-renew/
 │   ├── captcha.mjs            # 验证码处理（标准化/识别/平假名转换）
 │   ├── turnstile.mjs          # Turnstile 求解（参数构建/API 调用/token 注入）
 │   ├── renewal-status.mjs     # 续期结果持久化与健康检查
+│   ├── renewal-logic.mjs      # 续期业务纯逻辑（到期/提交结果/通知文案）
 │   └── utils.mjs              # 通用纯函数（脱敏/东京日期/超时 fetch/配置校验）
 ├── browser-fingerprint-patch.js  # 浏览器指纹注入补丁
 ├── xserver-renews.js           # GreasyFork 用户脚本版本（参考实现）
@@ -61,7 +63,7 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（13 个文件，169 个用例）
+└── __tests__/unit/             # 单元测试（15 个文件，约 209 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
@@ -69,8 +71,10 @@ xserver-vps-renew/
     ├── escapeHtml.test.mjs
     ├── findChromePath.test.mjs
     ├── getTurnstileProvider.test.mjs
+    ├── injectTurnstileToken.test.mjs
     ├── normalizeCaptchaCode.test.mjs
     ├── normalizeCaptchaCode.edge.test.mjs
+    ├── renewalLogic.test.mjs
     ├── renewalStatus.test.mjs
     ├── turnstile.extract.test.mjs
     ├── turnstile.solve.test.mjs
@@ -108,7 +112,8 @@ graph TD
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
 | `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
-| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()` |
+| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑 | `isRenewalDue()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, 通知文案构建 |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -191,8 +196,12 @@ npm run test:watch
 | `TZ` | 时区 | `Asia/Tokyo` |
 | `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式） | 无（单次模式） |
 | `ENABLE_DIAGNOSTICS` | 启用容器环境诊断（true/false） | 无 |
-| `RENEWAL_STATUS_FILE` | 续期记录持久化文件路径 | `/data/renewal-status.json` |
+| `RENEWAL_STATUS_FILE` | 续期记录持久化文件路径 | `/data/chrome-profile/renewal-status.json` |
 | `ALERT_AFTER_FAILURES` | 连续失败达到此次值时触发告警升级 | `3` |
+| `NAVIGATION_TIMEOUT_MS` | 页面导航超时（毫秒） | `30000` |
+| `TURNSTILE_TIMEOUT_MS` | Turnstile 自然通过等待超时 | `60000` |
+| `TURNSTILE_API_TIMEOUT_MS` | Turnstile API 求解轮询超时 | `120000` |
+| `CAPTCHA_MAX_RETRY` | 验证码识别最大重试次数 | `3` |
 
 ---
 
@@ -240,11 +249,12 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（13 个测试文件，169 个用例）：
+- **已测试模块**（15 个测试文件，约 209 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
-  - `src/turnstile.mjs` — `getTurnstileProvider`、`extractTurnstileParams`、`buildTurnstileTask`、`maskTaskForLog`、`solveTurnstileViaAPI`
+  - `src/turnstile.mjs` — `getTurnstileProvider`、`extractTurnstileParams`、`buildTurnstileTask`、`maskTaskForLog`、`solveTurnstileViaAPI`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
-  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`
+  - `src/renewal-logic.mjs` — 到期判定、URL 构建、提交结果、到期日提取、通知文案
+  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`
   - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`、`escapeHtml`
 - **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）
 - **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%

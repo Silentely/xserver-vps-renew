@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
-### 修复（2026-07-11 打磨迭代）
+### 第二轮打磨（2026-07-11）
+- 新增 `src/renewal-logic.mjs`：到期判定、续期 URL、提交结果解析、到期日提取、通知文案纯函数化
+- 超时/重试环境变量：`NAVIGATION_TIMEOUT_MS` / `TURNSTILE_TIMEOUT_MS` / `TURNSTILE_API_TIMEOUT_MS` / `CAPTCHA_MAX_RETRY`
+- `CAPTCHA_API` URL 合法性校验；`parsePositiveInt` 统一环境变量解析
+- Docker：默认状态文件改为 `/data/chrome-profile/renewal-status.json`（与 Chrome 配置同卷持久化）；健康检查兼容 supercronic / 执行中进程
+- 单元测试增至 15 文件 / 209+ 用例（含 `renewalLogic` / `injectTurnstileToken`）
+
+### 修复（2026-07-11 第一轮）
 - **关键**：`writeRenewalStatus` / `getRenewalStatus` 未传入 `RENEWAL_STATUS_FILE`，自定义路径实际不生效
 - **关键**：`CONFIG.DEFAULT_UA` 未注入 Turnstile 求解，API 任务始终空 UA
 - **关键**：`writeRenewalStatus` 目录权限检查 mock 不全导致测试误报「目录不可写」；不可写时现在明确抛错
@@ -10,18 +17,18 @@
 - `countConsecutiveFailures` 正确跳过 `skipped` 记录，避免「无需续期」打断/污染连败统计
 
 ### 新增
-- `src/utils.mjs`：`maskProxyAddress` / `getTokyoDateString` / `fetchWithTimeout` / `validateRequiredConfig`
+- `src/utils.mjs`：`maskProxyAddress` / `getTokyoDateString` / `fetchWithTimeout` / `validateRequiredConfig` / `parsePositiveInt`
+- `src/renewal-logic.mjs`：续期业务纯逻辑
 - 启动时完整配置校验（含 `CAPTCHA_API`、代理完整性、`PROXY_TYPE` 枚举）
 - 无需续期时写入 `skipped` 状态记录，便于监控静默检测
-- 单元测试增至 13 文件 / 169 用例（含 `utils.test.mjs`）
 
 ### 优化
 - captcha / turnstile / Telegram 统一使用 `fetchWithTimeout`，超时错误更可读
-- 脱敏逻辑集中复用，主脚本与 Turnstile 模块共用
+- 脱敏逻辑集中复用；提交结果匹配集中维护，避免主脚本内联散落
 - 东京日期计算抽为纯函数，便于单测
 
 ### 文档
-- 同步 README / CLAUDE / RUNBOOK：默认 cron 时间（东京 23:00）、supercronic、非 root `appuser`、截图路径 `/tmp`、测试规模与覆盖率门禁
+- 同步 README / CLAUDE / RUNBOOK / `.env.example`：超时变量、`/data` 挂载、测试规模
 
 ### 变更（2026-06-30 起累计）
 - 核心脚本模块化重构：拆分为 `src/captcha.mjs`、`src/turnstile.mjs`、`src/renewal-status.mjs` 三个独立模块

@@ -18,7 +18,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# 持久化 Chrome 用户数据的挂载点
+# 持久化 Chrome 用户数据（续期状态文件默认也写在此目录，便于同卷持久化）
 VOLUME /data/chrome-profile
 
 WORKDIR /app
@@ -41,6 +41,7 @@ RUN chmod +x entrypoint.sh diagnostics.sh
 ENV TZ=Asia/Tokyo \
     CHROME_PATH=/usr/bin/google-chrome-stable \
     CHROME_USER_DATA=/data/chrome-profile \
+    RENEWAL_STATUS_FILE=/data/chrome-profile/renewal-status.json \
     CDP_URL=http://127.0.0.1:9222 \
     PROXY_TYPE= \
     PROXY_ADDRESS= \
@@ -72,7 +73,8 @@ RUN set -e \
 
 USER appuser
 
+# 定时模式：supercronic；执行中：node 主脚本；均不在则视为不健康
 HEALTHCHECK --interval=30m --timeout=10s --retries=3 \
-  CMD pgrep -f "supercronic" || exit 1
+  CMD pgrep -f "supercronic" >/dev/null || pgrep -f "xserver-vps-renew" >/dev/null || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]

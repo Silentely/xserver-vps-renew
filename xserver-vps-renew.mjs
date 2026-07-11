@@ -49,7 +49,21 @@ import {
   getTokyoDateString,
   fetchWithTimeout,
   validateRequiredConfig,
+  parsePositiveInt,
 } from './src/utils.mjs';
+import {
+  isRenewalDue,
+  buildRenewUrl,
+  resolveCaptchaRetryUrl,
+  evaluateSubmissionResult,
+  extractExpireDateFromText,
+  normalizeCellText,
+  escapeHtml as _escapeHtml,
+  formatTokyoDateTime,
+  buildSuccessNotifyMessage,
+  buildFailureNotifyMessage,
+  buildProxyHint,
+} from './src/renewal-logic.mjs';
 
 // ============================================================
 // 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
@@ -95,10 +109,11 @@ const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 /** 状态文件路径（从环境变量读取） */
 const RENEWAL_STATUS_FILE = process.env.RENEWAL_STATUS_FILE || DEFAULT_STATUS_FILE;
 /** 连续失败告警阈值 */
-const ALERT_AFTER_CONSECUTIVE_FAILURES = (() => {
-  const n = parseInt(process.env.ALERT_AFTER_FAILURES || String(DEFAULT_ALERT_AFTER_FAILURES), 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_ALERT_AFTER_FAILURES;
-})();
+const ALERT_AFTER_CONSECUTIVE_FAILURES = parsePositiveInt(
+  process.env.ALERT_AFTER_FAILURES,
+  DEFAULT_ALERT_AFTER_FAILURES,
+  { min: 1, max: 100 },
+);
 
 const CONFIG = {
   MEMBER_ID: process.env.XSERVER_MEMBER_ID || '',
@@ -110,10 +125,11 @@ const CONFIG = {
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
 
-  NAVIGATION_TIMEOUT: 30_000,
-  TURNSTILE_TIMEOUT: 60_000,
-  TURNSTILE_API_TIMEOUT: 120_000, // Turnstile API 求解超时（轮询上限）
-  CAPTCHA_MAX_RETRY: 3,
+  // 超时/重试可通过环境变量覆盖
+  NAVIGATION_TIMEOUT: parsePositiveInt(process.env.NAVIGATION_TIMEOUT_MS, 30_000, { min: 5_000, max: 180_000 }),
+  TURNSTILE_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_TIMEOUT_MS, 60_000, { min: 10_000, max: 300_000 }),
+  TURNSTILE_API_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_API_TIMEOUT_MS, 120_000, { min: 15_000, max: 300_000 }),
+  CAPTCHA_MAX_RETRY: parsePositiveInt(process.env.CAPTCHA_MAX_RETRY, 3, { min: 1, max: 10 }),
 
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
@@ -189,12 +205,7 @@ const err = (msg) => console.error(`${ts()} ❌ ${msg}`);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return _escapeHtml(str);
 }
 
 // ============================================================
@@ -386,29 +397,20 @@ async function checkRenewalNeeded(page) {
   }
 
   // 清理 VPS 信息中的多余空白符
-  const cleanServerName = result.serverName ? result.serverName.replace(/\s+/g, ' ').trim() : null;
-  const cleanPlan = result.plan ? result.plan.replace(/\s+/g, ' ').trim() : null;
+  const cleanServerName = normalizeCellText(result.serverName);
+  const cleanPlan = normalizeCellText(result.plan);
 
   log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
   log(`VPS 服务器名: ${cleanServerName ?? '未找到'}`);
   log(`VPS 规格: ${cleanPlan ?? '未找到'}`);
 
   // 今天或明天到期都需要续期
-  const needsRenewal = result.expireDate === today || result.expireDate === tomorrow;
-  if (!needsRenewal) {
+  if (!isRenewalDue(result.expireDate, today, tomorrow)) {
     log(`无需续期（到期日 ${result.expireDate} 不是今天 ${today} 或明天 ${tomorrow}）。`);
     return null;
   }
 
-  if (!result.detailHref) {
-    throw new Error('检测到需续期但未找到续期链接。');
-  }
-
-  const renewUrl = result.detailHref.replace('detail?id', 'freevps/extend/index?id_vps');
-  const parsedRenewUrl = new URL(renewUrl);
-  if (parsedRenewUrl.origin !== CONFIG.BASE_URL) {
-    throw new Error(`续期 URL 来源异常: ${parsedRenewUrl.origin} (预期: ${CONFIG.BASE_URL})`);
-  }
+  const renewUrl = buildRenewUrl(result.detailHref, CONFIG.BASE_URL);
   log(`需要续期！URL: ${renewUrl}`);
 
   // 返回续期 URL 和 VPS 信息
@@ -797,76 +799,37 @@ async function handleCaptchaPage(page) {
 
       log(`📄 续期提交后页面 URL: ${currentUrl}`);
 
-      // 仅记录页面 URL 和状态，不输出页面内容（避免日志泄露）
-      void pageText; // 保留变量供后续模式匹配使用
+      // 纯函数解析提交结果（不输出 pageText，避免日志泄露）
+      const evaluation = evaluateSubmissionResult(pageText, currentUrl);
 
-      // 还停在确认页，说明提交未被服务端接受（token 无效或验证码错误）
-      if (currentUrl.includes('/conf')) {
-        const hasAuthFail = pageText.includes('認証に失敗');
-        const reason = hasAuthFail ? '验证码识别错误或 Turnstile 认证失败' : '页面未跳转，可能验证码或 token 无效';
+      if (evaluation.status === 'success') {
+        log(`✅ 页面确认续期成功！检测到: "${evaluation.matched}"`);
+        return;
+      }
 
+      if (evaluation.status === 'retry') {
         if (attempt < maxRetries) {
-          log(`❌ 第 ${attempt} 次尝试失败: ${reason}`);
+          log(`❌ 第 ${attempt} 次尝试失败: ${evaluation.reason}`);
           log(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
-          // 刷新页面重新获取验证码
-          await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+          if (currentUrl.includes('/conf')) {
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+          } else {
+            const retryUrl = resolveCaptchaRetryUrl(currentUrl);
+            await page.goto(retryUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+          }
           await sleep(1000);
-          continue; // 重试
-        } else {
-          throw new Error(`续期提交失败（${reason}），已尝试 ${maxRetries} 次`);
+          continue;
         }
+        throw new Error(`续期提交失败（${evaluation.reason}），已尝试 ${maxRetries} 次`);
       }
 
-      // 优先检查失败标识（必须在成功检查之前）
-      const failurePatterns = ['認証に失敗', '失敗しました', 'エラーが発生', '不正なアクセス'];
-      const matchedFailure = failurePatterns.find(pat => pageText.includes(pat));
-      if (matchedFailure) {
-        log(`❌ 检测到失败标识: "${matchedFailure}"`);
-
-        if (attempt < maxRetries) {
-          log(`⏭️ 返回验证码页面，准备第 ${attempt + 1} 次尝试...`);
-          await page.goto(currentUrl.replace('/do', '/conf'), { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
-          await sleep(1000);
-          continue; // 重试
-        } else {
-          throw new Error(`续期提交失败: ${matchedFailure}`);
-        }
-      }
-
-      // 检查其他错误标识
-      const errorPatterns = ['エラー', '不正', 'もう一度'];
-      const matchedError = errorPatterns.find(pat => pageText.includes(pat));
-      if (matchedError) {
-        log(`⚠️ 检测到错误标识: "${matchedError}"`);
-        throw new Error(`续期提交后出现错误: ${matchedError}`);
-      }
-
-      // 检查是否包含明确的成功关键词
-      const successPatterns = ['完了しました', '延長しました', '更新が完了', '手続きが完了'];
-      const matchedSuccess = successPatterns.find(pat => pageText.includes(pat));
-      if (matchedSuccess) {
-        log(`✅ 页面确认续期成功！检测到: "${matchedSuccess}"`);
-      } else {
-        // 页面已跳转到 /do 但无成功标识 → 续期失败，必须抛出异常
-        log(`❌ 页面未检测到明确的成功标识，URL: ${currentUrl}`);
-
-        // 检测具体失败原因（信用卡未绑定、额度不足等）
-        const knownFailures = [
-          { pattern: 'クレジットカード', reason: '需要绑定信用卡才能续期' },
-          { pattern: 'カード登録', reason: '需要注册信用卡才能续期' },
-          { pattern: '決済方法', reason: '需要设置支付方式才能续期' },
-          { pattern: '無料枠', reason: '免费额度相关问题' },
-        ];
-        const matchedFailure = knownFailures.find(f => pageText.includes(f.pattern));
-        const reason = matchedFailure
-          ? matchedFailure.reason
-          : '续期状态不明确，请人工检查页面内容';
-
-        throw new Error(`${reason}。URL: ${currentUrl}`);
-      }
-
-      // 成功，跳出重试循环
-      return;
+      // status === 'fail'：不可重试的业务/页面错误
+      log(`❌ ${evaluation.reason}`);
+      throw new Error(
+        evaluation.reason.startsWith('续期') || evaluation.reason.includes('URL:')
+          ? evaluation.reason
+          : `续期提交后${evaluation.reason}`,
+      );
 
     } catch (error) {
       lastError = error;
@@ -876,13 +839,13 @@ async function handleCaptchaPage(page) {
         log(`⏭️ 准备第 ${attempt + 1} 次尝试...`);
 
         try {
-          // 尝试刷新页面重新获取验证码
+          // 尝试刷新/回到验证码确认页
           const currentUrl = page.url();
           if (currentUrl.includes('/conf')) {
             await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           } else {
-            // 如果不在验证码页面，返回验证码页面
-            await page.goto(currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf'), { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+            const retryUrl = resolveCaptchaRetryUrl(currentUrl);
+            await page.goto(retryUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
           }
           // 等待足够时间让验证码图片渲染完成（Base64 内嵌图片加载需要时间）
           await sleep(3000);
@@ -1042,34 +1005,18 @@ async function main() {
     log('正在提取续期后的新到期日...');
     log(`📄 当前页面 URL: ${page.url()}`);
 
-    const newExpireDate = await page.evaluate(() => {
-      // 方法 1：查找包含"更新後の利用期限"的 td 元素
+    // 页面内优先读「更新後の利用期限」单元格；失败则回退纯文本日期解析
+    const pageDateSource = await page.evaluate(() => {
       const allTds = Array.from(document.querySelectorAll('td'));
-      const expireTd = allTds.find(td => td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'));
-
+      const expireTd = allTds.find((td) =>
+        td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'),
+      );
       if (expireTd && expireTd.nextElementSibling) {
-        const dateText = expireTd.nextElementSibling.textContent.trim();
-        return dateText;
+        return expireTd.nextElementSibling.textContent.trim();
       }
-
-      // 方法 2：直接查找 yyyy-mm-dd 格式的日期
-      const allText = document.body.textContent;
-      const dateMatches = allText.match(/\d{4}-\d{2}-\d{2}/g);
-      if (dateMatches && dateMatches.length > 0) {
-        // 返回最后一个日期（通常是新到期日）
-        return dateMatches[dateMatches.length - 1];
-      }
-
-      // 方法 3：查找包含年月日的日本格式
-      const jpDateMatch = allText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
-      if (jpDateMatch) {
-        const [, year, month, day] = jpDateMatch;
-        const formattedDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        return formattedDate;
-      }
-
-      return null;
+      return document.body.textContent || '';
     });
+    const newExpireDate = extractExpireDateFromText(pageDateSource);
 
     if (newExpireDate) {
       log(`✅ 成功提取新到期日: ${newExpireDate}`);
@@ -1079,9 +1026,8 @@ async function main() {
 
     log('🎉 续期流程全部完成！');
 
-    // 计算下次运行时间（明天同一时间）
-    const nextRun = new Date(Date.now() + 86400000);
-    const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
+    const nextRunStr = formatTokyoDateTime(Date.now() + 86400000);
+    const executedAt = formatTokyoDateTime();
 
     // 持久化续期成功记录（使用配置的状态文件路径）
     persistRenewalRecord(buildRenewalRecord({
@@ -1092,15 +1038,14 @@ async function main() {
       newExpireDate,
     }));
 
-    await notify(
-      `✅ <b>Xserver VPS 续期成功</b>\n\n` +
-      `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
-      `🖥️ 服务器名: ${escapeHtml(renewalData.vpsInfo.serverName || '未知')}\n` +
-      `📦 VPS 规格: ${escapeHtml(renewalData.vpsInfo.plan || '未知')}\n` +
-      `📅 原到期日: ${escapeHtml(renewalData.vpsInfo.expireDate || '未知')}\n` +
-      `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
-      `⏭️ 下次执行: ${nextRunStr}`,
-    );
+    await notify(buildSuccessNotifyMessage({
+      serverName: renewalData.vpsInfo.serverName,
+      plan: renewalData.vpsInfo.plan,
+      oldExpireDate: renewalData.vpsInfo.expireDate,
+      newExpireDate,
+      executedAt,
+      nextRunAt: nextRunStr,
+    }));
     await page.close();
   } catch (e) {
     err(`流程异常终止: ${e.message}`);
@@ -1115,24 +1060,21 @@ async function main() {
     const { consecutiveFailures } = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES);
     const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
 
-    const proxyHint = HAS_PROXY
-      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${maskProxyAddress(CONFIG.PROXY_ADDRESS)}:${CONFIG.PROXY_PORT}`
-      : `💡 <b>优化建议</b>:\n如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n代理可提高 Cloudflare Turnstile 通过率。`;
+    const proxyHint = buildProxyHint({
+      hasProxy: HAS_PROXY,
+      proxyType: CONFIG.PROXY_TYPE,
+      maskedAddress: maskProxyAddress(CONFIG.PROXY_ADDRESS),
+      proxyPort: CONFIG.PROXY_PORT,
+    });
 
-    await notify(
-      `${isEscalation ? '🚨 <b>【告警升级】</b>' : '❌'} <b>Xserver VPS 续期失败</b>\n\n` +
-      `⏰ 执行时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' })}\n` +
-      `💥 错误信息: <code>${escapeHtml(e.message)}</code>\n` +
-      `${isEscalation ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}` +
-      `\n${proxyHint}\n\n` +
-      `📋 失败说明:\n` +
-      `- 验证码识别已自动重试 ${CONFIG.CAPTCHA_MAX_RETRY || 3} 次\n` +
-      `- Turnstile 已使用 API 求解\n` +
-      `- 如持续失败，可尝试:\n` +
-      `  1. 配置住宅 IP 代理（PROXY_* 环境变量）\n` +
-      `  2. 检查 CapSolver API 余额是否充足\n` +
-      `  3. 人工登录确认账号状态`,
-    );
+    await notify(buildFailureNotifyMessage({
+      errorMessage: e.message,
+      consecutiveFailures,
+      isEscalation,
+      proxyHint,
+      captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
+      executedAt: formatTokyoDateTime(),
+    }));
     process.exitCode = 1;
   } finally {
     if (browser) {
@@ -1164,4 +1106,14 @@ export {
   getTokyoDateString,
   validateRequiredConfig,
   persistRenewalRecord,
+  parsePositiveInt,
+  isRenewalDue,
+  buildRenewUrl,
+  evaluateSubmissionResult,
+  extractExpireDateFromText,
+  resolveCaptchaRetryUrl,
+  buildSuccessNotifyMessage,
+  buildFailureNotifyMessage,
+  buildProxyHint,
+  formatTokyoDateTime,
 };

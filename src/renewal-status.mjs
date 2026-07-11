@@ -6,8 +6,8 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, accessSync, constants } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** 默认状态文件路径 */
-export const DEFAULT_STATUS_FILE = '/data/renewal-status.json';
+/** 默认状态文件路径（与 Chrome 用户数据同目录，便于 Docker 单卷持久化） */
+export const DEFAULT_STATUS_FILE = '/data/chrome-profile/renewal-status.json';
 
 /** 默认连续失败告警阈值 */
 export const DEFAULT_ALERT_AFTER_FAILURES = 3;

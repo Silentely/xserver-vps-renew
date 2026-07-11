@@ -57,15 +57,43 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 30_000) {
 }
 
 /**
+ * 解析正整数环境变量，非法时回退默认值
+ * @param {string|undefined|null} value - 原始值
+ * @param {number} fallback - 默认值
+ * @param {{ min?: number, max?: number }} [opts]
+ * @returns {number}
+ */
+export function parsePositiveInt(value, fallback, opts = {}) {
+  const min = opts.min ?? 1;
+  const max = opts.max ?? Number.MAX_SAFE_INTEGER;
+  const n = parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n) || n < min || n > max) return fallback;
+  return n;
+}
+
+/**
  * 校验续期脚本必填配置
  * @param {object} config - 配置对象
  * @returns {string[]} - 缺失项描述列表，空数组表示通过
  */
 export function validateRequiredConfig(config) {
+  if (!config || typeof config !== 'object') {
+    return ['配置对象无效'];
+  }
   const missing = [];
   if (!config.MEMBER_ID) missing.push('XSERVER_MEMBER_ID');
   if (!config.PASSWORD) missing.push('XSERVER_PASSWORD');
   if (!config.CAPTCHA_API) missing.push('CAPTCHA_API');
+  if (config.CAPTCHA_API && typeof config.CAPTCHA_API === 'string') {
+    try {
+      const u = new URL(config.CAPTCHA_API);
+      if (!['http:', 'https:'].includes(u.protocol)) {
+        missing.push(`CAPTCHA_API 协议无效（当前: "${u.protocol}"）`);
+      }
+    } catch {
+      missing.push(`CAPTCHA_API 不是合法 URL（当前: "${config.CAPTCHA_API}"）`);
+    }
+  }
   if (config.PROXY_PORT && !/^\d+$/.test(String(config.PROXY_PORT))) {
     missing.push(`PROXY_PORT 必须是数字（当前: "${config.PROXY_PORT}"）`);
   }

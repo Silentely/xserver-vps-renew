@@ -33,8 +33,8 @@ docker compose pull && docker compose up -d
 ```bash
 docker exec xserver-vps-renew du -sh /data/chrome-profile
 docker exec xserver-vps-renew du -sh /tmp
-# 续期状态文件（默认路径；是否持久化取决于是否挂载 /data）
-docker exec xserver-vps-renew ls -la /data/renewal-status.json 2>/dev/null || true
+# 续期状态文件（默认与 Chrome 配置同目录，compose 已挂载 chrome-data 卷）
+docker exec xserver-vps-renew ls -la /data/chrome-profile/renewal-status.json 2>/dev/null || true
 ```
 
 ## Chrome 僵尸进程
