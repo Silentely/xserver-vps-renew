@@ -22,8 +22,10 @@ describe('convertHiraganaToNumber', () => {
     expect(convertHiraganaToNumber('123456')).toBe('123456');
   });
 
-  it('returns empty string for empty input', () => {
-    expect(convertHiraganaToNumber('')).toBe('');
+  it('returns null for empty or non-string input', () => {
+    expect(convertHiraganaToNumber('')).toBeNull();
+    expect(convertHiraganaToNumber(null)).toBeNull();
+    expect(convertHiraganaToNumber(undefined)).toBeNull();
   });
 
   it('skips unmappable characters', () => {

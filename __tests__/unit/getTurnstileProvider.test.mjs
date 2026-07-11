@@ -41,6 +41,11 @@ describe('getTurnstileProvider', () => {
     expect(getTurnstileProvider(CONFIG)).toBeNull();
   });
 
+  it('returns null for null/undefined config', () => {
+    expect(getTurnstileProvider(null)).toBeNull();
+    expect(getTurnstileProvider(undefined)).toBeNull();
+  });
+
   it('returns CapSolver when CAPSOLVER_API_KEY is set', () => {
     CONFIG.CAPSOLVER_API_KEY = 'test-key';
     const provider = getTurnstileProvider(CONFIG);

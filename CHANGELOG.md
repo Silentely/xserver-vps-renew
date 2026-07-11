@@ -2,8 +2,26 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-11 打磨迭代）
+- **关键**：`writeRenewalStatus` / `getRenewalStatus` 未传入 `RENEWAL_STATUS_FILE`，自定义路径实际不生效
+- **关键**：`CONFIG.DEFAULT_UA` 未注入 Turnstile 求解，API 任务始终空 UA
+- **关键**：`writeRenewalStatus` 目录权限检查 mock 不全导致测试误报「目录不可写」；不可写时现在明确抛错
+- 状态写入失败不再拖垮主流程（`persistRenewalRecord` 吞错记日志）
+- `countConsecutiveFailures` 正确跳过 `skipped` 记录，避免「无需续期」打断/污染连败统计
+
+### 新增
+- `src/utils.mjs`：`maskProxyAddress` / `getTokyoDateString` / `fetchWithTimeout` / `validateRequiredConfig`
+- 启动时完整配置校验（含 `CAPTCHA_API`、代理完整性、`PROXY_TYPE` 枚举）
+- 无需续期时写入 `skipped` 状态记录，便于监控静默检测
+- 单元测试增至 13 文件 / 169 用例（含 `utils.test.mjs`）
+
+### 优化
+- captcha / turnstile / Telegram 统一使用 `fetchWithTimeout`，超时错误更可读
+- 脱敏逻辑集中复用，主脚本与 Turnstile 模块共用
+- 东京日期计算抽为纯函数，便于单测
+
 ### 文档
-- 同步 README / CLAUDE / RUNBOOK：默认 cron 时间（东京 23:00）、supercronic、非 root `appuser`、截图路径 `/tmp`、测试规模（12 文件 / 147 用例）与覆盖率门禁
+- 同步 README / CLAUDE / RUNBOOK：默认 cron 时间（东京 23:00）、supercronic、非 root `appuser`、截图路径 `/tmp`、测试规模与覆盖率门禁
 
 ### 变更（2026-06-30 起累计）
 - 核心脚本模块化重构：拆分为 `src/captcha.mjs`、`src/turnstile.mjs`、`src/renewal-status.mjs` 三个独立模块
@@ -18,7 +36,7 @@
 - 告警升级逻辑：连续失败 ≥N 次（`ALERT_AFTER_FAILURES`）时 Telegram 告警附加升级标记
 - `RENEWAL_STATUS_FILE` 环境变量（自定义持久化文件路径）
 - `ALERT_AFTER_FAILURES` 环境变量（自定义告警升级阈值）
-- Vitest 单元测试（当前 12 文件 / 147 用例），覆盖 `src/` 与主脚本纯函数
+- Vitest 单元测试（当前 13 文件 / 169 用例），覆盖 `src/` 与主脚本纯函数
 - `buildTurnstileTask()` 和 `maskTaskForLog()` 从 `solveTurnstileViaAPI` 提取为独立纯函数
 - CI 增强：shellcheck 静态分析 + 单元测试自动运行 + 覆盖率门禁（branches ≥25%，functions/lines/statements ≥28%）
 - `vitest.config.mjs` 覆盖率覆盖范围扩展到 `src/**/*.mjs` 与 `xserver-vps-renew.mjs`

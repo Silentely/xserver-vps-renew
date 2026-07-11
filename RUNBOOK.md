@@ -49,7 +49,9 @@ docker compose restart
 
 | 错误信息 | 原因 | 解决方案 |
 |----------|------|----------|
-| `请设置环境变量 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD` | .env 未配置 | 检查 .env 文件 |
+| `配置校验失败: XSERVER_MEMBER_ID` 等 | 必填环境变量缺失 | 检查 `.env` 中 `XSERVER_MEMBER_ID` / `XSERVER_PASSWORD` / `CAPTCHA_API` |
+| `代理配置不完整` | 只配了部分 `PROXY_*` | 同时设置 `PROXY_TYPE` + `PROXY_ADDRESS` + `PROXY_PORT` |
+| `目录 ... 不可写` | 状态文件目录无写权限 | 挂载 `/data` 且确保容器用户 `appuser` 可写 |
 | `登录失败` | 凭据错误 | 检查会员ID和密码 |
-| `Keras 模型 API 响应 503` | Cloud Run 冷启动 | 等待后重试 |
-| `Turnstile 等待超时` | Cloudflare 检测到自动化 | 配置代理或 CapSolver API |
+| `Keras 模型 API 响应 503` / `请求超时` | Cloud Run 冷启动或网络 | 等待后重试；检查 `CAPTCHA_API` 可达性 |
+| `Turnstile 等待超时` / `未配置 Turnstile 求解 API` | Cloudflare 拦截或未配密钥 | 配置 `CAPSOLVER_API_KEY` 或住宅代理 |

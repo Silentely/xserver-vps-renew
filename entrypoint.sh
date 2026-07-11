@@ -55,13 +55,16 @@ show_cron_schedule() {
 # ============================================================
 run_renew() {
     echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
+    if [ -n "${RENEWAL_STATUS_FILE:-}" ]; then
+        echo "$LOG_PREFIX 状态文件: $RENEWAL_STATUS_FILE"
+    fi
 
     local EXIT_CODE=0
     node /app/xserver-vps-renew.mjs || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 0 ]; then
         echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
-        if [ -n "$CRON_SCHEDULE" ]; then
+        if [ -n "${CRON_SCHEDULE:-}" ]; then
             NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
             echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
         fi

@@ -23,7 +23,7 @@ import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, rmSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 
@@ -34,20 +34,22 @@ import {
 import {
   getTurnstileProvider as _getTurnstileProvider,
   extractTurnstileParams as _extractTurnstileParams,
-  buildTurnstileTask as _buildTurnstileTask,
-  maskTaskForLog as _maskTaskForLog,
   solveTurnstileViaAPI as _solveTurnstileViaAPI,
   injectTurnstileToken as _injectTurnstileToken,
 } from './src/turnstile.mjs';
 import {
-  readRenewalStatus,
   writeRenewalStatus,
   buildRenewalRecord,
-  countConsecutiveFailures,
   getRenewalStatus,
   DEFAULT_STATUS_FILE,
   DEFAULT_ALERT_AFTER_FAILURES,
 } from './src/renewal-status.mjs';
+import {
+  maskProxyAddress,
+  getTokyoDateString,
+  fetchWithTimeout,
+  validateRequiredConfig,
+} from './src/utils.mjs';
 
 // ============================================================
 // 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
@@ -87,6 +89,17 @@ puppeteer.use(StealthPlugin());
 // 配置
 // ============================================================
 
+// 真实浏览器调试收集的 UA (Chrome 149 Edge on macOS)
+const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
+
+/** 状态文件路径（从环境变量读取） */
+const RENEWAL_STATUS_FILE = process.env.RENEWAL_STATUS_FILE || DEFAULT_STATUS_FILE;
+/** 连续失败告警阈值 */
+const ALERT_AFTER_CONSECUTIVE_FAILURES = (() => {
+  const n = parseInt(process.env.ALERT_AFTER_FAILURES || String(DEFAULT_ALERT_AFTER_FAILURES), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_ALERT_AFTER_FAILURES;
+})();
+
 const CONFIG = {
   MEMBER_ID: process.env.XSERVER_MEMBER_ID || '',
   PASSWORD: process.env.XSERVER_PASSWORD || '',
@@ -119,26 +132,17 @@ const CONFIG = {
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
-};
 
-// 启动时基础配置校验
-if (CONFIG.PROXY_PORT && !/^\d+$/.test(CONFIG.PROXY_PORT)) {
-  throw new Error(`PROXY_PORT 必须是数字，当前值: "${CONFIG.PROXY_PORT}"`);
-}
+  // 传给 Turnstile 求解模块，保证 token 与浏览器 UA 一致
+  DEFAULT_UA,
+
+  // 状态持久化
+  RENEWAL_STATUS_FILE,
+  ALERT_AFTER_FAILURES: ALERT_AFTER_CONSECUTIVE_FAILURES,
+};
 
 /** 运行时计算代理配置状态 */
 const HAS_PROXY = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_PORT);
-
-// ============================================================
-// 常量
-// ============================================================
-
-// 🔧 优化：使用真实浏览器调试发现的 UA (Chrome 149 on macOS)
-// 基于 Browser Relay 调试收集的真实指纹数据
-const MACOS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
-
-// 默认使用 macOS UA（与调试环境一致）
-const DEFAULT_UA = MACOS_UA;
 
 // ============================================================
 // Chrome 路径检测
@@ -202,34 +206,40 @@ async function notify(message) {
 
   const url = `https://api.telegram.org/bot${CONFIG.TG_BOT_TOKEN}/sendMessage`;
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10_000);
-    let res;
-    try {
-      res = await fetch(url, {
-        signal: controller.signal,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: CONFIG.TG_CHAT_ID,
-          text: message,
-          parse_mode: 'HTML',
-          disable_web_page_preview: true,
-        }),
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const res = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CONFIG.TG_CHAT_ID,
+        text: message,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+    }, 10_000);
 
     if (!res.ok) {
-      const body = await res.text();
+      const body = await res.text().catch(() => '');
       err(`Telegram 通知发送失败: ${res.status} ${body}`);
       return;
     }
 
     log('Telegram 通知已发送。');
   } catch (e) {
-    err(`Telegram 通知异常: ${e.message}`);
+    const reason = e.name === 'AbortError' ? '请求超时' : e.message;
+    err(`Telegram 通知异常: ${reason}`);
+  }
+}
+
+/**
+ * 安全写入续期状态（写入失败不中断主流程，仅记日志）
+ * @param {object} record - 续期记录
+ */
+function persistRenewalRecord(record) {
+  try {
+    writeRenewalStatus(record, RENEWAL_STATUS_FILE);
+    log(`📝 续期记录已保存: ${RENEWAL_STATUS_FILE}`);
+  } catch (e) {
+    err(`续期记录保存失败: ${e.message}`);
   }
 }
 
@@ -257,8 +267,9 @@ async function getText(page, selector) {
 
 /** 清理 Chrome 锁文件 */
 function cleanChromeLocks(userDataDir) {
+  if (!userDataDir) return;
   for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-    const lockPath = `${userDataDir}/${lock}`;
+    const lockPath = join(userDataDir, lock);
     try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
   }
 }
@@ -325,10 +336,8 @@ async function checkRenewalNeeded(page) {
   }
 
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
-  // 使用 UTC+9 偏移计算，避免本地时区 DST 切换导致日期偏差
-  const tokyoTime = Date.now() + 9 * 3600000;
-  const today = new Date(tokyoTime).toISOString().slice(0, 10);
-  const tomorrow = new Date(tokyoTime + 86400000).toISOString().slice(0, 10);
+  const today = getTokyoDateString();
+  const tomorrow = getTokyoDateString(Date.now(), 1);
   log(`今天日期（东京时区）: ${today}`);
   log(`明天日期（东京时区）: ${tomorrow}`);
 
@@ -902,8 +911,13 @@ async function handleCaptchaPage(page) {
 async function main() {
   log('========== Xserver VPS 自动续期开始 ==========');
 
-  if (!CONFIG.MEMBER_ID || !CONFIG.PASSWORD) {
-    throw new Error('请设置环境变量 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。');
+  const configErrors = validateRequiredConfig(CONFIG);
+  if (configErrors.length > 0) {
+    throw new Error(`配置校验失败: ${configErrors.join('；')}`);
+  }
+
+  if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.TWOCAPTCHA_API_KEY) {
+    log('⚠️ 未配置 CAPSOLVER_API_KEY / TWOCAPTCHA_API_KEY，Turnstile 将依赖自然通过（成功率较低）');
   }
 
   let browser = null;
@@ -946,7 +960,7 @@ async function main() {
       const proxyScheme = CONFIG.PROXY_TYPE === 'socks5' ? 'socks5' :
         CONFIG.PROXY_TYPE === 'socks4' ? 'socks4' : 'http';
       chromeArgs.push(`--proxy-server=${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
-      const maskedAddr = CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*');
+      const maskedAddr = maskProxyAddress(CONFIG.PROXY_ADDRESS);
       log(`浏览器代理已配置: ${proxyScheme}://${maskedAddr}:${CONFIG.PROXY_PORT}`);
     }
 
@@ -1006,6 +1020,12 @@ async function main() {
     const renewalData = await checkRenewalNeeded(page);
     if (!renewalData) {
       log('无需续期，流程结束。');
+      // 记录跳过，避免「长期无写入」被误判为监控静默
+      persistRenewalRecord(buildRenewalRecord({
+        success: true,
+        skipped: true,
+        errorMessage: '无需续期',
+      }));
       await page.close();
       return;
     }
@@ -1059,20 +1079,18 @@ async function main() {
 
     log('🎉 续期流程全部完成！');
 
-    // 计算下次运行时间（明天同一时间，使用 UTC 偏移避免 DST 问题）
+    // 计算下次运行时间（明天同一时间）
     const nextRun = new Date(Date.now() + 86400000);
     const nextRunStr = nextRun.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
 
-    // 持久化续期成功记录
-    const successRecord = buildRenewalRecord({
+    // 持久化续期成功记录（使用配置的状态文件路径）
+    persistRenewalRecord(buildRenewalRecord({
       success: true,
       serverName: renewalData.vpsInfo.serverName,
       plan: renewalData.vpsInfo.plan,
       oldExpireDate: renewalData.vpsInfo.expireDate,
       newExpireDate,
-    });
-    writeRenewalStatus(successRecord);
-    log(`📝 续期记录已保存: ${RENEWAL_STATUS_FILE}`);
+    }));
 
     await notify(
       `✅ <b>Xserver VPS 续期成功</b>\n\n` +
@@ -1088,20 +1106,17 @@ async function main() {
     err(`流程异常终止: ${e.message}`);
 
     // 持久化续期失败记录
-    const failRecord = buildRenewalRecord({
+    persistRenewalRecord(buildRenewalRecord({
       success: false,
       errorMessage: e.message,
-    });
-    writeRenewalStatus(failRecord);
-    log(`📝 失败记录已保存: ${RENEWAL_STATUS_FILE}`);
+    }));
 
     // 告警升级：连续失败达到阈值时发送升级告警
-    const { consecutiveFailures } = getRenewalStatus();
+    const { consecutiveFailures } = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES);
     const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
 
-    // 检查是否配置了代理
     const proxyHint = HAS_PROXY
-      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${CONFIG.PROXY_ADDRESS.replace(/.(?=.{4})/g, '*')}:${CONFIG.PROXY_PORT}`
+      ? `📡 当前使用代理: ${CONFIG.PROXY_TYPE}://${maskProxyAddress(CONFIG.PROXY_ADDRESS)}:${CONFIG.PROXY_PORT}`
       : `💡 <b>优化建议</b>:\n如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n代理可提高 Cloudflare Turnstile 通过率。`;
 
     await notify(
@@ -1129,19 +1144,12 @@ async function main() {
   }
 }
 
-// ============================================================
-// 续期结果持久化与监控（已拆分为独立模块）
-// 详见 src/renewal-status.mjs
-// ============================================================
-
-/** 状态文件路径（从环境变量读取，与模块默认值保持一致） */
-const RENEWAL_STATUS_FILE = process.env.RENEWAL_STATUS_FILE || DEFAULT_STATUS_FILE;
-/** 连续失败告警阈值 */
-const ALERT_AFTER_CONSECUTIVE_FAILURES = parseInt(process.env.ALERT_AFTER_FAILURES || String(DEFAULT_ALERT_AFTER_FAILURES), 10);
-
 // 仅在直接执行时运行 main()，支持 import 测试
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((e) => {
+    console.error(`未捕获异常: ${e.message}`);
+    process.exitCode = 1;
+  });
 }
 
 export {
@@ -1152,4 +1160,8 @@ export {
   HAS_PROXY,
   CONFIG,
   DEFAULT_UA,
+  maskProxyAddress,
+  getTokyoDateString,
+  validateRequiredConfig,
+  persistRenewalRecord,
 };

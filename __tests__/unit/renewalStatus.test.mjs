@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock node:fs 模块
 const mockFs = {
@@ -6,8 +6,10 @@ const mockFs = {
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   renameSync: vi.fn(),
+  accessSync: vi.fn(),
   existsSync: vi.fn(),
   rmSync: vi.fn(),
+  constants: { W_OK: 2 },
 };
 vi.mock('node:fs', () => mockFs);
 
@@ -31,6 +33,7 @@ describe('buildRenewalRecord', () => {
       newExpireDate: '2026-07-31',
     });
     expect(record.success).toBe(true);
+    expect(record.skipped).toBe(false);
     expect(record.serverName).toBe('test-vps');
     expect(record.plan).toBe('1GB');
     expect(record.oldExpireDate).toBe('2026-07-01');
@@ -50,6 +53,17 @@ describe('buildRenewalRecord', () => {
     expect(record.newExpireDate).toBeNull();
   });
 
+  it('构建跳过记录', () => {
+    const record = buildRenewalRecord({
+      success: true,
+      skipped: true,
+      errorMessage: '无需续期',
+    });
+    expect(record.success).toBe(true);
+    expect(record.skipped).toBe(true);
+    expect(record.errorMessage).toBe('无需续期');
+  });
+
   it('缺失字段使用默认值 null', () => {
     const record = buildRenewalRecord({ success: true });
     expect(record.serverName).toBeNull();
@@ -57,6 +71,7 @@ describe('buildRenewalRecord', () => {
     expect(record.oldExpireDate).toBeNull();
     expect(record.newExpireDate).toBeNull();
     expect(record.errorMessage).toBeNull();
+    expect(record.skipped).toBe(false);
   });
 
   it('每次调用生成不同的 timestamp', async () => {
@@ -70,6 +85,11 @@ describe('buildRenewalRecord', () => {
 describe('countConsecutiveFailures', () => {
   it('空记录返回 0', () => {
     expect(countConsecutiveFailures([])).toBe(0);
+  });
+
+  it('非数组返回 0', () => {
+    expect(countConsecutiveFailures(null)).toBe(0);
+    expect(countConsecutiveFailures(undefined)).toBe(0);
   });
 
   it('从尾部统计连续失败', () => {
@@ -117,6 +137,24 @@ describe('countConsecutiveFailures', () => {
     ];
     expect(countConsecutiveFailures(records)).toBe(2);
   });
+
+  it('跳过记录不计入连续失败', () => {
+    const records = [
+      { success: false },
+      { success: false },
+      { success: true, skipped: true },
+    ];
+    expect(countConsecutiveFailures(records)).toBe(2);
+  });
+
+  it('跳过记录夹在失败之间不中断连败统计', () => {
+    const records = [
+      { success: false },
+      { success: true, skipped: true },
+      { success: false },
+    ];
+    expect(countConsecutiveFailures(records)).toBe(2);
+  });
 });
 
 describe('readRenewalStatus', () => {
@@ -137,7 +175,9 @@ describe('readRenewalStatus', () => {
   });
 
   it('文件不存在时返回空状态', () => {
-    mockFs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    const error = new Error('ENOENT: no such file');
+    error.code = 'ENOENT';
+    mockFs.readFileSync.mockImplementation(() => { throw error; });
     const result = readRenewalStatus(TEST_FILE);
     expect(result.records).toEqual([]);
     expect(result.lastRecord).toBeNull();
@@ -187,6 +227,8 @@ describe('writeRenewalStatus', () => {
     mockFs.writeFileSync.mockReset();
     mockFs.mkdirSync.mockReset();
     mockFs.renameSync.mockReset();
+    mockFs.accessSync.mockReset();
+    mockFs.accessSync.mockImplementation(() => undefined);
   });
 
   it('追加新记录并写入文件', () => {
@@ -196,7 +238,9 @@ describe('writeRenewalStatus', () => {
     writeRenewalStatus(record, TEST_FILE);
 
     expect(mockFs.mkdirSync).toHaveBeenCalledWith('/tmp', { recursive: true });
+    expect(mockFs.accessSync).toHaveBeenCalled();
     expect(mockFs.writeFileSync).toHaveBeenCalledTimes(1);
+    expect(mockFs.renameSync).toHaveBeenCalledTimes(1);
 
     const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1]);
     expect(written.records).toHaveLength(1);
@@ -229,14 +273,14 @@ describe('writeRenewalStatus', () => {
 
     const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1]);
     expect(written.records).toHaveLength(30);
-    // 最新的记录在末尾
     expect(written.records[29]).toEqual(record);
-    // 最旧的记录被截断（原第 1 条被移除，原第 2 条变为第 1 条）
     expect(written.records[0].timestamp).toBe('2026-06-02');
   });
 
   it('写入文件不存在时从空状态开始', () => {
-    mockFs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    const error = new Error('ENOENT');
+    error.code = 'ENOENT';
+    mockFs.readFileSync.mockImplementation(() => { throw error; });
     const record = buildRenewalRecord({ success: false });
 
     writeRenewalStatus(record, TEST_FILE);
@@ -255,6 +299,27 @@ describe('writeRenewalStatus', () => {
     const rawContent = mockFs.writeFileSync.mock.calls[0][1];
     expect(rawContent).toContain('\n  ');
     expect(rawContent).toContain('"records":');
+  });
+
+  it('目录不可写时抛出错误', () => {
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({ records: [] }));
+    mockFs.accessSync.mockImplementation(() => {
+      throw new Error('EACCES');
+    });
+    const record = buildRenewalRecord({ success: true });
+
+    expect(() => writeRenewalStatus(record, TEST_FILE)).toThrow(/不可写/);
+    expect(mockFs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('writeFileSync 失败时抛出错误', () => {
+    mockFs.readFileSync.mockReturnValue(JSON.stringify({ records: [] }));
+    mockFs.writeFileSync.mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    const record = buildRenewalRecord({ success: true });
+
+    expect(() => writeRenewalStatus(record, TEST_FILE)).toThrow(/写入状态文件失败/);
   });
 });
 
@@ -291,12 +356,13 @@ describe('getRenewalStatus', () => {
     expect(status.consecutiveFailures).toBe(3);
   });
 
-  it('返回最近一次成功记录', () => {
+  it('返回最近一次成功记录（忽略 skipped）', () => {
     mockFs.readFileSync.mockReturnValue(JSON.stringify({
       records: [
         { timestamp: '2026-06-28', success: true, serverName: 'vps-old' },
         { timestamp: '2026-06-29', success: false },
         { timestamp: '2026-06-30', success: true, serverName: 'vps-new' },
+        { timestamp: '2026-07-01', success: true, skipped: true },
       ],
     }));
     const status = getRenewalStatus(TEST_FILE);
@@ -325,7 +391,9 @@ describe('getRenewalStatus', () => {
   });
 
   it('文件不存在时返回健康状态', () => {
-    mockFs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    const error = new Error('ENOENT');
+    error.code = 'ENOENT';
+    mockFs.readFileSync.mockImplementation(() => { throw error; });
     const status = getRenewalStatus(TEST_FILE);
     expect(status.healthy).toBe(true);
     expect(status.totalRuns).toBe(0);

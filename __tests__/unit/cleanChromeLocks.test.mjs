@@ -39,9 +39,11 @@ describe('cleanChromeLocks', () => {
     });
   });
 
-  it('传入空字符串时不报错', () => {
+  it('传入空字符串或假值时跳过清理', () => {
     expect(() => cleanChromeLocks('')).not.toThrow();
-    expect(mockRmSync).toHaveBeenCalledTimes(3);
+    expect(() => cleanChromeLocks(null)).not.toThrow();
+    expect(() => cleanChromeLocks(undefined)).not.toThrow();
+    expect(mockRmSync).not.toHaveBeenCalled();
   });
 
   it('传入嵌套路径时正确拼接', () => {

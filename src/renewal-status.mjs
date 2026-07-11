@@ -32,6 +32,7 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
       lastRecord: parsed.records.length > 0 ? parsed.records[parsed.records.length - 1] : null,
     };
   } catch (error) {
+    // 文件不存在属于正常冷启动，静默返回空状态
     if (error.code !== 'ENOENT') {
       console.warn(`[renewal-status] 读取状态文件异常: ${error.message}，重置为空记录`);
     }
@@ -40,25 +41,47 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
 }
 
 /**
- * 写入续期状态记录
+ * 写入续期状态记录（原子写：temp + rename）
  * @param {object} record - 续期记录
  * @param {string} filePath - 状态文件路径
  * @param {number} maxRecords - 最大保留记录数
+ * @throws {Error} 目录不可写或写入失败时抛出
  */
 export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRecords = DEFAULT_MAX_RECORDS) {
   const { records } = readRenewalStatus(filePath);
   records.push(record);
-  const trimmed = records.slice(-maxRecords);
+  const trimmed = records.slice(-Math.max(1, maxRecords));
   const dir = dirname(filePath);
-  try { mkdirSync(dir, { recursive: true }); } catch { /* 忽略 */ }
-  // 检查目录写权限，提前给出友好提示
-  try { accessSync(dir, constants.W_OK); } catch {
-    console.error(`[renewal-status] ❌ 目录 ${dir} 不可写，请检查挂载卷权限（容器内需 appuser 可写）`);
+
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    // 目录已存在时 mkdir 可能报错，后续 accessSync / write 会再次校验
+    if (error.code !== 'EEXIST') {
+      console.warn(`[renewal-status] 创建目录 ${dir} 失败: ${error.message}`);
+    }
   }
-  // 使用 write-to-temp-then-rename 保证原子性 + 文件权限 0600
+
+  try {
+    accessSync(dir, constants.W_OK);
+  } catch {
+    const msg = `目录 ${dir} 不可写，请检查挂载卷权限（容器内需 appuser 可写）`;
+    console.error(`[renewal-status] ❌ ${msg}`);
+    throw new Error(msg);
+  }
+
   const tmpPath = `${filePath}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify({ records: trimmed }, null, 2), { encoding: 'utf8', mode: 0o600 });
-  renameSync(tmpPath, filePath);
+  try {
+    writeFileSync(tmpPath, JSON.stringify({ records: trimmed }, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    renameSync(tmpPath, filePath);
+  } catch (error) {
+    const msg = `写入状态文件失败: ${error.message}`;
+    console.error(`[renewal-status] ❌ ${msg}`);
+    throw new Error(msg);
+  }
 }
 
 /**
@@ -66,10 +89,19 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
  * @param {object} params - 结果参数
  * @returns {object} - 标准化的续期记录
  */
-export function buildRenewalRecord({ success, serverName, plan, oldExpireDate, newExpireDate, errorMessage }) {
+export function buildRenewalRecord({
+  success,
+  serverName,
+  plan,
+  oldExpireDate,
+  newExpireDate,
+  errorMessage,
+  skipped = false,
+}) {
   return {
     timestamp: new Date().toISOString(),
-    success,
+    success: !!success,
+    skipped: !!skipped,
     serverName: serverName || null,
     plan: plan || null,
     oldExpireDate: oldExpireDate || null,
@@ -80,13 +112,17 @@ export function buildRenewalRecord({ success, serverName, plan, oldExpireDate, n
 
 /**
  * 计算连续失败次数（从记录尾部向前统计）
+ * 跳过类记录（skipped=true）不计入失败也不中断连败
  * @param {Array} records - 续期记录数组
  * @returns {number} - 连续失败次数
  */
 export function countConsecutiveFailures(records) {
+  if (!Array.isArray(records) || records.length === 0) return 0;
   let count = 0;
   for (let i = records.length - 1; i >= 0; i--) {
-    if (!records[i].success) count++;
+    const rec = records[i];
+    if (!rec || rec.skipped) continue;
+    if (!rec.success) count++;
     else break;
   }
   return count;
@@ -101,9 +137,12 @@ export function countConsecutiveFailures(records) {
 export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold = DEFAULT_ALERT_AFTER_FAILURES) {
   const { records, lastRecord } = readRenewalStatus(filePath);
   const consecutiveFailures = countConsecutiveFailures(records);
-  const lastSuccess = [...records].reverse().find((r) => r.success) || null;
+  const lastSuccess = [...records].reverse().find((r) => r && r.success && !r.skipped) || null;
+  const threshold = Number.isFinite(alertThreshold) && alertThreshold > 0
+    ? alertThreshold
+    : DEFAULT_ALERT_AFTER_FAILURES;
   return {
-    healthy: consecutiveFailures < alertThreshold,
+    healthy: consecutiveFailures < threshold,
     lastRecord,
     lastSuccess,
     consecutiveFailures,

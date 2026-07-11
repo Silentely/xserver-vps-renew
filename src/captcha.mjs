@@ -3,8 +3,13 @@
  * 负责验证码识别、标准化、平假名转换
  */
 
+import { fetchWithTimeout } from './utils.mjs';
+
 /** 验证码标准长度 */
 export const CAPTCHA_LENGTH = 6;
+
+/** Keras API 请求超时（毫秒） */
+export const CAPTCHA_API_TIMEOUT_MS = 30_000;
 
 /** 预编译的验证码格式正则（避免运行时重复编译） */
 export const CAPTCHA_PATTERN = new RegExp(`^\\d{${CAPTCHA_LENGTH}}$`);
@@ -24,7 +29,7 @@ export const HIRAGANA_NUMBER_MAP = {
   'きゅう': '9', 'く': '9',
 
   // 可能的片段（OCR 识别错误时的备选）
-  'いちご': '15',  // 常见组合
+  'いちご': '15',
   'さんろく': '36',
   'きゅうろく': '96',
 };
@@ -35,12 +40,13 @@ export const HIRAGANA_NUMBER_MAP = {
  * @returns {string|null} - 转换后的数字，失败返回 null
  */
 export function convertHiraganaToNumber(text) {
-  if (!text || /^\d+$/.test(text)) {
-    return text;
-  }
+  if (text == null || text === '') return null;
+  if (typeof text !== 'string') return null;
+  if (/^\d+$/.test(text)) return text;
 
   // 移除空格和特殊字符
   const cleanText = text.replace(/[\s\-_]/g, '');
+  if (!cleanText) return null;
 
   // 方法 1：完整匹配
   if (HIRAGANA_NUMBER_MAP[cleanText]) {
@@ -96,6 +102,7 @@ export function normalizeCaptchaCode(rawText) {
 
   // 步骤 1: 基础清理（移除空白和常见分隔符）
   let text = rawText.trim().replace(/[\s\-_]/g, '');
+  if (!text) return null;
 
   // 步骤 2: 全角数字转半角
   text = text.replace(/[０-９]/g, (char) => {
@@ -113,13 +120,12 @@ export function normalizeCaptchaCode(rawText) {
     return convertedFromHiragana;
   }
 
-  // 步骤 5: 提取所有数字字符（处理混合内容）
+  // 步骤 5: 提取所有数字字符（处理混合内容；长度必须恰好 6 位）
   const digitsOnly = text.replace(/\D/g, '');
   if (CAPTCHA_PATTERN.test(digitsOnly)) {
     return digitsOnly;
   }
 
-  // 无法标准化为 6 位数字
   return null;
 }
 
@@ -134,27 +140,34 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
   if (!apiUrl) {
     throw new Error('未配置 CAPTCHA_API，无法使用 Keras 模型 API 识别');
   }
+  if (!imgBase64) {
+    throw new Error('验证码图片数据为空');
+  }
 
   logger(`使用 Keras 模型 API 识别验证码: ${apiUrl}`);
 
-  const captchaController = new AbortController();
-  const captchaTimeout = setTimeout(() => captchaController.abort(), 30_000);
   let res;
   try {
-    res = await fetch(apiUrl, {
-      method: 'POST',
-      body: imgBase64,
-      headers: { 'Content-Type': 'text/plain' },
-      signal: captchaController.signal,
-    });
-  } finally {
-    clearTimeout(captchaTimeout);
+    res = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: 'POST',
+        body: imgBase64,
+        headers: { 'Content-Type': 'text/plain' },
+      },
+      CAPTCHA_API_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Keras 模型 API 请求超时（${CAPTCHA_API_TIMEOUT_MS}ms）`);
+    }
+    throw new Error(`Keras 模型 API 网络异常: ${error.message}`);
   }
 
   logger(`Keras 模型 API 响应状态: ${res.status}`);
 
   if (!res.ok) {
-    const errorText = await res.text();
+    const errorText = await res.text().catch(() => '');
     throw new Error(`Keras 模型 API 响应 ${res.status}: ${errorText}`);
   }
 
@@ -179,6 +192,9 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
  * @returns {Promise<string>} - 识别的 6 位数字验证码
  */
 export async function recognizeCaptcha(imgSrc, apiUrl, logger = () => {}) {
+  if (!imgSrc || typeof imgSrc !== 'string') {
+    throw new Error('imgSrc 必须是非空字符串');
+  }
   if (!imgSrc.startsWith('data:image/')) {
     throw new Error('imgSrc 必须是 Base64 格式（data:image/...）');
   }

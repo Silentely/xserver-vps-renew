@@ -89,7 +89,7 @@ describe('recognizeCaptchaWithKerasAPI', () => {
     ).rejects.toThrow('返回无效结果');
   });
 
-  it('API 超时时抛出 AbortError', async () => {
+  it('API 超时时抛出可读超时错误', async () => {
     mockFetch.mockImplementationOnce(() => {
       const error = new Error('The operation was aborted');
       error.name = 'AbortError';
@@ -98,7 +98,13 @@ describe('recognizeCaptchaWithKerasAPI', () => {
 
     await expect(
       recognizeCaptchaWithKerasAPI('data:image/png;base64,abc', 'https://api.example.com', mockLogger),
-    ).rejects.toThrow('aborted');
+    ).rejects.toThrow(/超时/);
+  });
+
+  it('图片数据为空时抛出错误', async () => {
+    await expect(
+      recognizeCaptchaWithKerasAPI('', 'https://api.example.com', mockLogger),
+    ).rejects.toThrow('验证码图片数据为空');
   });
 
   it('记录日志：识别成功', async () => {

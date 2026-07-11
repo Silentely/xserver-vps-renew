@@ -4,9 +4,13 @@
  */
 
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fetchWithTimeout, maskProxyAddress } from './utils.mjs';
 
 /** API 请求超时（毫秒） */
 const FETCH_TIMEOUT_MS = 30_000;
+
+/** 轮询间隔（毫秒） */
+const POLL_INTERVAL_MS = 3_000;
 
 /**
  * 获取 Turnstile 求解服务商配置
@@ -14,6 +18,7 @@ const FETCH_TIMEOUT_MS = 30_000;
  * @returns {object|null} - 服务商配置或 null
  */
 export function getTurnstileProvider(config) {
+  if (!config || typeof config !== 'object') return null;
   const hasProxy = !!(config.PROXY_TYPE && config.PROXY_ADDRESS && config.PROXY_PORT);
 
   if (config.CAPSOLVER_API_KEY) {
@@ -118,9 +123,10 @@ export function buildTurnstileTask(provider, params, config, websiteURL) {
  * @returns {object} - mask 后的副本
  */
 export function maskTaskForLog(task) {
+  if (!task || typeof task !== 'object') return {};
   const masked = { ...task };
   if (masked.proxyAddress) {
-    masked.proxyAddress = masked.proxyAddress.replace(/.(?=.{4})/g, '*');
+    masked.proxyAddress = maskProxyAddress(masked.proxyAddress);
   }
   if (masked.proxyPassword) masked.proxyPassword = '***';
   if (masked.proxyLogin) masked.proxyLogin = '***';
@@ -139,8 +145,12 @@ export function maskTaskForLog(task) {
 export async function solveTurnstileViaAPI(websiteURL, params, config, logger = () => {}, timeout = 120_000) {
   const provider = getTurnstileProvider(config);
   if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
+  if (!params?.sitekey) throw new Error('Turnstile sitekey 为空，无法求解');
 
-  logger(`使用 ${provider.name} 求解 Turnstile (sitekey=${params.sitekey.substring(0, 12)}...)`);
+  const sitekeyPreview = params.sitekey.length > 12
+    ? `${params.sitekey.substring(0, 12)}...`
+    : params.sitekey;
+  logger(`使用 ${provider.name} 求解 Turnstile (sitekey=${sitekeyPreview})`);
 
   const taskConfig = {
     proxyType: config.PROXY_TYPE,
@@ -154,24 +164,28 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
   const task = buildTurnstileTask(provider, params, taskConfig, websiteURL);
 
   if (provider.supportsProxy) {
-    const maskedProxyAddr = taskConfig.proxyAddress.replace(/.(?=.{4})/g, '*');
+    const maskedProxyAddr = maskProxyAddress(taskConfig.proxyAddress);
     logger(`${provider.name} 使用住宅代理: ${taskConfig.proxyType}://${maskedProxyAddr}:${taskConfig.proxyPort}`);
   }
 
   logger(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
 
-  const createController = new AbortController();
-  const createTimeout = setTimeout(() => createController.abort(), FETCH_TIMEOUT_MS);
   let createRes;
   try {
-    createRes = await fetch(`${provider.apiBase}/createTask`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientKey: provider.clientKey, task }),
-      signal: createController.signal,
-    });
-  } finally {
-    clearTimeout(createTimeout);
+    createRes = await fetchWithTimeout(
+      `${provider.apiBase}/createTask`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientKey: provider.clientKey, task }),
+      },
+      FETCH_TIMEOUT_MS,
+    );
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`${provider.name} createTask 请求超时（${FETCH_TIMEOUT_MS}ms）`);
+    }
+    throw new Error(`${provider.name} createTask 网络异常: ${error.message}`);
   }
 
   if (!createRes.ok) {
@@ -191,27 +205,28 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
   logger(`${provider.name} 任务已创建: taskId=${taskId}`);
 
   const startTime = Date.now();
-  const pollInterval = 3000;
-  const maxPolls = Math.ceil(timeout / pollInterval);
+  const maxPolls = Math.max(1, Math.ceil(timeout / POLL_INTERVAL_MS));
 
   for (let i = 1; i <= maxPolls; i++) {
     if (Date.now() - startTime > timeout) {
       throw new Error(`${provider.name} 求解超时（${timeout}ms）`);
     }
-    await sleep(pollInterval);
+    await sleep(POLL_INTERVAL_MS);
 
-    const resultController = new AbortController();
-    const resultTimeout = setTimeout(() => resultController.abort(), FETCH_TIMEOUT_MS);
     let resultRes;
     try {
-      resultRes = await fetch(`${provider.apiBase}/getTaskResult`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientKey: provider.clientKey, taskId }),
-        signal: resultController.signal,
-      });
-    } finally {
-      clearTimeout(resultTimeout);
+      resultRes = await fetchWithTimeout(
+        `${provider.apiBase}/getTaskResult`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientKey: provider.clientKey, taskId }),
+        },
+        FETCH_TIMEOUT_MS,
+      );
+    } catch (error) {
+      logger(`${provider.name} getTaskResult 网络异常: ${error.message}，继续轮询...`);
+      continue;
     }
 
     if (!resultRes.ok) {
@@ -260,8 +275,12 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
  * @returns {Promise<boolean>} - 是否成功注入
  */
 export async function injectTurnstileToken(page, token, logger = () => {}) {
+  if (!token) {
+    logger('Turnstile token 为空，跳过注入');
+    return false;
+  }
+
   const injected = await page.evaluate((tkn) => {
-    // 注入 token 到所有匹配的 input/textarea 元素
     const selectors = [
       'input[name="cf-turnstile-response"]',
       'textarea[name="cf-turnstile-response"]',
@@ -279,7 +298,6 @@ export async function injectTurnstileToken(page, token, logger = () => {}) {
       });
     }
 
-    // 通过 data-callback 调用 Turnstile 回调函数
     let callbackCalled = false;
     try {
       const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
@@ -292,7 +310,6 @@ export async function injectTurnstileToken(page, token, logger = () => {}) {
       }
     } catch { /* 忽略回调异常 */ }
 
-    // 启用提交按钮（某些表单在 token 注入前禁用提交）
     const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
     if (submitBtn && submitBtn.disabled) {
       submitBtn.disabled = false;
