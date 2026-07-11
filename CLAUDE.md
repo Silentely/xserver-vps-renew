@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-11 | 文档同步：测试清单（12 文件 / 147 用例）、supercronic、覆盖率阈值、Docker 非 root 运行说明 |
 | 2026-06-30 | 初始化架构文档，扫描全仓生成根级 CLAUDE.md |
 
 ---
@@ -27,8 +28,8 @@
 | 验证码识别 | Keras 模型 API（Cloud Run 部署） |
 | Turnstile 求解 | CapSolver API（优先）/ 2Captcha API（备选） |
 | 通知 | Telegram Bot API |
-| 容器化 | Docker + docker-compose |
-| 定时调度 | cron（容器内） |
+| 容器化 | Docker + docker-compose（非 root `appuser`） |
+| 定时调度 | supercronic（容器内，由 `CRON_SCHEDULE` 控制） |
 | 测试 | Vitest |
 | 依赖更新 | Renovate |
 | CI/CD | GitHub Actions → GHCR |
@@ -49,16 +50,18 @@ xserver-vps-renew/
 │   └── content.js
 ├── entrypoint.sh               # Docker 入口脚本（定时/单次模式）
 ├── diagnostics.sh              # 容器网络与环境诊断脚本
-├── Dockerfile                  # 容器构建文件
+├── Dockerfile                  # 容器构建文件（appuser + supercronic）
 ├── docker-compose.yml          # 容器编排配置
 ├── package.json                # 依赖与脚本
 ├── vitest.config.mjs           # 测试配置
 ├── renovate.json               # 自动依赖更新配置
 ├── .env.example                # 环境变量模板
+├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（9 个文件，111 个用例）
+└── __tests__/unit/             # 单元测试（12 个文件，147 个用例）
     ├── buildTurnstileTask.test.mjs
+    ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
     ├── convertHiraganaToNumber.test.mjs
     ├── escapeHtml.test.mjs
@@ -66,7 +69,9 @@ xserver-vps-renew/
     ├── getTurnstileProvider.test.mjs
     ├── normalizeCaptchaCode.test.mjs
     ├── normalizeCaptchaCode.edge.test.mjs
-    └── renewalStatus.test.mjs
+    ├── renewalStatus.test.mjs
+    ├── turnstile.extract.test.mjs
+    └── turnstile.solve.test.mjs
 ```
 
 ### 系统结构图
@@ -97,12 +102,12 @@ graph TD
 | 路径 | 职责 | 入口/关键函数 |
 |------|------|---------------|
 | `xserver-vps-renew.mjs` | 编排入口（浏览器操作 + 流程控制 + 通知） | `main()`, `handleLogin()`, `checkRenewalNeeded()`, `handleCaptchaPage()` |
-| `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptcha()` |
-| `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `buildTurnstileTask()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
-| `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `getRenewalStatus()` |
+| `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
+| `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
+| `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
-| `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / cron 调度） | `run_renew()`, `cleanup()` |
+| `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
 | `diagnostics.sh` | 容器网络连通性与环境诊断 | 独立诊断脚本 |
 | `xserver-renews.js` | GreasyFork 用户脚本版本（浏览器端直接运行参考） | `main()` 路由分发 |
 
@@ -231,13 +236,13 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（9 个测试文件，111 个用例）：
-  - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`
-  - `src/turnstile.mjs` — `getTurnstileProvider`、`buildTurnstileTask`、`maskTaskForLog`
+- **已测试模块**（12 个测试文件，147 个用例）：
+  - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
+  - `src/turnstile.mjs` — `getTurnstileProvider`、`extractTurnstileParams`、`buildTurnstileTask`、`maskTaskForLog`、`solveTurnstileViaAPI`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
-  - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`
-- **未覆盖**：浏览器操作流程（需要 Puppeteer mock 或集成测试）
-- **CI 门禁**：分支覆盖率 ≥ 25%
+  - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`、`escapeHtml`
+- **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）
+- **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%
 
 ---
 

@@ -14,7 +14,7 @@
   - **2Captcha API**（备选）：配置 `TWOCAPTCHA_API_KEY` 后使用 `TurnstileTask` 或 `TurnstileTaskProxyless`
   - **降级**：无 API 密钥时等待自然通过（仅适用于本地浏览器环境）
 - ✅ Telegram 通知，续期结果即时推送
-- ✅ Docker 部署，内置 cron 定时调度，开箱即用
+- ✅ Docker 部署，内置 supercronic 定时调度，开箱即用
 
 ## 🚀 快速开始
 
@@ -36,7 +36,7 @@ XSERVER_PASSWORD=你的密码
 CAPTCHA_API=你的 Cloud Run 端点地址
 EOF
 
-# 4. 启动容器（每天东京时间 08:00 自动执行）
+# 4. 启动容器（默认每天东京时间 23:00 自动执行，见 docker-compose.yml 中 CRON_SCHEDULE）
 docker compose up -d
 
 # 5. 查看日志
@@ -242,9 +242,10 @@ npm run test:watch
 
 ### Docker 环境注意事项
 
-- Chrome 以 root 用户运行时需要 `--no-sandbox` 参数（Docker 镜像已默认包含）
+- 容器以非 root 用户 `appuser` 运行；Chrome 仍使用 `--no-sandbox` 等参数（镜像与脚本已默认包含）
 - `headless: false` 需要 X11 显示服务器；Docker 镜像已内置 Xvfb
-- 截图保存到容器内 `/app/screenshots`，通过 docker-compose 挂载到宿主机 `./screenshots`
+- 定时调度使用 **supercronic**（非系统 cron），由 `CRON_SCHEDULE` 控制
+- 调试截图写入容器内 `/tmp/`（如 `turnstile-before-solve.png`），默认不挂载到宿主机
 
 ## 🐛 故障排查
 
