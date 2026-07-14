@@ -27,9 +27,9 @@ VOLUME /data/chrome-profile
 WORKDIR /app
 
 # 先复制 package.json 安装依赖（利用 Docker 缓存层）
+# 使用镜像自带 npm，勿装 npm@latest：新版 npm 会拒绝 lock 中的 remote tarball（EALLOWREMOTE）
 COPY package.json package-lock.json ./
-RUN npm install -g npm@latest \
-    && npm ci --omit=dev \
+RUN npm ci --omit=dev \
     && npm cache clean --force
 
 # 复制项目文件

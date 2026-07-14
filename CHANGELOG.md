@@ -3,7 +3,8 @@
 ## [Unreleased]
 
 ### 修复（2026-07-14）
-- Docker 镜像 `apt-get upgrade`：补齐 curl / Mesa / libxfont2 等安全补丁，修复 Trivy HIGH/CRITICAL 门禁失败
+- Docker：去掉 `npm install -g npm@latest`（新版 npm 对 remote tarball 报 `EALLOWREMOTE`）；`package-lock.json` 解析源改回 `registry.npmjs.org`
+- Docker 镜像 `apt-get upgrade` + `.trivyignore` 登记暂无可用升级的 curl/Mesa/libxfont2 CVE，避免门禁误杀
 
 ### 适配官方续期规则变更（2026-07-14）
 - **4GB 免费 VPS**：最长使用时间 48h → **24h**；可续期窗口 剩余 24h → **剩余 ≤12h**
