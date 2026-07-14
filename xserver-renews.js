@@ -37,8 +37,8 @@
  * 1. 登录页面: 自动填充已保存的凭据并提交。
  * (Login Page: Auto-fills saved credentials and submits.)
  *
- * 2. VPS管理主页: 检查免费VPS的到期日期。如果明天到期，则跳转到续期页面。
- * (VPS Dashboard: Checks the expiration date. If it expires tomorrow, it navigates to the renewal page.)
+ * 2. VPS管理主页: 检查免费VPS到期（4GB 最长 24h；剩余 ≤12h 可续期）。今天/明天到期则跳转续期页。
+ * (VPS Dashboard: 4GB max 24h; renew when remaining ≤12h. If expire is today/tomorrow, go to renew page.)
  *
  * 3. 续期申请页: 自动点击“确认”按钮，进入验证码页面。
  * (Renewal Page: Clicks the confirmation button to proceed to the CAPTCHA page.)
@@ -272,10 +272,10 @@ function t(text) {
             console.log(`${LOG_PREFIX} 今天的日期: ${today}`);
             console.log(`${LOG_PREFIX} 明天的日期: ${tomorrow}`);
 
-            // 今天或明天到期都需要续期
+            // 4GB 最长 24h、剩余 ≤12h 可续：日期粒度下今天或明天到期即尝试
             const needsRenewal = expireDate === today || expireDate === tomorrow;
             if (needsRenewal) {
-                console.log(`${LOG_PREFIX} 条件满足：到期日为今天或明天。正在跳转到续期页面...`);
+                console.log(`${LOG_PREFIX} 条件满足：到期日为今天或明天（续期窗口剩余≤12h）。正在跳转到续期页面...`);
                 const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
                 if (detailLink && detailLink.href) {
                     updateStatusElement("检测到即将过期，正在续期...");

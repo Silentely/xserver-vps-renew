@@ -9,7 +9,7 @@
  * 环境变量：
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
- *   CAPTCHA_API        - 验证码识别API地址
+ *   CAPTCHA_API        - 验证码识别API地址（可选，有默认公共端点）
  *   CAPSOLVER_API_KEY  - CapSolver API 密钥（Turnstile 求解，与 2Captcha 二选一）
  *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 求解备选）
  *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
@@ -63,7 +63,12 @@ import {
   buildSuccessNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  RENEWAL_WINDOW_HOURS,
+  FREE_VPS_MAX_HOURS,
 } from './src/renewal-logic.mjs';
+
+/** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
+const DEFAULT_CAPTCHA_API = 'https://captcha-120546510085.asia-northeast1.run.app';
 
 // ============================================================
 // 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
@@ -119,8 +124,8 @@ const CONFIG = {
   MEMBER_ID: process.env.XSERVER_MEMBER_ID || '',
   PASSWORD: process.env.XSERVER_PASSWORD || '',
 
-  // 验证码识别服务（OCR）
-  CAPTCHA_API: process.env.CAPTCHA_API || '',  // Keras 模型 API（Cloud Run）
+  // 验证码识别服务（OCR）；未配置时使用公共默认端点
+  CAPTCHA_API: process.env.CAPTCHA_API || DEFAULT_CAPTCHA_API,
 
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
@@ -404,9 +409,12 @@ async function checkRenewalNeeded(page) {
   log(`VPS 服务器名: ${cleanServerName ?? '未找到'}`);
   log(`VPS 规格: ${cleanPlan ?? '未找到'}`);
 
-  // 今天或明天到期都需要续期
+  // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
   if (!isRenewalDue(result.expireDate, today, tomorrow)) {
-    log(`无需续期（到期日 ${result.expireDate} 不是今天 ${today} 或明天 ${tomorrow}）。`);
+    log(
+      `无需续期（到期: ${result.expireDate}；规则: 最长 ${FREE_VPS_MAX_HOURS}h / 剩余≤${RENEWAL_WINDOW_HOURS}h 可续；` +
+        `今天 ${today} / 明天 ${tomorrow}）。`,
+    );
     return null;
   }
 

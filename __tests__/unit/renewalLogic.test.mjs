@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   isRenewalDue,
+  parseExpireTimestamp,
+  getRemainingHours,
   buildRenewUrl,
   resolveCaptchaRetryUrl,
   evaluateSubmissionResult,
@@ -11,15 +13,44 @@ import {
   buildSuccessNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  FREE_VPS_MAX_HOURS,
+  RENEWAL_WINDOW_HOURS,
 } from '../../src/renewal-logic.mjs';
 
+describe('政策常量', () => {
+  it('4GB 最长 24 小时，剩余 ≤12 小时可续期', () => {
+    expect(FREE_VPS_MAX_HOURS).toBe(24);
+    expect(RENEWAL_WINDOW_HOURS).toBe(12);
+  });
+});
+
+describe('parseExpireTimestamp / getRemainingHours', () => {
+  it('解析纯日期为东京日末', () => {
+    // 2026-07-11 23:59:59 JST = 2026-07-11 14:59:59 UTC
+    const ms = parseExpireTimestamp('2026-07-11');
+    expect(ms).toBe(Date.UTC(2026, 6, 11, 14, 59, 59));
+  });
+
+  it('解析带时间的 ISO 文案', () => {
+    // 2026-07-11 12:00:00 JST = 2026-07-11 03:00:00 UTC
+    const ms = parseExpireTimestamp('2026-07-11 12:00:00');
+    expect(ms).toBe(Date.UTC(2026, 6, 11, 3, 0, 0));
+  });
+
+  it('计算剩余小时', () => {
+    const nowMs = Date.UTC(2026, 6, 11, 0, 0, 0); // 2026-07-11 09:00 JST
+    // expire 2026-07-11 15:00 JST = 06:00 UTC → 剩余 6h
+    expect(getRemainingHours('2026-07-11 15:00', nowMs)).toBeCloseTo(6, 5);
+  });
+});
+
 describe('isRenewalDue', () => {
-  it('今天或明天到期返回 true', () => {
+  it('仅日期：今天或明天到期返回 true', () => {
     expect(isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12')).toBe(true);
     expect(isRenewalDue('2026-07-12', '2026-07-11', '2026-07-12')).toBe(true);
   });
 
-  it('其他日期返回 false', () => {
+  it('仅日期：其他日期返回 false', () => {
     expect(isRenewalDue('2026-07-20', '2026-07-11', '2026-07-12')).toBe(false);
   });
 
@@ -30,6 +61,30 @@ describe('isRenewalDue', () => {
 
   it('允许首尾空白', () => {
     expect(isRenewalDue(' 2026-07-11 ', '2026-07-11', '2026-07-12')).toBe(true);
+  });
+
+  it('含时间：剩余 ≤12h 返回 true', () => {
+    // now = 2026-07-11 10:00 JST = 01:00 UTC；expire 20:00 JST → 剩余 10h
+    const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
+    expect(
+      isRenewalDue('2026-07-11 20:00', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(true);
+  });
+
+  it('含时间：剩余 >12h 返回 false', () => {
+    // now = 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；expire 20:00 JST → 剩余 14h
+    const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
+    expect(
+      isRenewalDue('2026-07-11 20:00', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(false);
+  });
+
+  it('含时间：略过期在宽限内仍可续', () => {
+    // expire 10:00 JST，now 10:30 JST → 剩余 -0.5h
+    const nowMs = Date.UTC(2026, 6, 11, 1, 30, 0);
+    expect(
+      isRenewalDue('2026-07-11 10:00', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(true);
   });
 });
 

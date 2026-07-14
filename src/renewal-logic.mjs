@@ -1,7 +1,20 @@
 /**
  * 续期业务纯逻辑
  * 到期判定、URL 构建、提交结果解析、到期日提取、通知文案
+ *
+ * 官方免费 VPS（4GB）规则（2026-07 起）：
+ * - 最长使用时间：24 小时（原 48 小时）
+ * - 可续期条件：剩余使用时间 ≤ 12 小时（原 ≤ 24 小时）
  */
+
+/** 4GB 免费 VPS 最长使用时长（小时） */
+export const FREE_VPS_MAX_HOURS = 24;
+
+/** 允许续期的剩余时间阈值（小时）：剩余 ≤ 此值时可续期 */
+export const RENEWAL_WINDOW_HOURS = 12;
+
+/** 略过期仍尝试续期的宽限（小时），覆盖时钟偏差/页面延迟 */
+export const RENEWAL_OVERDUE_GRACE_HOURS = 1;
 
 /** 提交后明确失败关键词 */
 export const FAILURE_PATTERNS = ['認証に失敗', '失敗しました', 'エラーが発生', '不正なアクセス'];
@@ -21,16 +34,127 @@ export const KNOWN_FAILURE_REASONS = [
 ];
 
 /**
- * 判断到期日是否需要续期（今天或明天到期）
- * @param {string|null|undefined} expireDate - 页面上的到期日 YYYY-MM-DD
- * @param {string} today - 东京时区今天
- * @param {string} tomorrow - 东京时区明天
+ * 从页面到期文案解析东京时区下的到期时间戳（毫秒）
+ * 支持：YYYY-MM-DD、YYYY/MM/DD、含 HH:mm[:ss]、日本格式年月日
+ * 仅日期时按当天结束（23:59:59 东京）处理，便于保守判定
+ * @param {string} expireText
+ * @returns {number|null} epoch ms，无法解析时 null
+ */
+export function parseExpireTimestamp(expireText) {
+  if (!expireText || typeof expireText !== 'string') return null;
+  const text = expireText.trim();
+  if (!text) return null;
+
+  // ISO / 斜杠：2026-07-15 10:30:00 或 2026/07/15 10:30
+  let m = text.match(
+    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
+  );
+  if (m) {
+    const [, y, mo, d, hh, mm, ss] = m;
+    const hasTime = hh !== undefined;
+    return tokyoLocalToUtcMs(
+      Number(y),
+      Number(mo),
+      Number(d),
+      hasTime ? Number(hh) : 23,
+      hasTime ? Number(mm) : 59,
+      // 有时分无秒 → 0；纯日期 → 日末 59
+      hasTime ? (ss !== undefined ? Number(ss) : 0) : 59,
+    );
+  }
+
+  // 日本格式：2026年7月15日 10時30分 / 2026年7月15日
+  m = text.match(
+    /(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2})[時:](\d{1,2})(?:分(?::?(\d{1,2})秒?)?)?)?/,
+  );
+  if (m) {
+    const [, y, mo, d, hh, mm, ss] = m;
+    const hasTime = hh !== undefined;
+    return tokyoLocalToUtcMs(
+      Number(y),
+      Number(mo),
+      Number(d),
+      hasTime ? Number(hh) : 23,
+      hasTime ? Number(mm) : 59,
+      hasTime ? (ss !== undefined ? Number(ss) : 0) : 59,
+    );
+  }
+
+  return null;
+}
+
+/**
+ * 将东京本地年月日时分秒转为 UTC epoch ms
+ * @param {number} year
+ * @param {number} month 1-12
+ * @param {number} day
+ * @param {number} hour
+ * @param {number} minute
+ * @param {number} second
+ * @returns {number}
+ */
+function tokyoLocalToUtcMs(year, month, day, hour, minute, second) {
+  // 东京固定 UTC+9，无夏令时：构造为「当作 UTC 的本地分量」再减去 9 小时
+  return Date.UTC(year, month - 1, day, hour, minute, second) - 9 * 3600_000;
+}
+
+/**
+ * 计算剩余使用小时数（到期时间 - 当前时间）
+ * @param {string} expireText - 页面到期文案
+ * @param {number} [nowMs=Date.now()]
+ * @returns {number|null} 剩余小时（可为负表示已过期），无法解析时 null
+ */
+export function getRemainingHours(expireText, nowMs = Date.now()) {
+  const expireMs = parseExpireTimestamp(expireText);
+  if (expireMs == null) return null;
+  return (expireMs - nowMs) / 3_600_000;
+}
+
+/**
+ * 判断是否进入可续期窗口
+ *
+ * 官方规则：剩余使用时间 ≤ {@link RENEWAL_WINDOW_HOURS} 小时时可续期。
+ * - 能解析到具体时间：按剩余小时判定（含短暂过期宽限）
+ * - 仅有日期或无法解析时间：回退为「今天或明天到期」（24h 寿命下的日期粒度策略）
+ *
+ * @param {string|null|undefined} expireDate - 页面上的到期日/时间文案
+ * @param {string} today - 东京时区今天 YYYY-MM-DD
+ * @param {string} tomorrow - 东京时区明天 YYYY-MM-DD
+ * @param {{ nowMs?: number, windowHours?: number, overdueGraceHours?: number }} [opts]
  * @returns {boolean}
  */
-export function isRenewalDue(expireDate, today, tomorrow) {
+export function isRenewalDue(expireDate, today, tomorrow, opts = {}) {
   if (!expireDate || typeof expireDate !== 'string') return false;
-  const date = expireDate.trim();
-  return date === today || date === tomorrow;
+  const text = expireDate.trim();
+  if (!text) return false;
+
+  const windowHours = opts.windowHours ?? RENEWAL_WINDOW_HOURS;
+  const overdueGraceHours = opts.overdueGraceHours ?? RENEWAL_OVERDUE_GRACE_HOURS;
+  const nowMs = opts.nowMs ?? Date.now();
+
+  // 文案含时分 → 按剩余小时精确判定
+  const hasClock = /(?:\d{1,2}:\d{2}|\d{1,2}時\d{1,2})/.test(text);
+  if (hasClock) {
+    const remaining = getRemainingHours(text, nowMs);
+    if (remaining == null) return false;
+    return remaining <= windowHours && remaining >= -overdueGraceHours;
+  }
+
+  // 仅日期：提取 YYYY-MM-DD（或日本格式）后与今天/明天比较
+  const iso = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) {
+    const date = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+    return date === today || date === tomorrow;
+  }
+
+  const jp = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (jp) {
+    const date = `${jp[1]}-${jp[2].padStart(2, '0')}-${jp[3].padStart(2, '0')}`;
+    return date === today || date === tomorrow;
+  }
+
+  // 纯日期字符串 YYYY-MM-DD（无多余文字）
+  return text === today || text === tomorrow;
 }
 
 /**

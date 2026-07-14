@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-14 | 适配官方 4GB 规则：最长 24h / 剩余≤12h 可续；CAPTCHA_API 默认公共端点；cron 默认每 6h |
 | 2026-07-11 | 第二轮打磨：renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
 | 2026-07-11 | 第一轮打磨：修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验 |
 | 2026-07-11 | 文档同步：测试清单、supercronic、覆盖率阈值、Docker 非 root 运行说明 |
@@ -15,7 +16,7 @@
 
 ## 项目愿景
 
-通过自动化浏览器操作，每日检查 Xserver 免费 VPS 到期状态并在临近到期时自动完成续期流程（登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交），避免因忘记续期导致 VPS 被回收。
+通过自动化浏览器操作，按官方 4GB 规则（最长 **24 小时**，剩余 **≤12 小时** 可续期）检查到期状态并在窗口内自动完成续期流程（登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交），避免因忘记续期导致 VPS 被回收。建议调度至少每 6 小时一次。
 
 ---
 
@@ -113,7 +114,7 @@ graph TD
 | `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑 | `isRenewalDue()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, 通知文案构建 |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, 通知文案构建 |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -132,7 +133,7 @@ npm install
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env 填写 XSERVER_MEMBER_ID、XSERVER_PASSWORD、CAPTCHA_API
+# 编辑 .env 填写 XSERVER_MEMBER_ID、XSERVER_PASSWORD（CAPTCHA_API 可选）
 
 # 单次执行
 npm start
@@ -176,12 +177,12 @@ npm run test:watch
 |------|------|
 | `XSERVER_MEMBER_ID` | Xserver 会员 ID |
 | `XSERVER_PASSWORD` | Xserver 登录密码 |
-| `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run） |
 
 ### 可选
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
+| `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run，可自建覆盖） | `https://captcha-120546510085.asia-northeast1.run.app` |
 | `CAPSOLVER_API_KEY` | CapSolver API 密钥（Turnstile 求解，优先） | 无 |
 | `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解，备选） | 无 |
 | `PROXY_TYPE` | 代理类型：http / socks4 / socks5 | 无 |
@@ -194,7 +195,7 @@ npm run test:watch
 | `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
 | `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |
 | `TZ` | 时区 | `Asia/Tokyo` |
-| `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式） | 无（单次模式） |
+| `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式；compose 默认每 6h，适配 12h 续期窗口） | 无（单次模式） |
 | `ENABLE_DIAGNOSTICS` | 启用容器环境诊断（true/false） | 无 |
 | `RENEWAL_STATUS_FILE` | 续期记录持久化文件路径 | `/data/chrome-profile/renewal-status.json` |
 | `ALERT_AFTER_FAILURES` | 连续失败达到此次值时触发告警升级 | `3` |
@@ -253,7 +254,7 @@ npm run test:watch
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `getTurnstileProvider`、`extractTurnstileParams`、`buildTurnstileTask`、`maskTaskForLog`、`solveTurnstileViaAPI`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
-  - `src/renewal-logic.mjs` — 到期判定、URL 构建、提交结果、到期日提取、通知文案
+  - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取、通知文案
   - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`
   - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`、`escapeHtml`
 - **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）
