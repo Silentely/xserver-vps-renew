@@ -5,7 +5,9 @@ LABEL maintainer="adair"
 LABEL description="Xserver VPS 自动续期 - Puppeteer Stealth"
 
 # 安装 Chrome、Xvfb、cron 及依赖
+# 装完后 upgrade：吃掉 curl/mesa/libxfont2 等安全补丁，避免 Trivy HIGH/CRITICAL 门禁失败
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        wget gnupg2 ca-certificates fonts-liberation \
        xvfb dbus cron procps curl \
@@ -16,6 +18,7 @@ RUN apt-get update \
        > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends google-chrome-stable \
+    && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 持久化 Chrome 用户数据（续期状态文件默认也写在此目录，便于同卷持久化）
