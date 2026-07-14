@@ -27,9 +27,11 @@ VOLUME /data/chrome-profile
 WORKDIR /app
 
 # 先复制 package.json 安装依赖（利用 Docker 缓存层）
-# 使用镜像自带 npm，勿装 npm@latest：新版 npm 会拒绝 lock 中的 remote tarball（EALLOWREMOTE）
+# 顺序：先用镜像自带 npm 执行 ci（避免 npm@latest 对 remote tarball 的 EALLOWREMOTE），
+# 再升级 npm，修补基础镜像自带 npm 内嵌的 picomatch/sigstore 等 HIGH 漏洞
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
+    && npm install -g npm@latest \
     && npm cache clean --force
 
 # 复制项目文件
