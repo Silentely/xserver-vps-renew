@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### 修复（2026-07-14）
+- 成功通知「下次执行」不再写死 +24h：按 `CRON_SCHEDULE` 的 `*/N` 或 `NOTIFY_NEXT_RUN_HOURS`（默认 6）估算
 - Docker：`npm ci` 后再 `npm install -g npm@latest`（先装依赖避开 EALLOWREMOTE，再修基础镜像 npm 内嵌 picomatch/sigstore）
 - `package-lock.json` 解析源改回 `registry.npmjs.org`
 - `.trivyignore`：登记暂无 apt 升级的 curl/Mesa/libxfont2，以及基础镜像 npm 内嵌 picomatch/sigstore CVE

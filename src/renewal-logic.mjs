@@ -304,6 +304,54 @@ export function formatTokyoDateTime(when = new Date()) {
   return d.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
 }
 
+/** 通知中「下次执行」默认间隔（小时）；适配 4GB 剩余≤12h 窗口，建议 ≤6 */
+export const DEFAULT_NEXT_RUN_INTERVAL_HOURS = 6;
+
+/**
+ * 从 CRON 表达式解析「每 N 小时」间隔
+ * 支持形如 "32 *\/6 * * *"、"0 *\/6 * * *"（小时字段为 star-slash-N）
+ * @param {string|null|undefined} cronSchedule
+ * @returns {number|null} 小时数，无法解析时 null
+ */
+export function parseCronIntervalHours(cronSchedule) {
+  if (!cronSchedule || typeof cronSchedule !== 'string') return null;
+  const parts = cronSchedule.trim().split(/\s+/);
+  if (parts.length < 5) return null;
+  const hourField = parts[1];
+  // 避免正则字面量含 "*/" 干扰 esbuild/vite 扫描
+  if (!hourField.startsWith('*/')) return null;
+  const n = Number(hourField.slice(2));
+  if (!Number.isFinite(n) || n < 1 || n > 168 || String(n) !== hourField.slice(2)) return null;
+  return n;
+}
+
+/**
+ * 估算下次检查时间戳（毫秒）
+ * 优先级：CRON 的每 N 小时 → intervalHours → 默认 6 小时
+ * （不再写死 +24h，避免与每 6 小时调度不符）
+ * @param {number} [nowMs=Date.now()]
+ * @param {{ cronSchedule?: string, intervalHours?: number }} [opts]
+ * @returns {number}
+ */
+export function estimateNextRunMs(nowMs = Date.now(), opts = {}) {
+  const fromCron = parseCronIntervalHours(opts.cronSchedule);
+  const hours = fromCron ?? opts.intervalHours ?? DEFAULT_NEXT_RUN_INTERVAL_HOURS;
+  const safeHours = Number.isFinite(hours) && hours >= 1 && hours <= 168
+    ? hours
+    : DEFAULT_NEXT_RUN_INTERVAL_HOURS;
+  return nowMs + safeHours * 3_600_000;
+}
+
+/**
+ * 估算下次检查时间文案（东京时区）
+ * @param {number} [nowMs=Date.now()]
+ * @param {{ cronSchedule?: string, intervalHours?: number }} [opts]
+ * @returns {string}
+ */
+export function resolveNextRunAt(nowMs = Date.now(), opts = {}) {
+  return formatTokyoDateTime(estimateNextRunMs(nowMs, opts));
+}
+
 /**
  * 构建续期成功 Telegram 消息
  * @param {object} params

@@ -65,6 +65,8 @@ import {
   buildProxyHint,
   RENEWAL_WINDOW_HOURS,
   FREE_VPS_MAX_HOURS,
+  resolveNextRunAt,
+  DEFAULT_NEXT_RUN_INTERVAL_HOURS,
 } from './src/renewal-logic.mjs';
 
 /** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
@@ -153,6 +155,15 @@ const CONFIG = {
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
+
+  // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
+  CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
+  // 成功通知中「下次执行」估算间隔（小时）；默认 6，适配剩余≤12h 窗口
+  NOTIFY_NEXT_RUN_HOURS: parsePositiveInt(
+    process.env.NOTIFY_NEXT_RUN_HOURS,
+    DEFAULT_NEXT_RUN_INTERVAL_HOURS,
+    { min: 1, max: 168 },
+  ),
 
   // 传给 Turnstile 求解模块，保证 token 与浏览器 UA 一致
   DEFAULT_UA,
@@ -1034,7 +1045,12 @@ async function main() {
 
     log('🎉 续期流程全部完成！');
 
-    const nextRunStr = formatTokyoDateTime(Date.now() + 86400000);
+    // 下次执行：优先从 CRON_SCHEDULE（如 32 */6 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
+    // 外部平台定时启停容器时通常无 CRON_SCHEDULE，依赖默认 6h 或自行配置 NOTIFY_NEXT_RUN_HOURS
+    const nextRunStr = resolveNextRunAt(Date.now(), {
+      cronSchedule: CONFIG.CRON_SCHEDULE,
+      intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
+    });
     const executedAt = formatTokyoDateTime();
 
     // 持久化续期成功记录（使用配置的状态文件路径）

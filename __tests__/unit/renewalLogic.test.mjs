@@ -10,11 +10,15 @@ import {
   normalizeCellText,
   escapeHtml,
   formatTokyoDateTime,
+  resolveNextRunAt,
+  estimateNextRunMs,
+  parseCronIntervalHours,
   buildSuccessNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
+  DEFAULT_NEXT_RUN_INTERVAL_HOURS,
 } from '../../src/renewal-logic.mjs';
 
 describe('政策常量', () => {
@@ -212,6 +216,45 @@ describe('escapeHtml', () => {
 describe('formatTokyoDateTime', () => {
   it('返回非空字符串', () => {
     expect(formatTokyoDateTime(Date.UTC(2026, 6, 11, 0, 0, 0))).toBeTruthy();
+  });
+});
+
+describe('parseCronIntervalHours / estimateNextRunMs', () => {
+  it('解析 */6 小时 cron', () => {
+    expect(parseCronIntervalHours('32 */6 * * *')).toBe(6);
+    expect(parseCronIntervalHours('0 */6 * * *')).toBe(6);
+    expect(parseCronIntervalHours('0 */12 * * *')).toBe(12);
+  });
+
+  it('非每 N 小时表达式返回 null', () => {
+    expect(parseCronIntervalHours('0 23 * * *')).toBeNull();
+    expect(parseCronIntervalHours('')).toBeNull();
+    expect(parseCronIntervalHours(null)).toBeNull();
+  });
+
+  it('默认间隔为 6 小时（非 24 小时）', () => {
+    expect(DEFAULT_NEXT_RUN_INTERVAL_HOURS).toBe(6);
+    const now = Date.UTC(2026, 6, 14, 6, 34, 0);
+    expect(estimateNextRunMs(now, {})).toBe(now + 6 * 3_600_000);
+  });
+
+  it('优先使用 CRON 间隔', () => {
+    const now = Date.UTC(2026, 6, 14, 6, 34, 0);
+    expect(estimateNextRunMs(now, {
+      cronSchedule: '32 */6 * * *',
+      intervalHours: 24,
+    })).toBe(now + 6 * 3_600_000);
+  });
+
+  it('无 cron 时使用 intervalHours', () => {
+    const now = Date.UTC(2026, 6, 14, 6, 34, 0);
+    expect(estimateNextRunMs(now, { intervalHours: 8 })).toBe(now + 8 * 3_600_000);
+  });
+
+  it('resolveNextRunAt 返回非空字符串', () => {
+    expect(resolveNextRunAt(Date.UTC(2026, 6, 14, 6, 34, 0), {
+      cronSchedule: '32 */6 * * *',
+    })).toBeTruthy();
   });
 });
 
