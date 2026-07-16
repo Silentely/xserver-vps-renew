@@ -9,9 +9,9 @@
  * 环境变量：
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
+ *   CAPSOLVER_API_KEY  - CapSolver API 密钥（必须：Turnstile 人机验证；未配置成功率极低）
  *   CAPTCHA_API        - 验证码识别API地址（可选，有默认公共端点）
- *   CAPSOLVER_API_KEY  - CapSolver API 密钥（Turnstile 求解，与 2Captcha 二选一）
- *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 求解备选）
+ *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 求解备选，无 CapSolver 时使用）
  *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
  *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
@@ -899,7 +899,9 @@ async function main() {
   }
 
   if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.TWOCAPTCHA_API_KEY) {
-    log('⚠️ 未配置 CAPSOLVER_API_KEY / TWOCAPTCHA_API_KEY，Turnstile 将依赖自然通过（成功率较低）');
+    log('⚠️ 未配置 CAPSOLVER_API_KEY（必须）：Turnstile 人机验证将依赖自然通过，成功率极低（Docker 环境几乎不可用）。请配置 CapSolver：https://www.capsolver.com/');
+  } else if (!CONFIG.CAPSOLVER_API_KEY && CONFIG.TWOCAPTCHA_API_KEY) {
+    log('ℹ️ 未配置 CAPSOLVER_API_KEY，将使用 2Captcha 作为 Turnstile 备选求解。推荐优先配置 CapSolver');
   }
 
   let browser = null;

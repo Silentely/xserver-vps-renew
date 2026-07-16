@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-16 | 文档强调：必须配置 CapSolver API（Turnstile），否则成功率极低 |
 | 2026-07-14 | 适配官方 4GB 规则：最长 24h / 剩余≤12h 可续；CAPTCHA_API 默认公共端点；cron 默认每 6h |
 | 2026-07-11 | 第二轮打磨：renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
 | 2026-07-11 | 第一轮打磨：修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验 |
@@ -29,7 +30,7 @@
 | 运行时 | Node.js 22 (ESM) |
 | 浏览器自动化 | rebrowser-puppeteer-core + puppeteer-extra Stealth |
 | 验证码识别 | Keras 模型 API（Cloud Run 部署） |
-| Turnstile 求解 | CapSolver API（优先）/ 2Captcha API（备选） |
+| Turnstile 求解 | **CapSolver API（必须配置，否则成功率极低）** / 2Captcha API（备选） |
 | 通知 | Telegram Bot API |
 | 容器化 | Docker + docker-compose（非 root `appuser`） |
 | 定时调度 | supercronic（容器内，由 `CRON_SCHEDULE` 控制） |
@@ -177,14 +178,14 @@ npm run test:watch
 |------|------|
 | `XSERVER_MEMBER_ID` | Xserver 会员 ID |
 | `XSERVER_PASSWORD` | Xserver 登录密码 |
+| `CAPSOLVER_API_KEY` | **CapSolver API 密钥（必须）**：Turnstile 人机验证。未配置时成功率极低（Docker 环境几乎不可用） |
 
 ### 可选
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run，可自建覆盖） | `https://captcha-120546510085.asia-northeast1.run.app` |
-| `CAPSOLVER_API_KEY` | CapSolver API 密钥（Turnstile 求解，优先） | 无 |
-| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解，备选） | 无 |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解备选，仅当无 CapSolver 时） | 无 |
 | `PROXY_TYPE` | 代理类型：http / socks4 / socks5 | 无 |
 | `PROXY_ADDRESS` | 代理地址 | 无 |
 | `PROXY_PORT` | 代理端口 | 无 |
@@ -229,9 +230,9 @@ npm run test:watch
 
 ### Turnstile 求解策略
 
-- **首选**：CapSolver API（`AntiTurnstileTaskProxyLess`，不支持代理）
-- **备选**：2Captcha API（支持代理 `TurnstileTask` 或 `TurnstileTaskProxyless`）
-- **降级**：无 API 密钥时等待自然通过
+- **必须配置 CapSolver**：`CAPSOLVER_API_KEY`（`AntiTurnstileTaskProxyLess`，不支持代理）。**未配置时成功率极低**，尤其 Docker / 无头环境几乎必然失败
+- **备选**：2Captcha API（`TWOCAPTCHA_API_KEY`，支持代理 `TurnstileTask` 或 `TurnstileTaskProxyless`）
+- **降级（不推荐）**：无 API 密钥时等待自然通过——生产环境请勿依赖
 - 求解成功后注入 token 到页面并触发回调
 
 ### 浏览器反检测措施
@@ -277,6 +278,7 @@ npm run test:watch
 
 - 修改核心流程时，请先理解 `main()` 中的步骤顺序和错误处理逻辑
 - 验证码识别和 Turnstile 求解是关键路径，修改需谨慎
+- 文档与示例须强调 **必须配置 CapSolver**（`CAPSOLVER_API_KEY`），否则 Turnstile 成功率极低
 - 浏览器反检测措施（指纹补丁、CDP 修复）是绕过 Cloudflare 的核心，不宜随意变更
 - 新增配置项需同步更新 `.env.example` 和本文档
 - 纯函数修改后需补充对应单元测试

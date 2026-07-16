@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### 文档（2026-07-16）
+- 明确要求配置 **CapSolver API**（`CAPSOLVER_API_KEY`）用于 Turnstile 人机验证；未配置时成功率极低
+- 同步 README / CLAUDE / RUNBOOK / `.env.example`：CapSolver 列入必填说明与快速开始示例
+
 ### 修复（2026-07-14）
 - 成功通知「下次执行」不再写死 +24h：按 `CRON_SCHEDULE` 的 `*/N` 或 `NOTIFY_NEXT_RUN_HOURS`（默认 6）估算
 - Docker：`npm ci` 后再 `npm install -g npm@latest`（先装依赖避开 EALLOWREMOTE，再修基础镜像 npm 内嵌 picomatch/sigstore）
