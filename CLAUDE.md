@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-20 | 新增 YesCaptcha 作为 Turnstile 可选备选（CapSolver > YesCaptcha > 2Captcha） |
 | 2026-07-16 | 文档强调：必须配置 CapSolver API（Turnstile），否则成功率极低 |
 | 2026-07-14 | 适配官方 4GB 规则：最长 24h / 剩余≤12h 可续；CAPTCHA_API 默认公共端点；cron 默认每 6h |
 | 2026-07-11 | 第二轮打磨：renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
@@ -30,7 +31,7 @@
 | 运行时 | Node.js 22 (ESM) |
 | 浏览器自动化 | rebrowser-puppeteer-core + puppeteer-extra Stealth |
 | 验证码识别 | Keras 模型 API（Cloud Run 部署） |
-| Turnstile 求解 | **CapSolver API（必须配置，否则成功率极低）** / 2Captcha API（备选） |
+| Turnstile 求解 | **CapSolver API（必须配置，否则成功率极低）** / YesCaptcha API（备选） / 2Captcha API（备选） |
 | 通知 | Telegram Bot API |
 | 容器化 | Docker + docker-compose（非 root `appuser`） |
 | 定时调度 | supercronic（容器内，由 `CRON_SCHEDULE` 控制） |
@@ -65,7 +66,7 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（15 个文件，约 209 个用例）
+└── __tests__/unit/             # 单元测试（15 个文件，约 240 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
@@ -100,7 +101,7 @@ graph TD
     B -->|"启动 Chrome + Stealth"| I["Chrome Browser"];
     I -->|"访问"| J["Xserver 官网"];
     B -->|"验证码识别"| K["Keras API (Cloud Run)"];
-    B -->|"Turnstile 求解"| L["CapSolver / 2Captcha API"];
+    B -->|"Turnstile 求解"| L["CapSolver / YesCaptcha / 2Captcha API"];
     B -->|"通知"| M["Telegram Bot"];
 ```
 
@@ -112,7 +113,7 @@ graph TD
 |------|------|---------------|
 | `xserver-vps-renew.mjs` | 编排入口（浏览器操作 + 流程控制 + 通知） | `main()`, `handleLogin()`, `checkRenewalNeeded()`, `handleCaptchaPage()` |
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
-| `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
+| `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `buildCreateTaskPayload()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
 | `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, 通知文案构建 |
@@ -185,7 +186,10 @@ npm run test:watch
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run，可自建覆盖） | `https://captcha-120546510085.asia-northeast1.run.app` |
-| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解备选，仅当无 CapSolver 时） | 无 |
+| `YESCAPTCHA_API_KEY` | YesCaptcha API 密钥（Turnstile 备选，仅当无 CapSolver 时） | 无 |
+| `YESCAPTCHA_API_BASE` | YesCaptcha API 节点（国际默认；国内可用 `https://cn.yescaptcha.com`） | `https://api.yescaptcha.com` |
+| `YESCAPTCHA_TASK_TYPE` | YesCaptcha 任务类型 | `TurnstileTaskProxyless` |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（Turnstile 求解备选，仅当无 CapSolver / YesCaptcha 时） | 无 |
 | `PROXY_TYPE` | 代理类型：http / socks4 / socks5 | 无 |
 | `PROXY_ADDRESS` | 代理地址 | 无 |
 | `PROXY_PORT` | 代理端口 | 无 |
@@ -225,13 +229,15 @@ npm run test:watch
 2. 调用 Keras API 识别（最多重试 3 次）
 3. 验证码标准化（支持平假名转数字、全角转半角、混合内容提取）
 4. 模拟人类输入（带延迟）
-5. Turnstile 求解（CapSolver/2Captcha API）
+5. Turnstile 求解（CapSolver / YesCaptcha / 2Captcha API）
 6. 提交表单并验证结果
 
 ### Turnstile 求解策略
 
 - **必须配置 CapSolver**：`CAPSOLVER_API_KEY`（`AntiTurnstileTaskProxyLess`，不支持代理）。**未配置时成功率极低**，尤其 Docker / 无头环境几乎必然失败
-- **备选**：2Captcha API（`TWOCAPTCHA_API_KEY`，支持代理 `TurnstileTask` 或 `TurnstileTaskProxyless`）
+- **备选 YesCaptcha**：`YESCAPTCHA_API_KEY`（`TurnstileTaskProxyless` / `TurnstileTaskProxylessM1`，不支持代理；可用 `YESCAPTCHA_API_BASE` 切国内节点；createTask 自动附带 `softID: 97020`）
+- **备选 2Captcha**：`TWOCAPTCHA_API_KEY`（支持代理 `TurnstileTask` 或 `TurnstileTaskProxyless`）
+- **优先级**：CapSolver > YesCaptcha > 2Captcha（只启用一家）
 - **降级（不推荐）**：无 API 密钥时等待自然通过——生产环境请勿依赖
 - 求解成功后注入 token 到页面并触发回调
 
@@ -251,9 +257,9 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（15 个测试文件，约 209 个用例）：
+- **已测试模块**（15 个测试文件，约 240 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
-  - `src/turnstile.mjs` — `getTurnstileProvider`、`extractTurnstileParams`、`buildTurnstileTask`、`maskTaskForLog`、`solveTurnstileViaAPI`、`injectTurnstileToken`
+  - `src/turnstile.mjs` — `getTurnstileProvider`（含 YesCaptcha）、`extractTurnstileParams`、`buildTurnstileTask`、`buildCreateTaskPayload`（softID）、`maskTaskForLog`、`solveTurnstileViaAPI`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
   - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取、通知文案
   - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`

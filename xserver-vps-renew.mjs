@@ -11,7 +11,8 @@
  *   XSERVER_PASSWORD   - 密码（必填）
  *   CAPSOLVER_API_KEY  - CapSolver API 密钥（必须：Turnstile 人机验证；未配置成功率极低）
  *   CAPTCHA_API        - 验证码识别API地址（可选，有默认公共端点）
- *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 求解备选，无 CapSolver 时使用）
+ *   YESCAPTCHA_API_KEY - YesCaptcha API 密钥（Turnstile 备选，无 CapSolver 时使用）
+ *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 备选，无 CapSolver/YesCaptcha 时使用）
  *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
  *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
@@ -141,8 +142,13 @@ const CONFIG = {
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
 
-  // Turnstile API 求解（CapSolver 优先，2Captcha 备选）
+  // Turnstile API 求解（CapSolver > YesCaptcha > 2Captcha）
   CAPSOLVER_API_KEY: process.env.CAPSOLVER_API_KEY || '',
+  YESCAPTCHA_API_KEY: process.env.YESCAPTCHA_API_KEY || '',  // Turnstile 备选（国内友好）
+  // 国际: https://api.yescaptcha.com ；国内: https://cn.yescaptcha.com
+  YESCAPTCHA_API_BASE: process.env.YESCAPTCHA_API_BASE || '',
+  // TurnstileTaskProxyless（默认）或 TurnstileTaskProxylessM1
+  YESCAPTCHA_TASK_TYPE: process.env.YESCAPTCHA_TASK_TYPE || '',
   TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',  // 仅用于 Turnstile 求解
 
   // 住宅代理（可选，用于 2Captcha TurnstileTask 带代理求解）
@@ -898,9 +904,11 @@ async function main() {
     throw new Error(`配置校验失败: ${configErrors.join('；')}`);
   }
 
-  if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.TWOCAPTCHA_API_KEY) {
-    log('⚠️ 未配置 CAPSOLVER_API_KEY（必须）：Turnstile 人机验证将依赖自然通过，成功率极低（Docker 环境几乎不可用）。请配置 CapSolver：https://www.capsolver.com/');
-  } else if (!CONFIG.CAPSOLVER_API_KEY && CONFIG.TWOCAPTCHA_API_KEY) {
+  if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.YESCAPTCHA_API_KEY && !CONFIG.TWOCAPTCHA_API_KEY) {
+    log('⚠️ 未配置 CAPSOLVER_API_KEY（必须）：Turnstile 人机验证将依赖自然通过，成功率极低（Docker 环境几乎不可用）。请配置 CapSolver：https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG ；备选 YesCaptcha / 2Captcha');
+  } else if (!CONFIG.CAPSOLVER_API_KEY && CONFIG.YESCAPTCHA_API_KEY) {
+    log('ℹ️ 未配置 CAPSOLVER_API_KEY，将使用 YesCaptcha 作为 Turnstile 备选求解。推荐优先配置 CapSolver');
+  } else if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.YESCAPTCHA_API_KEY && CONFIG.TWOCAPTCHA_API_KEY) {
     log('ℹ️ 未配置 CAPSOLVER_API_KEY，将使用 2Captcha 作为 Turnstile 备选求解。推荐优先配置 CapSolver');
   }
 

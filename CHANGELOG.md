@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### 功能（2026-07-20）
+- **YesCaptcha** 作为 Turnstile 可选备选提供商（`YESCAPTCHA_API_KEY`）
+  - 任务类型：`TurnstileTaskProxyless`（默认）/ `TurnstileTaskProxylessM1`
+  - 节点：默认 `https://api.yescaptcha.com`，可用 `YESCAPTCHA_API_BASE` 切国内 `https://cn.yescaptcha.com`
+  - 优先级：CapSolver > YesCaptcha > 2Captcha
+  - createTask 自动附带开发者参数 `softID: 97020`（[getSoftID](https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/25526273)）
+  - 文档参考：[TurnstileTaskProxyless](https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/61734913)
+- README / `.env.example`：CapSolver 注册改为邀请链接 `https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG`
+
 ### 文档（2026-07-16）
 - 明确要求配置 **CapSolver API**（`CAPSOLVER_API_KEY`）用于 Turnstile 人机验证；未配置时成功率极低
 - 同步 README / CLAUDE / RUNBOOK / `.env.example`：CapSolver 列入必填说明与快速开始示例

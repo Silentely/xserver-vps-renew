@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildTurnstileTask, maskTaskForLog } from '../../src/turnstile.mjs';
+import {
+  buildTurnstileTask,
+  maskTaskForLog,
+  buildCreateTaskPayload,
+  YESCAPTCHA_SOFT_ID,
+} from '../../src/turnstile.mjs';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
 
@@ -18,6 +23,14 @@ const make2CaptchaProvider = (withProxy = false) => ({
   clientKey: '2cap-key',
   taskType: withProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
   supportsProxy: withProxy,
+});
+
+const makeYesCaptchaProvider = (taskType = 'TurnstileTaskProxyless') => ({
+  name: 'YesCaptcha',
+  apiBase: 'https://api.yescaptcha.com',
+  clientKey: 'yes-key',
+  taskType,
+  supportsProxy: false,
 });
 
 const makeConfig = (overrides = {}) => ({
@@ -231,6 +244,52 @@ describe('buildTurnstileTask', () => {
     expect(task.pagedata).toBeUndefined();
   });
 
+  // === YesCaptcha（官方仅 websiteURL + websiteKey）===
+
+  it('YesCaptcha 生成 TurnstileTaskProxyless 与 websiteKey', () => {
+    const task = buildTurnstileTask(
+      makeYesCaptchaProvider(),
+      makeParams({ sitekey: '0x4YESKEY' }),
+      makeConfig(),
+      'https://secure.xserver.ne.jp/xapanel/login/xvps/',
+    );
+    expect(task.type).toBe('TurnstileTaskProxyless');
+    expect(task.websiteURL).toBe('https://secure.xserver.ne.jp/xapanel/login/xvps/');
+    expect(task.websiteKey).toBe('0x4YESKEY');
+    expect(task.userAgent).toBe(DEFAULT_UA);
+  });
+
+  it('YesCaptcha 不生成 metadata / action / data / pagedata / 代理字段', () => {
+    const task = buildTurnstileTask(
+      makeYesCaptchaProvider(),
+      makeParams({ action: 'login', cData: 'cdata', chlPageData: 'pagedata' }),
+      makeConfig({
+        proxyType: 'socks5',
+        proxyAddress: '1.2.3.4',
+        proxyPort: '1080',
+        proxyLogin: 'u',
+        proxyPassword: 'p',
+      }),
+      'https://example.com',
+    );
+    expect(task.metadata).toBeUndefined();
+    expect(task.action).toBeUndefined();
+    expect(task.data).toBeUndefined();
+    expect(task.pagedata).toBeUndefined();
+    expect(task.proxyType).toBeUndefined();
+    expect(task.proxyAddress).toBeUndefined();
+  });
+
+  it('YesCaptcha 支持 M1 任务类型透传', () => {
+    const task = buildTurnstileTask(
+      makeYesCaptchaProvider('TurnstileTaskProxylessM1'),
+      makeParams(),
+      makeConfig(),
+      'https://example.com',
+    );
+    expect(task.type).toBe('TurnstileTaskProxylessM1');
+  });
+
   // === 不修改输入对象 ===
 
   it('不修改原始 params 对象', () => {
@@ -245,6 +304,37 @@ describe('buildTurnstileTask', () => {
     const configCopy = { ...config };
     buildTurnstileTask(make2CaptchaProvider(true), makeParams(), config, 'https://example.com');
     expect(config).toEqual(configCopy);
+  });
+});
+
+describe('buildCreateTaskPayload', () => {
+  it('CapSolver / 2Captcha 仅含 clientKey 与 task，不含 softID', () => {
+    const task = { type: 'AntiTurnstileTaskProxyLess', websiteURL: 'https://a.com', websiteKey: 'k' };
+    expect(buildCreateTaskPayload(makeCapSolverProvider(), task)).toEqual({
+      clientKey: 'cap-key',
+      task,
+    });
+    expect(buildCreateTaskPayload(make2CaptchaProvider(), task)).toEqual({
+      clientKey: '2cap-key',
+      task,
+    });
+  });
+
+  it('YesCaptcha createTask 顶层附带 softID 开发者参数', () => {
+    const task = { type: 'TurnstileTaskProxyless', websiteURL: 'https://a.com', websiteKey: 'k' };
+    const payload = buildCreateTaskPayload(makeYesCaptchaProvider(), task);
+    expect(payload).toEqual({
+      clientKey: 'yes-key',
+      task,
+      softID: YESCAPTCHA_SOFT_ID,
+    });
+    expect(payload.softID).toBe(97020);
+  });
+
+  it('YesCaptcha 优先使用 provider.softID', () => {
+    const provider = { ...makeYesCaptchaProvider(), softID: 12345 };
+    const payload = buildCreateTaskPayload(provider, { type: 'TurnstileTaskProxyless' });
+    expect(payload.softID).toBe(12345);
   });
 });
 

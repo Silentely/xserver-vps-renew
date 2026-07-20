@@ -11,10 +11,14 @@ global.fetch = mockFetch;
 const {
   solveTurnstileViaAPI,
   injectTurnstileToken,
+  YESCAPTCHA_SOFT_ID,
 } = await import('../../src/turnstile.mjs');
 
 const makeConfig = (overrides = {}) => ({
   CAPSOLVER_API_KEY: '',
+  YESCAPTCHA_API_KEY: '',
+  YESCAPTCHA_API_BASE: '',
+  YESCAPTCHA_TASK_TYPE: '',
   TWOCAPTCHA_API_KEY: '',
   PROXY_TYPE: '',
   PROXY_ADDRESS: '',
@@ -101,6 +105,79 @@ describe('solveTurnstileViaAPI', () => {
 
     expect(result.token).toBe('token-2cap-789');
     expect(result.userAgent).toBeNull();
+  });
+
+  it('YesCaptcha 成功求解并请求国际节点 createTask', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errorId: 0, taskId: 'yes-task-1' }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        errorId: 0,
+        status: 'ready',
+        solution: {
+          token: 'token-yes-abc',
+          userAgent: 'Mozilla/5.0 YesCaptcha-UA',
+        },
+      }),
+    });
+
+    const config = makeConfig({ YESCAPTCHA_API_KEY: 'yes-key' });
+    const result = await solveTurnstileViaAPI(
+      'https://example.com/page',
+      { sitekey: '0x4YES' },
+      config,
+      mockLogger,
+    );
+
+    expect(result.token).toBe('token-yes-abc');
+    expect(result.userAgent).toBe('Mozilla/5.0 YesCaptcha-UA');
+
+    const createCall = mockFetch.mock.calls[0];
+    expect(createCall[0]).toBe('https://api.yescaptcha.com/createTask');
+    const body = JSON.parse(createCall[1].body);
+    expect(body.clientKey).toBe('yes-key');
+    expect(body.softID).toBe(YESCAPTCHA_SOFT_ID);
+    expect(body.softID).toBe(97020);
+    expect(body.task.type).toBe('TurnstileTaskProxyless');
+    expect(body.task.websiteKey).toBe('0x4YES');
+    expect(body.task.websiteURL).toBe('https://example.com/page');
+    expect(body.task.action).toBeUndefined();
+  });
+
+  it('YesCaptcha 可使用国内节点', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errorId: 0, taskId: 'yes-cn-1' }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        errorId: 0,
+        status: 'ready',
+        solution: { token: 'token-yes-cn' },
+      }),
+    });
+
+    const config = makeConfig({
+      YESCAPTCHA_API_KEY: 'yes-key',
+      YESCAPTCHA_API_BASE: 'https://cn.yescaptcha.com',
+    });
+    await solveTurnstileViaAPI(
+      'https://example.com/page',
+      { sitekey: '0x4YES' },
+      config,
+      mockLogger,
+    );
+
+    expect(mockFetch.mock.calls[0][0]).toBe('https://cn.yescaptcha.com/createTask');
+    expect(mockFetch.mock.calls[1][0]).toBe('https://cn.yescaptcha.com/getTaskResult');
   });
 
   it('createTask HTTP 错误时抛出异常', async () => {

@@ -12,8 +12,54 @@ const FETCH_TIMEOUT_MS = 30_000;
 /** 轮询间隔（毫秒） */
 const POLL_INTERVAL_MS = 3_000;
 
+/** YesCaptcha 默认 API 节点（国际）；国内可用 https://cn.yescaptcha.com */
+export const YESCAPTCHA_DEFAULT_API_BASE = 'https://api.yescaptcha.com';
+
+/** YesCaptcha 默认任务类型（Turnstile 无代理） */
+export const YESCAPTCHA_DEFAULT_TASK_TYPE = 'TurnstileTaskProxyless';
+
+/**
+ * YesCaptcha 开发者 softID（createTask 顶层参数，用于开发分成）
+ * 文档：https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/25526273
+ */
+export const YESCAPTCHA_SOFT_ID = 97020;
+
+/**
+ * 解析 YesCaptcha API 基址（去掉尾部斜杠；非法时回退默认国际节点）
+ * @param {string|undefined} apiBase
+ * @returns {string}
+ */
+export function resolveYesCaptchaApiBase(apiBase) {
+  if (!apiBase || typeof apiBase !== 'string') return YESCAPTCHA_DEFAULT_API_BASE;
+  const trimmed = apiBase.trim().replace(/\/+$/, '');
+  if (!trimmed) return YESCAPTCHA_DEFAULT_API_BASE;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return YESCAPTCHA_DEFAULT_API_BASE;
+    }
+    return trimmed;
+  } catch {
+    return YESCAPTCHA_DEFAULT_API_BASE;
+  }
+}
+
+/**
+ * 解析 YesCaptcha 任务类型
+ * 官方支持 TurnstileTaskProxyless（25 点）与 TurnstileTaskProxylessM1（30 点）
+ * @param {string|undefined} taskType
+ * @returns {string}
+ */
+export function resolveYesCaptchaTaskType(taskType) {
+  if (!taskType || typeof taskType !== 'string') return YESCAPTCHA_DEFAULT_TASK_TYPE;
+  const t = taskType.trim();
+  if (t === 'TurnstileTaskProxyless' || t === 'TurnstileTaskProxylessM1') return t;
+  return YESCAPTCHA_DEFAULT_TASK_TYPE;
+}
+
 /**
  * 获取 Turnstile 求解服务商配置
+ * 优先级：CapSolver > YesCaptcha > 2Captcha
  * @param {object} config - CONFIG 对象
  * @returns {object|null} - 服务商配置或 null
  */
@@ -28,6 +74,18 @@ export function getTurnstileProvider(config) {
       clientKey: config.CAPSOLVER_API_KEY,
       taskType: 'AntiTurnstileTaskProxyLess',
       supportsProxy: false,
+    };
+  }
+  // YesCaptcha：协议与 CapSolver/2Captcha 同构（createTask / getTaskResult）
+  // 文档：https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/61734913
+  if (config.YESCAPTCHA_API_KEY) {
+    return {
+      name: 'YesCaptcha',
+      apiBase: resolveYesCaptchaApiBase(config.YESCAPTCHA_API_BASE),
+      clientKey: config.YESCAPTCHA_API_KEY,
+      taskType: resolveYesCaptchaTaskType(config.YESCAPTCHA_TASK_TYPE),
+      supportsProxy: false,
+      softID: YESCAPTCHA_SOFT_ID,
     };
   }
   if (config.TWOCAPTCHA_API_KEY) {
@@ -102,13 +160,15 @@ export function buildTurnstileTask(provider, params, config, websiteURL) {
     if (config.proxyPassword) task.proxyPassword = config.proxyPassword;
   }
 
+  // CapSolver 用 metadata；YesCaptcha 仅需 websiteURL/websiteKey（官方文档无扩展字段）
+  // 其余（如 2Captcha）用顶层 action / data / pagedata
   if (provider.name === 'CapSolver') {
     if (params.action || params.cData) {
       task.metadata = {};
       if (params.action) task.metadata.action = params.action;
       if (params.cData) task.metadata.cdata = params.cData;
     }
-  } else {
+  } else if (provider.name !== 'YesCaptcha') {
     if (params.action) task.action = params.action;
     if (params.cData) task.data = params.cData;
     if (params.chlPageData) task.pagedata = params.chlPageData;
@@ -134,7 +194,25 @@ export function maskTaskForLog(task) {
 }
 
 /**
- * 通过 CapSolver / 2Captcha API 求解 Turnstile token
+ * 构建 createTask 请求体（纯函数，便于单元测试）
+ * YesCaptcha 在顶层附带 softID 开发者参数（与 task 同级，注意大小写）
+ * @param {object} provider - getTurnstileProvider() 返回值
+ * @param {object} task - buildTurnstileTask 返回的任务参数
+ * @returns {object}
+ */
+export function buildCreateTaskPayload(provider, task) {
+  const payload = {
+    clientKey: provider.clientKey,
+    task,
+  };
+  if (provider.name === 'YesCaptcha') {
+    payload.softID = provider.softID ?? YESCAPTCHA_SOFT_ID;
+  }
+  return payload;
+}
+
+/**
+ * 通过 CapSolver / YesCaptcha / 2Captcha API 求解 Turnstile token
  * @param {string} websiteURL - 目标页面 URL
  * @param {object} params - { sitekey, action, cData, chlPageData }
  * @param {object} config - CONFIG 对象
@@ -170,6 +248,8 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
 
   logger(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
 
+  const createPayload = buildCreateTaskPayload(provider, task);
+
   let createRes;
   try {
     createRes = await fetchWithTimeout(
@@ -177,7 +257,7 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientKey: provider.clientKey, task }),
+        body: JSON.stringify(createPayload),
       },
       FETCH_TIMEOUT_MS,
     );
