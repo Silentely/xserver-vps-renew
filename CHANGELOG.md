@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-22）
+- Trivy 门禁：`brace-expansion` CVE-2026-13149（1.1.15 → 1.1.16，`package.json` overrides）
+
 ### 功能（2026-07-22）
 - **Telegram 每次执行均推送**（[#4](https://github.com/Silentely/xserver-vps-renew/issues/4)）
   - 新增 `buildSkipNotifyMessage`：无需续期 / 未找到免费 VPS 时推送完整状态（服务器名、到期、剩余小时、判定原因、下次执行）
