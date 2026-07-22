@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### 功能（2026-07-22）
+- **Telegram 每次执行均推送**（[#4](https://github.com/Silentely/xserver-vps-renew/issues/4)）
+  - 新增 `buildSkipNotifyMessage`：无需续期 / 未找到免费 VPS 时推送完整状态（服务器名、到期、剩余小时、判定原因、下次执行）
+  - 成功 / 失败 / 跳过通知均支持「执行过程」步骤摘要
+  - 新增 `TG_NOTIFY_DETAIL`：`full`（默认，完整摘要含过程）/ `compact`（简洁摘要，仅关键字段）
+  - `checkRenewalNeeded` 改为结构化返回 `{ needed, ... }`，跳过路径可携带 VPS 详情
+
 ### 功能（2026-07-20）
 - **YesCaptcha** 作为 Turnstile 可选备选提供商（`YESCAPTCHA_API_KEY`）
   - 任务类型：`TurnstileTaskProxyless`（默认）/ `TurnstileTaskProxylessM1`

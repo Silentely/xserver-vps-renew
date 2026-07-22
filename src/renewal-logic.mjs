@@ -352,9 +352,83 @@ export function resolveNextRunAt(nowMs = Date.now(), opts = {}) {
   return formatTokyoDateTime(estimateNextRunMs(nowMs, opts));
 }
 
+/** Telegram 通知详细程度：完整摘要（含执行过程） */
+export const TG_NOTIFY_DETAIL_FULL = 'full';
+
+/** Telegram 通知详细程度：简洁摘要（关键字段，无过程步骤） */
+export const TG_NOTIFY_DETAIL_COMPACT = 'compact';
+
+/** 默认通知详细程度 */
+export const DEFAULT_TG_NOTIFY_DETAIL = TG_NOTIFY_DETAIL_FULL;
+
+/**
+ * 解析 TG_NOTIFY_DETAIL 环境变量
+ * 支持 full / compact，及常见别名（detailed/verbose → full；brief/simple/short → compact）
+ * @param {string|undefined|null} value
+ * @param {string} [fallback=DEFAULT_TG_NOTIFY_DETAIL]
+ * @returns {'full'|'compact'}
+ */
+export function parseNotifyDetail(value, fallback = DEFAULT_TG_NOTIFY_DETAIL) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === TG_NOTIFY_DETAIL_FULL || v === 'detailed' || v === 'verbose') {
+    return TG_NOTIFY_DETAIL_FULL;
+  }
+  if (
+    v === TG_NOTIFY_DETAIL_COMPACT ||
+    v === 'brief' ||
+    v === 'simple' ||
+    v === 'short'
+  ) {
+    return TG_NOTIFY_DETAIL_COMPACT;
+  }
+  const fb = String(fallback ?? '').trim().toLowerCase();
+  return fb === TG_NOTIFY_DETAIL_COMPACT
+    ? TG_NOTIFY_DETAIL_COMPACT
+    : TG_NOTIFY_DETAIL_FULL;
+}
+
+/**
+ * 是否为完整摘要模式
+ * @param {string|undefined|null} detail
+ * @returns {boolean}
+ */
+export function isFullNotifyDetail(detail) {
+  return parseNotifyDetail(detail) === TG_NOTIFY_DETAIL_FULL;
+}
+
+/**
+ * 格式化剩余小时数（通知展示用）
+ * @param {number|null|undefined} hours
+ * @returns {string}
+ */
+export function formatRemainingHours(hours) {
+  if (hours == null || !Number.isFinite(Number(hours))) return '未知';
+  const h = Number(hours);
+  if (h < 0) return `已过期 ${Math.abs(h).toFixed(1)} 小时`;
+  return `约 ${h.toFixed(1)} 小时`;
+}
+
+/**
+ * 将执行步骤列表格式化为通知段落（仅 full 模式使用）
+ * @param {string[]|null|undefined} processSteps
+ * @param {string} [detail=TG_NOTIFY_DETAIL_FULL] - full 时输出步骤；compact 时返回空
+ * @returns {string} 空字符串或带前导换行的段落
+ */
+export function formatProcessSteps(processSteps, detail = TG_NOTIFY_DETAIL_FULL) {
+  if (!isFullNotifyDetail(detail)) return '';
+  if (!Array.isArray(processSteps) || processSteps.length === 0) return '';
+  const lines = processSteps
+    .filter((s) => s != null && String(s).trim() !== '')
+    .map((s, i) => `${i + 1}. ${escapeHtml(String(s))}`);
+  if (lines.length === 0) return '';
+  return `\n\n📋 <b>执行过程</b>:\n${lines.join('\n')}`;
+}
+
 /**
  * 构建续期成功 Telegram 消息
  * @param {object} params
+ * @param {string[]} [params.processSteps] - 执行过程（仅 detail=full 时展示）
+ * @param {'full'|'compact'|string} [params.detail='full'] - 通知详细程度
  * @returns {string}
  */
 export function buildSuccessNotifyMessage({
@@ -364,21 +438,115 @@ export function buildSuccessNotifyMessage({
   newExpireDate,
   executedAt,
   nextRunAt,
+  processSteps,
+  detail = DEFAULT_TG_NOTIFY_DETAIL,
 }) {
+  const mode = parseNotifyDetail(detail);
+  const time = escapeHtml(executedAt || formatTokyoDateTime());
+  const name = escapeHtml(serverName || '未知');
+  const next = escapeHtml(nextRunAt || '');
+
+  if (mode === TG_NOTIFY_DETAIL_COMPACT) {
+    return (
+      `✅ <b>Xserver VPS 续期成功</b>\n\n` +
+      `⏰ 执行时间: ${time}\n` +
+      `🖥️ 服务器名: ${name}\n` +
+      `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+      `⏭️ 下次执行: ${next}`
+    );
+  }
+
   return (
     `✅ <b>Xserver VPS 续期成功</b>\n\n` +
-    `⏰ 执行时间: ${escapeHtml(executedAt || formatTokyoDateTime())}\n` +
-    `🖥️ 服务器名: ${escapeHtml(serverName || '未知')}\n` +
+    `⏰ 执行时间: ${time}\n` +
+    `🖥️ 服务器名: ${name}\n` +
     `📦 VPS 规格: ${escapeHtml(plan || '未知')}\n` +
     `📅 原到期日: ${escapeHtml(oldExpireDate || '未知')}\n` +
     `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
-    `⏭️ 下次执行: ${escapeHtml(nextRunAt || '')}`
+    `⏭️ 下次执行: ${next}` +
+    formatProcessSteps(processSteps, mode)
   );
+}
+
+/**
+ * 构建「无需续期 / 跳过」Telegram 消息（每次检查后推送，便于掌控 VPS 状态）
+ * @param {object} params
+ * @param {'not_due'|'no_free_vps'|string} [params.reasonCode='not_due']
+ * @param {string} [params.serverName]
+ * @param {string} [params.plan]
+ * @param {string} [params.expireDate]
+ * @param {number|null} [params.remainingHours]
+ * @param {string} [params.executedAt]
+ * @param {string} [params.nextRunAt]
+ * @param {number} [params.maxHours]
+ * @param {number} [params.windowHours]
+ * @param {string} [params.reasonDetail] - 额外说明（覆盖默认判定文案）
+ * @param {string[]} [params.processSteps]
+ * @param {'full'|'compact'|string} [params.detail='full']
+ * @returns {string}
+ */
+export function buildSkipNotifyMessage({
+  reasonCode = 'not_due',
+  serverName,
+  plan,
+  expireDate,
+  remainingHours,
+  executedAt,
+  nextRunAt,
+  maxHours = FREE_VPS_MAX_HOURS,
+  windowHours = RENEWAL_WINDOW_HOURS,
+  reasonDetail,
+  processSteps,
+  detail = DEFAULT_TG_NOTIFY_DETAIL,
+} = {}) {
+  const mode = parseNotifyDetail(detail);
+  const isNoVps = reasonCode === 'no_free_vps';
+  const title = isNoVps
+    ? 'ℹ️ <b>Xserver VPS 检查完成 · 未找到免费 VPS</b>'
+    : 'ℹ️ <b>Xserver VPS 检查完成 · 无需续期</b>';
+
+  const defaultDetail = isNoVps
+    ? '面板中未找到带免费标识的 VPS 条目'
+    : `剩余时间未进入可续期窗口（规则: 最长 ${maxHours}h / 剩余≤${windowHours}h 可续）`;
+
+  const time = escapeHtml(executedAt || formatTokyoDateTime());
+  const name = escapeHtml(serverName || (isNoVps ? '—' : '未知'));
+  const expire = escapeHtml(expireDate || '—');
+  const remaining = escapeHtml(formatRemainingHours(remainingHours));
+  const next = escapeHtml(nextRunAt || '');
+
+  if (mode === TG_NOTIFY_DETAIL_COMPACT) {
+    return [
+      title,
+      '',
+      `⏰ 执行时间: ${time}`,
+      `🖥️ 服务器名: ${name}`,
+      `📅 当前到期: ${expire}`,
+      `⏳ 剩余时间: ${remaining}`,
+      `⏭️ 下次执行: ${next}`,
+    ].join('\n');
+  }
+
+  const lines = [
+    title,
+    '',
+    `⏰ 执行时间: ${time}`,
+    `🖥️ 服务器名: ${name}`,
+    `📦 VPS 规格: ${escapeHtml(plan || (isNoVps ? '—' : '未知'))}`,
+    `📅 当前到期: ${expire}`,
+    `⏳ 剩余时间: ${remaining}`,
+    `📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`,
+    `⏭️ 下次执行: ${next}`,
+  ];
+
+  return lines.join('\n') + formatProcessSteps(processSteps, mode);
 }
 
 /**
  * 构建续期失败 Telegram 消息
  * @param {object} params
+ * @param {string[]} [params.processSteps] - 执行过程（仅 detail=full 时展示）
+ * @param {'full'|'compact'|string} [params.detail='full']
  * @returns {string}
  */
 export function buildFailureNotifyMessage({
@@ -388,12 +556,22 @@ export function buildFailureNotifyMessage({
   proxyHint = '',
   captchaMaxRetry = 3,
   executedAt,
+  processSteps,
+  detail = DEFAULT_TG_NOTIFY_DETAIL,
 }) {
-  return (
+  const mode = parseNotifyDetail(detail);
+  const head =
     `${isEscalation ? '🚨 <b>【告警升级】</b>' : '❌'} <b>Xserver VPS 续期失败</b>\n\n` +
     `⏰ 执行时间: ${escapeHtml(executedAt || formatTokyoDateTime())}\n` +
     `💥 错误信息: <code>${escapeHtml(errorMessage || '未知错误')}</code>\n` +
-    `${isEscalation ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}` +
+    `${isEscalation ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}`;
+
+  if (mode === TG_NOTIFY_DETAIL_COMPACT) {
+    return head.trimEnd();
+  }
+
+  return (
+    head +
     `\n${proxyHint}\n\n` +
     `📋 失败说明:\n` +
     `- 验证码识别已自动重试 ${captchaMaxRetry} 次\n` +
@@ -401,7 +579,8 @@ export function buildFailureNotifyMessage({
     `- 如持续失败，可尝试:\n` +
     `  1. 配置住宅 IP 代理（PROXY_* 环境变量）\n` +
     `  2. 检查 CapSolver API 余额是否充足\n` +
-    `  3. 人工登录确认账号状态`
+    `  3. 人工登录确认账号状态` +
+    formatProcessSteps(processSteps, mode)
   );
 }
 

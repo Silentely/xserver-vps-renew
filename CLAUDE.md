@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-22 | Telegram：每次执行均推送（含无需续期）；`TG_NOTIFY_DETAIL=full\|compact` 控制完整/简洁摘要（#4） |
 | 2026-07-20 | 新增 YesCaptcha 作为 Turnstile 可选备选（CapSolver > YesCaptcha > 2Captcha） |
 | 2026-07-16 | 文档强调：必须配置 CapSolver API（Turnstile），否则成功率极低 |
 | 2026-07-14 | 适配官方 4GB 规则：最长 24h / 剩余≤12h 可续；CAPTCHA_API 默认公共端点；cron 默认每 6h |
@@ -116,7 +117,7 @@ graph TD
 | `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `buildCreateTaskPayload()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, 通知文案构建 |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -197,6 +198,7 @@ npm run test:watch
 | `PROXY_PASSWORD` | 代理密码 | 无 |
 | `TG_BOT_TOKEN` | Telegram Bot Token | 无 |
 | `TG_CHAT_ID` | Telegram Chat ID | 无 |
+| `TG_NOTIFY_DETAIL` | 通知详细程度：`full`（完整摘要含过程）/ `compact`（简洁） | `full` |
 | `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
 | `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |
 | `TZ` | 时区 | `Asia/Tokyo` |
@@ -220,7 +222,7 @@ npm run test:watch
   → 注入浏览器指纹补丁 → 登录 → 检查到期状态
   → [无需续期] 结束
   → [需要续期] 续期确认 → 验证码识别 → Turnstile 求解 → 提交
-  → 提取新到期日 → Telegram 通知
+  → 提取新到期日 → Telegram 通知（成功 / 失败 / 无需续期均推送；`TG_NOTIFY_DETAIL` 控制 full/compact）
 ```
 
 ### 验证码处理 (`handleCaptchaPage()`)
@@ -261,7 +263,7 @@ npm run test:watch
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `getTurnstileProvider`（含 YesCaptcha）、`extractTurnstileParams`、`buildTurnstileTask`、`buildCreateTaskPayload`（softID）、`maskTaskForLog`、`solveTurnstileViaAPI`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
-  - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取、通知文案
+  - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取、通知文案（成功/跳过/失败 + 过程摘要）
   - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`
   - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`、`escapeHtml`
 - **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）

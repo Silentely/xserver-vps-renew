@@ -17,6 +17,7 @@
  *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
  *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
  *   TG_CHAT_ID         - Telegram Chat ID（可选，启用通知）
+ *   TG_NOTIFY_DETAIL   - 通知详细程度：full（完整摘要，默认）/ compact（简洁摘要）
  */
 
 import { addExtra } from 'puppeteer-extra';
@@ -62,12 +63,16 @@ import {
   escapeHtml as _escapeHtml,
   formatTokyoDateTime,
   buildSuccessNotifyMessage,
+  buildSkipNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  getRemainingHours,
+  parseNotifyDetail,
   RENEWAL_WINDOW_HOURS,
   FREE_VPS_MAX_HOURS,
   resolveNextRunAt,
   DEFAULT_NEXT_RUN_INTERVAL_HOURS,
+  DEFAULT_TG_NOTIFY_DETAIL,
 } from './src/renewal-logic.mjs';
 
 /** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
@@ -161,6 +166,11 @@ const CONFIG = {
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
+  // 通知详细程度：full=完整摘要（含执行过程）/ compact=简洁摘要
+  TG_NOTIFY_DETAIL: parseNotifyDetail(
+    process.env.TG_NOTIFY_DETAIL,
+    DEFAULT_TG_NOTIFY_DETAIL,
+  ),
 
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
@@ -358,6 +368,13 @@ async function handleLogin(page) {
 // 步骤 2：检查是否需要续期
 // ============================================================
 
+/**
+ * 检查是否需要续期
+ * @returns {Promise<
+ *   | { needed: true, renewUrl: string, vpsInfo: { serverName: string|null, plan: string|null, expireDate: string|null } }
+ *   | { needed: false, reasonCode: 'not_due'|'no_free_vps', vpsInfo: object, remainingHours: number|null, reasonDetail: string }
+ * >}
+ */
 async function checkRenewalNeeded(page) {
   log('正在检查续期状态...');
 
@@ -415,24 +432,48 @@ async function checkRenewalNeeded(page) {
 
   if (!result) {
     log('未找到免费 VPS 条目。');
-    return null;
+    return {
+      needed: false,
+      reasonCode: 'no_free_vps',
+      vpsInfo: {
+        serverName: null,
+        plan: null,
+        expireDate: null,
+      },
+      remainingHours: null,
+      reasonDetail: '面板中未找到带免费标识的 VPS 条目',
+    };
   }
 
   // 清理 VPS 信息中的多余空白符
   const cleanServerName = normalizeCellText(result.serverName);
   const cleanPlan = normalizeCellText(result.plan);
+  const remainingHours = getRemainingHours(result.expireDate);
 
   log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
   log(`VPS 服务器名: ${cleanServerName ?? '未找到'}`);
   log(`VPS 规格: ${cleanPlan ?? '未找到'}`);
+  if (remainingHours != null) {
+    log(`VPS 剩余时间: 约 ${remainingHours.toFixed(1)} 小时`);
+  }
 
   // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
   if (!isRenewalDue(result.expireDate, today, tomorrow)) {
-    log(
+    const reasonDetail =
       `无需续期（到期: ${result.expireDate}；规则: 最长 ${FREE_VPS_MAX_HOURS}h / 剩余≤${RENEWAL_WINDOW_HOURS}h 可续；` +
-        `今天 ${today} / 明天 ${tomorrow}）。`,
-    );
-    return null;
+      `今天 ${today} / 明天 ${tomorrow}）`;
+    log(reasonDetail);
+    return {
+      needed: false,
+      reasonCode: 'not_due',
+      vpsInfo: {
+        serverName: cleanServerName,
+        plan: cleanPlan,
+        expireDate: result.expireDate,
+      },
+      remainingHours,
+      reasonDetail,
+    };
   }
 
   const renewUrl = buildRenewUrl(result.detailHref, CONFIG.BASE_URL);
@@ -440,12 +481,13 @@ async function checkRenewalNeeded(page) {
 
   // 返回续期 URL 和 VPS 信息
   return {
+    needed: true,
     renewUrl,
     vpsInfo: {
       serverName: cleanServerName,
       plan: cleanPlan,
       expireDate: result.expireDate,
-    }
+    },
   };
 }
 
@@ -913,6 +955,12 @@ async function main() {
   }
 
   let browser = null;
+  // 执行过程摘要（try 内外共享，失败通知也能附带已完成步骤）
+  const processSteps = [];
+  const pushStep = (step) => {
+    processSteps.push(step);
+    log(step);
+  };
 
   try {
     // 清理锁文件
@@ -993,8 +1041,16 @@ async function main() {
     // API 求解只需 sitekey（从 data-sitekey 属性提取），无需拦截 render 调用
     log('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
 
+    // 下次执行：优先从 CRON_SCHEDULE（如 32 */6 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
+    const resolveNextRun = () => resolveNextRunAt(Date.now(), {
+      cronSchedule: CONFIG.CRON_SCHEDULE,
+      intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
+    });
+
     // 步骤 1：登录
+    pushStep('登录 Xserver 面板');
     await handleLogin(page);
+    pushStep('登录成功');
 
     // 🆕 验证浏览器指纹是否正确应用（在第一次导航后）
     const fingerprint = await page.evaluate(() => {
@@ -1009,26 +1065,55 @@ async function main() {
     log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
 
     // 步骤 2：检查续期
+    pushStep('检查免费 VPS 到期状态');
     const renewalData = await checkRenewalNeeded(page);
-    if (!renewalData) {
+    if (!renewalData.needed) {
+      const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
+      pushStep(`判定结果: ${skipLabel}`);
       log('无需续期，流程结束。');
       // 记录跳过，避免「长期无写入」被误判为监控静默
       persistRenewalRecord(buildRenewalRecord({
         success: true,
         skipped: true,
-        errorMessage: '无需续期',
+        serverName: renewalData.vpsInfo?.serverName,
+        plan: renewalData.vpsInfo?.plan,
+        oldExpireDate: renewalData.vpsInfo?.expireDate,
+        errorMessage: skipLabel,
+      }));
+
+      const nextRunStr = resolveNextRun();
+      const executedAt = formatTokyoDateTime();
+      await notify(buildSkipNotifyMessage({
+        reasonCode: renewalData.reasonCode,
+        serverName: renewalData.vpsInfo?.serverName,
+        plan: renewalData.vpsInfo?.plan,
+        expireDate: renewalData.vpsInfo?.expireDate,
+        remainingHours: renewalData.remainingHours,
+        reasonDetail: renewalData.reasonDetail,
+        executedAt,
+        nextRunAt: nextRunStr,
+        maxHours: FREE_VPS_MAX_HOURS,
+        windowHours: RENEWAL_WINDOW_HOURS,
+        processSteps,
+        detail: CONFIG.TG_NOTIFY_DETAIL,
       }));
       await page.close();
       return;
     }
 
+    pushStep(
+      `需要续期: ${renewalData.vpsInfo.serverName || '未知'}（到期 ${renewalData.vpsInfo.expireDate || '未知'}）`,
+    );
     log(`📊 VPS 信息: 服务器名=${renewalData.vpsInfo.serverName}, 规格=${renewalData.vpsInfo.plan}, 原到期日=${renewalData.vpsInfo.expireDate}`);
 
     // 步骤 3：续期确认
+    pushStep('打开续期确认页');
     await handleRenewalConfirm(page, renewalData.renewUrl);
 
     // 步骤 4-6：验证码 + Turnstile + 提交
+    pushStep('识别验证码并求解 Turnstile，提交续期');
     await handleCaptchaPage(page);
+    pushStep('续期表单提交完成');
 
     // 提取续期后的到期时间
     log('正在提取续期后的新到期日...');
@@ -1049,18 +1134,17 @@ async function main() {
 
     if (newExpireDate) {
       log(`✅ 成功提取新到期日: ${newExpireDate}`);
+      pushStep(`提取新到期日: ${newExpireDate}`);
     } else {
       log(`⚠️ 未能自动提取新到期日，请检查页面结构`);
+      pushStep('未能自动提取新到期日');
     }
 
     log('🎉 续期流程全部完成！');
+    pushStep('续期流程全部完成');
 
-    // 下次执行：优先从 CRON_SCHEDULE（如 32 */6 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
     // 外部平台定时启停容器时通常无 CRON_SCHEDULE，依赖默认 6h 或自行配置 NOTIFY_NEXT_RUN_HOURS
-    const nextRunStr = resolveNextRunAt(Date.now(), {
-      cronSchedule: CONFIG.CRON_SCHEDULE,
-      intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
-    });
+    const nextRunStr = resolveNextRun();
     const executedAt = formatTokyoDateTime();
 
     // 持久化续期成功记录（使用配置的状态文件路径）
@@ -1079,6 +1163,8 @@ async function main() {
       newExpireDate,
       executedAt,
       nextRunAt: nextRunStr,
+      processSteps,
+      detail: CONFIG.TG_NOTIFY_DETAIL,
     }));
     await page.close();
   } catch (e) {
@@ -1101,6 +1187,8 @@ async function main() {
       proxyPort: CONFIG.PROXY_PORT,
     });
 
+    const failureSteps = [...processSteps, `异常终止: ${e.message}`];
+
     await notify(buildFailureNotifyMessage({
       errorMessage: e.message,
       consecutiveFailures,
@@ -1108,6 +1196,8 @@ async function main() {
       proxyHint,
       captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
       executedAt: formatTokyoDateTime(),
+      processSteps: failureSteps,
+      detail: CONFIG.TG_NOTIFY_DETAIL,
     }));
     process.exitCode = 1;
   } finally {
@@ -1147,7 +1237,9 @@ export {
   extractExpireDateFromText,
   resolveCaptchaRetryUrl,
   buildSuccessNotifyMessage,
+  buildSkipNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  parseNotifyDetail,
   formatTokyoDateTime,
 };

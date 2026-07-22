@@ -19,7 +19,7 @@
   - **YesCaptcha API**（备选）：配置 `YESCAPTCHA_API_KEY` 后使用 `TurnstileTaskProxyless`（国内节点友好；自动附带 `softID: 97020`）
   - **2Captcha API**（备选）：配置 `TWOCAPTCHA_API_KEY` 后使用 `TurnstileTask` 或 `TurnstileTaskProxyless`
   - **降级**：无 API 密钥时等待自然通过（Docker / 无头环境几乎不可用，**不建议**）
-- ✅ Telegram 通知，续期结果即时推送
+- ✅ Telegram 通知：每次执行均推送（成功 / 失败 / **无需续期**）；`TG_NOTIFY_DETAIL` 可选完整/简洁摘要
 - ✅ Docker 部署，内置 supercronic 定时调度，开箱即用
 
 ## 🚀 快速开始
@@ -133,10 +133,24 @@ Docker / 生产环境下直接使用 API 求解（跳过自然通过，因为自
 
 ### 可选 - Telegram 通知
 
-| 变量 | 说明 |
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `TG_BOT_TOKEN` | 无 | Telegram Bot Token（从 @BotFather 获取） |
+| `TG_CHAT_ID` | 无 | Telegram Chat ID（从 @userinfobot 获取） |
+| `TG_NOTIFY_DETAIL` | `full` | 通知详细程度：`full`（完整摘要）/ `compact`（简洁摘要） |
+
+配置后**每次脚本执行结束都会推送**一条摘要（不限成功）。用 `TG_NOTIFY_DETAIL` 控制篇幅：
+
+| 模式 | 内容 |
 |------|------|
-| `TG_BOT_TOKEN` | Telegram Bot Token（从 @BotFather 获取） |
-| `TG_CHAT_ID` | Telegram Chat ID（从 @userinfobot 获取） |
+| `full`（默认） | 关键字段 + 规格/判定说明/失败建议 + **执行过程步骤** |
+| `compact` | 仅关键状态（时间、服务器、到期/结果、下次执行），无过程列表 |
+
+| 场景 | full | compact |
+|------|------|---------|
+| 续期成功 | 规格、原/新到期日、下次执行、过程步骤 | 服务器、新到期日、下次执行 |
+| 无需续期 | 规格、剩余时间、判定原因、过程步骤 | 服务器、到期、剩余时间、下次执行 |
+| 续期失败 | 错误、代理提示、失败说明、过程步骤 | 错误信息（含告警升级） |
 
 ### 可选 - 代理配置
 

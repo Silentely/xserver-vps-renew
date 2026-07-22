@@ -14,11 +14,19 @@ import {
   estimateNextRunMs,
   parseCronIntervalHours,
   buildSuccessNotifyMessage,
+  buildSkipNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  formatRemainingHours,
+  formatProcessSteps,
+  parseNotifyDetail,
+  isFullNotifyDetail,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
   DEFAULT_NEXT_RUN_INTERVAL_HOURS,
+  TG_NOTIFY_DETAIL_FULL,
+  TG_NOTIFY_DETAIL_COMPACT,
+  DEFAULT_TG_NOTIFY_DETAIL,
 } from '../../src/renewal-logic.mjs';
 
 describe('政策常量', () => {
@@ -258,6 +266,74 @@ describe('parseCronIntervalHours / estimateNextRunMs', () => {
   });
 });
 
+describe('parseNotifyDetail', () => {
+  it('默认 full', () => {
+    expect(parseNotifyDetail(undefined)).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(parseNotifyDetail('')).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(DEFAULT_TG_NOTIFY_DETAIL).toBe(TG_NOTIFY_DETAIL_FULL);
+  });
+
+  it('识别 full 与别名', () => {
+    expect(parseNotifyDetail('full')).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(parseNotifyDetail('FULL')).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(parseNotifyDetail('detailed')).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(parseNotifyDetail('verbose')).toBe(TG_NOTIFY_DETAIL_FULL);
+  });
+
+  it('识别 compact 与别名', () => {
+    expect(parseNotifyDetail('compact')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+    expect(parseNotifyDetail('COMPACT')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+    expect(parseNotifyDetail('brief')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+    expect(parseNotifyDetail('simple')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+    expect(parseNotifyDetail('short')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+  });
+
+  it('非法值回退 fallback', () => {
+    expect(parseNotifyDetail('nope')).toBe(TG_NOTIFY_DETAIL_FULL);
+    expect(parseNotifyDetail('nope', 'compact')).toBe(TG_NOTIFY_DETAIL_COMPACT);
+  });
+
+  it('isFullNotifyDetail', () => {
+    expect(isFullNotifyDetail('full')).toBe(true);
+    expect(isFullNotifyDetail('compact')).toBe(false);
+  });
+});
+
+describe('formatRemainingHours', () => {
+  it('null/非有限数返回未知', () => {
+    expect(formatRemainingHours(null)).toBe('未知');
+    expect(formatRemainingHours(undefined)).toBe('未知');
+    expect(formatRemainingHours(NaN)).toBe('未知');
+  });
+
+  it('正数显示约 N 小时', () => {
+    expect(formatRemainingHours(18.25)).toBe('约 18.3 小时');
+  });
+
+  it('负数显示已过期', () => {
+    expect(formatRemainingHours(-1.5)).toBe('已过期 1.5 小时');
+  });
+});
+
+describe('formatProcessSteps', () => {
+  it('空数组返回空字符串', () => {
+    expect(formatProcessSteps([])).toBe('');
+    expect(formatProcessSteps(null)).toBe('');
+  });
+
+  it('格式化为编号列表并转义 HTML', () => {
+    const out = formatProcessSteps(['登录成功', '检查 <b>状态']);
+    expect(out).toContain('执行过程');
+    expect(out).toContain('1. 登录成功');
+    expect(out).toContain('2. 检查 &lt;b&gt;状态');
+    expect(out).not.toContain('检查 <b>状态');
+  });
+
+  it('compact 模式不输出过程步骤', () => {
+    expect(formatProcessSteps(['登录成功'], 'compact')).toBe('');
+  });
+});
+
 describe('buildSuccessNotifyMessage', () => {
   it('包含服务器名与到期日', () => {
     const msg = buildSuccessNotifyMessage({
@@ -281,6 +357,106 @@ describe('buildSuccessNotifyMessage', () => {
     });
     expect(msg).toContain('&lt;script&gt;');
     expect(msg).not.toContain('<script>');
+  });
+
+  it('full 可附带执行过程摘要', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      executedAt: 't',
+      nextRunAt: 'n',
+      processSteps: ['登录成功', '提交完成'],
+      detail: 'full',
+    });
+    expect(msg).toContain('执行过程');
+    expect(msg).toContain('1. 登录成功');
+    expect(msg).toContain('2. 提交完成');
+    expect(msg).toContain('VPS 规格');
+  });
+
+  it('compact 省略规格、原到期日与过程', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      plan: '4GB',
+      oldExpireDate: 'old',
+      newExpireDate: 'new',
+      executedAt: 't',
+      nextRunAt: 'n',
+      processSteps: ['登录成功'],
+      detail: 'compact',
+    });
+    expect(msg).toContain('续期成功');
+    expect(msg).toContain('vps-1');
+    expect(msg).toContain('new');
+    expect(msg).not.toContain('执行过程');
+    expect(msg).not.toContain('VPS 规格');
+    expect(msg).not.toContain('原到期日');
+  });
+});
+
+describe('buildSkipNotifyMessage', () => {
+  it('无需续期时包含 VPS 状态与判定说明', () => {
+    const msg = buildSkipNotifyMessage({
+      reasonCode: 'not_due',
+      serverName: 'vps-host-1',
+      plan: '4GB',
+      expireDate: '2026-07-22 20:00:00',
+      remainingHours: 15.5,
+      executedAt: '2026/7/22 10:00:00',
+      nextRunAt: '2026/7/22 16:00:00',
+      processSteps: ['登录成功', '检查到期状态', '判定结果: 无需续期'],
+      detail: 'full',
+    });
+    expect(msg).toContain('无需续期');
+    expect(msg).toContain('vps-host-1');
+    expect(msg).toContain('4GB');
+    expect(msg).toContain('2026-07-22 20:00:00');
+    expect(msg).toContain('约 15.5 小时');
+    expect(msg).toContain('剩余≤12h 可续');
+    expect(msg).toContain('执行过程');
+    expect(msg).toContain('1. 登录成功');
+  });
+
+  it('compact 保留关键状态，省略规格、判定详情与过程', () => {
+    const msg = buildSkipNotifyMessage({
+      reasonCode: 'not_due',
+      serverName: 'vps-host-1',
+      plan: '4GB',
+      expireDate: '2026-07-22 20:00:00',
+      remainingHours: 15.5,
+      executedAt: 't',
+      nextRunAt: 'n',
+      reasonDetail: '很长的判定说明',
+      processSteps: ['登录成功'],
+      detail: 'compact',
+    });
+    expect(msg).toContain('无需续期');
+    expect(msg).toContain('vps-host-1');
+    expect(msg).toContain('2026-07-22 20:00:00');
+    expect(msg).toContain('约 15.5 小时');
+    expect(msg).not.toContain('4GB');
+    expect(msg).not.toContain('很长的判定说明');
+    expect(msg).not.toContain('执行过程');
+  });
+
+  it('未找到免费 VPS 时使用对应标题', () => {
+    const msg = buildSkipNotifyMessage({
+      reasonCode: 'no_free_vps',
+      executedAt: 't',
+      nextRunAt: 'n',
+    });
+    expect(msg).toContain('未找到免费 VPS');
+    expect(msg).toContain('未找到带免费标识');
+  });
+
+  it('HTML 特殊字符被转义', () => {
+    const msg = buildSkipNotifyMessage({
+      serverName: '<x>',
+      reasonDetail: 'a & b',
+      executedAt: 't',
+      nextRunAt: 'n',
+    });
+    expect(msg).toContain('&lt;x&gt;');
+    expect(msg).toContain('a &amp; b');
   });
 });
 
@@ -308,6 +484,36 @@ describe('buildFailureNotifyMessage', () => {
     });
     expect(msg).toContain('告警升级');
     expect(msg).toContain('连续失败 5 次');
+  });
+
+  it('full 可附带执行过程摘要与失败说明', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'timeout',
+      executedAt: 't',
+      processSteps: ['登录成功', '异常终止: timeout'],
+      detail: 'full',
+      proxyHint: 'hint',
+    });
+    expect(msg).toContain('执行过程');
+    expect(msg).toContain('1. 登录成功');
+    expect(msg).toContain('timeout');
+    expect(msg).toContain('失败说明');
+  });
+
+  it('compact 仅核心错误，无过程与失败说明', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'timeout',
+      executedAt: 't',
+      processSteps: ['登录成功'],
+      detail: 'compact',
+      proxyHint: 'hint',
+      captchaMaxRetry: 3,
+    });
+    expect(msg).toContain('续期失败');
+    expect(msg).toContain('timeout');
+    expect(msg).not.toContain('执行过程');
+    expect(msg).not.toContain('失败说明');
+    expect(msg).not.toContain('hint');
   });
 });
 
