@@ -6,6 +6,8 @@ import {
   buildRenewUrl,
   resolveCaptchaRetryUrl,
   evaluateSubmissionResult,
+  detectRenewalWindowBlocked,
+  extractRetryAfterFromText,
   extractExpireDateFromText,
   normalizeCellText,
   escapeHtml,
@@ -57,13 +59,35 @@ describe('parseExpireTimestamp / getRemainingHours', () => {
 });
 
 describe('isRenewalDue', () => {
-  it('仅日期：今天或明天到期返回 true', () => {
-    expect(isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12')).toBe(true);
-    expect(isRenewalDue('2026-07-12', '2026-07-11', '2026-07-12')).toBe(true);
+  it('仅日期：今天到期且剩余 ≤12h（日末估算）返回 true', () => {
+    // 2026-07-11 20:00 JST = 11:00 UTC；到期日末 23:59:59 JST → 剩余约 4h
+    const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
+    expect(
+      isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(true);
+  });
+
+  it('仅日期：明天到期剩余 >12h 返回 false（#5 回归：勿误入续期）', () => {
+    // 2026-07-23 00:56 JST = 2026-07-22 15:56 UTC；到期 2026-07-24 日末 → 剩余约 47h
+    const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0);
+    expect(
+      isRenewalDue('2026-07-24', '2026-07-23', '2026-07-24', { nowMs }),
+    ).toBe(false);
+  });
+
+  it('仅日期：今天到期但上午（剩余 >12h）返回 false', () => {
+    // 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；到期日末 → 剩余约 18h
+    const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
+    expect(
+      isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(false);
   });
 
   it('仅日期：其他日期返回 false', () => {
-    expect(isRenewalDue('2026-07-20', '2026-07-11', '2026-07-12')).toBe(false);
+    const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
+    expect(
+      isRenewalDue('2026-07-20', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(false);
   });
 
   it('空值返回 false', () => {
@@ -72,7 +96,11 @@ describe('isRenewalDue', () => {
   });
 
   it('允许首尾空白', () => {
-    expect(isRenewalDue(' 2026-07-11 ', '2026-07-11', '2026-07-12')).toBe(true);
+    // 2026-07-11 20:00 JST，到期日末 → 可续
+    const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
+    expect(
+      isRenewalDue(' 2026-07-11 ', '2026-07-11', '2026-07-12', { nowMs }),
+    ).toBe(true);
   });
 
   it('含时间：剩余 ≤12h 返回 true', () => {
@@ -97,6 +125,86 @@ describe('isRenewalDue', () => {
     expect(
       isRenewalDue('2026-07-11 10:00', '2026-07-11', '2026-07-12', { nowMs }),
     ).toBe(true);
+  });
+
+  it('日本格式纯日期：明天到期不可续', () => {
+    const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0); // 2026-07-23 00:56 JST
+    expect(
+      isRenewalDue('2026年7月24日', '2026-07-23', '2026-07-24', { nowMs }),
+    ).toBe(false);
+  });
+});
+
+describe('detectRenewalWindowBlocked / extractRetryAfterFromText', () => {
+  // issue #5 用户原文（URL: .../freevps/extend/conf）
+  const officialBlockedText = [
+    '無料VPS)契約更新',
+    '利用期限の12時間前から更新手続きが可能です。',
+    '利用を継続される場合は、2026年7月24日12：00以降にお試しください。',
+    '戻る',
+  ].join('\n');
+
+  // 实机 2026-07-23 conf 页（半角冒号 + 空格）
+  const liveConfText =
+    '無料VPSの契約更新 利用期限の12時間前から更新手続きが可能です。 利用を継続される場合は、2026年7月25日 12:00以降にお試しください。 戻る';
+
+  // 实机 index 页：说明 + 继续按钮文案仍在
+  const liveIndexText =
+    '無料VPSの契約更新 利用期限の12時間前から更新手続きが可能です。 利用を継続される場合は、2026年7月25日 12:00以降にお試しください。 引き続き無料VPSの利用を継続する 戻る';
+
+  it('识别官方 12 小时窗口拦截页（issue #5）', () => {
+    const r = detectRenewalWindowBlocked(
+      officialBlockedText,
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf',
+    );
+    expect(r.blocked).toBe(true);
+    expect(r.matched).toBe('以降にお試し');
+    expect(r.retryAfter).toBe('2026-07-24 12:00');
+    expect(r.reason).toMatch(/12h|12/);
+    expect(r.reason).toMatch(/2026-07-24 12:00/);
+  });
+
+  it('识别实机 conf 纯拦截页文案', () => {
+    const r = detectRenewalWindowBlocked(
+      liveConfText,
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf',
+    );
+    expect(r.blocked).toBe(true);
+    expect(r.retryAfter).toBe('2026-07-25 12:00');
+  });
+
+  it('识别实机 index 页「未开窗」说明（即使仍有继续按钮文案）', () => {
+    const r = detectRenewalWindowBlocked(
+      liveIndexText,
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=1',
+    );
+    expect(r.blocked).toBe(true);
+    expect(r.retryAfter).toBe('2026-07-25 12:00');
+  });
+
+  it('仅政策脚注「12時間前」不误拦', () => {
+    const policyOnly =
+      '無料VPSは、1日ごとに契約を更新する必要があります。利用期限の12時間前から更新手続きが可能です。';
+    expect(detectRenewalWindowBlocked(policyOnly).blocked).toBe(false);
+  });
+
+  it('普通验证码页不误判', () => {
+    const captchaText = '画像認証\n上の画像に表示されている文字を入力してください\n送信';
+    const r = detectRenewalWindowBlocked(captchaText, 'https://x/conf');
+    expect(r.blocked).toBe(false);
+    expect(r.retryAfter).toBeNull();
+  });
+
+  it('空文本不拦截', () => {
+    expect(detectRenewalWindowBlocked('').blocked).toBe(false);
+    expect(detectRenewalWindowBlocked(null).blocked).toBe(false);
+  });
+
+  it('extractRetryAfterFromText 支持全角冒号、空格与 ISO', () => {
+    expect(extractRetryAfterFromText('2026年7月24日12：00以降')).toBe('2026-07-24 12:00');
+    expect(extractRetryAfterFromText('2026年7月25日 12:00以降')).toBe('2026-07-25 12:00');
+    expect(extractRetryAfterFromText('请于 2026-07-24 12:00 之后')).toBe('2026-07-24 12:00');
+    expect(extractRetryAfterFromText('无时间')).toBeNull();
   });
 });
 
@@ -446,6 +554,23 @@ describe('buildSkipNotifyMessage', () => {
     });
     expect(msg).toContain('未找到免费 VPS');
     expect(msg).toContain('未找到带免费标识');
+  });
+
+  it('官方 12h 窗口拦截时使用对应标题与原因', () => {
+    const msg = buildSkipNotifyMessage({
+      reasonCode: 'window_blocked',
+      serverName: 'host02-18',
+      expireDate: '2026-07-24',
+      remainingHours: 47.1,
+      reasonDetail: '未进入官方续期窗口；请于 2026-07-24 12:00（东京）之后再试',
+      executedAt: 't',
+      nextRunAt: 'n',
+      detail: 'full',
+    });
+    expect(msg).toContain('未进入 12h 续期窗口');
+    expect(msg).toContain('host02-18');
+    expect(msg).toContain('2026-07-24 12:00');
+    expect(msg).toContain('约 47.1 小时');
   });
 
   it('HTML 特殊字符被转义', () => {

@@ -58,6 +58,7 @@ import {
   buildRenewUrl,
   resolveCaptchaRetryUrl,
   evaluateSubmissionResult,
+  detectRenewalWindowBlocked,
   extractExpireDateFromText,
   normalizeCellText,
   escapeHtml as _escapeHtml,
@@ -371,8 +372,8 @@ async function handleLogin(page) {
 /**
  * 检查是否需要续期
  * @returns {Promise<
- *   | { needed: true, renewUrl: string, vpsInfo: { serverName: string|null, plan: string|null, expireDate: string|null } }
- *   | { needed: false, reasonCode: 'not_due'|'no_free_vps', vpsInfo: object, remainingHours: number|null, reasonDetail: string }
+ *   | { needed: true, renewUrl: string, vpsInfo: { serverName: string|null, plan: string|null, expireDate: string|null }, remainingHours: number|null }
+ *   | { needed: false, reasonCode: 'not_due'|'no_free_vps'|'window_blocked', vpsInfo: object, remainingHours: number|null, reasonDetail: string }
  * >}
  */
 async function checkRenewalNeeded(page) {
@@ -458,9 +459,13 @@ async function checkRenewalNeeded(page) {
   }
 
   // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
+  // 纯日期按东京日末估算剩余小时，不再把「明天到期」一律判为可续（#5）
   if (!isRenewalDue(result.expireDate, today, tomorrow)) {
+    const remainingLabel =
+      remainingHours != null ? `剩余约 ${remainingHours.toFixed(1)}h` : '剩余时间未知';
     const reasonDetail =
-      `无需续期（到期: ${result.expireDate}；规则: 最长 ${FREE_VPS_MAX_HOURS}h / 剩余≤${RENEWAL_WINDOW_HOURS}h 可续；` +
+      `无需续期（到期: ${result.expireDate}；${remainingLabel}；` +
+      `规则: 最长 ${FREE_VPS_MAX_HOURS}h / 剩余≤${RENEWAL_WINDOW_HOURS}h 可续；` +
       `今天 ${today} / 明天 ${tomorrow}）`;
     log(reasonDetail);
     return {
@@ -488,6 +493,7 @@ async function checkRenewalNeeded(page) {
       plan: cleanPlan,
       expireDate: result.expireDate,
     },
+    remainingHours,
   };
 }
 
@@ -495,6 +501,20 @@ async function checkRenewalNeeded(page) {
 // 步骤 3：续期申请确认
 // ============================================================
 
+/**
+ * 打开续期申请页并点击确认。
+ * 若官方返回「未满 12 小时窗口」拦截页，则软跳过，不进入验证码流程。
+ *
+ * 官方页面路径（2026-07-23 核对）：
+ * 1. GET `/freevps/extend/index?id_vps=…` — 可能已显示「以降にお試し」说明，但按钮仍在
+ * 2. POST/导航 → `/freevps/extend/conf` — 窗口未开时为纯拦截页（issue #5 用户报错 URL）；
+ *    窗口已开时才是验证码 + Turnstile 页
+ *
+ * @returns {Promise<
+ *   | { status: 'ready' }
+ *   | { status: 'window_blocked', reason: string, retryAfter: string|null }
+ * >}
+ */
 async function handleRenewalConfirm(page, renewUrl) {
   log('正在导航到续期申请页面...');
   await page.goto(renewUrl, {
@@ -502,13 +522,44 @@ async function handleRenewalConfirm(page, renewUrl) {
     timeout: CONFIG.NAVIGATION_TIMEOUT,
   });
 
+  // index 页：未开窗时正文已含「以降にお試し」——直接软跳过，不必再点确认
+  // （实机：按钮 formaction=/extend/conf 在未开窗时仍可能存在，不能靠「有无按钮」判断）
+  const indexBlocked = await detectBlockedPage(page);
+  if (indexBlocked) return indexBlocked;
+
   const extendBtn = await page.$('[formaction="/xapanel/xvps/server/freevps/extend/conf"]');
-  if (!extendBtn) throw new Error('未找到续期确认按钮。');
+  if (!extendBtn) {
+    // 无确认按钮时再读一次正文，优先识别窗口拦截，避免笼统报错
+    const blocked = await detectBlockedPage(page);
+    if (blocked) return blocked;
+    throw new Error('未找到续期确认按钮。');
+  }
 
   log('正在点击续期确认...');
   await Promise.all([waitForNav(page), extendBtn.click()]);
 
+  // conf 页：#5 用户反馈的拦截 URL；也可能是真正的验证码页
+  const confBlocked = await detectBlockedPage(page);
+  if (confBlocked) return confBlocked;
+
   log(`已进入验证码页面: ${page.url()}`);
+  return { status: 'ready' };
+}
+
+/**
+ * 读取当前页正文并检测官方续期窗口拦截
+ * @returns {Promise<null | { status: 'window_blocked', reason: string, retryAfter: string|null }>}
+ */
+async function detectBlockedPage(page) {
+  const pageText = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+  const detection = detectRenewalWindowBlocked(pageText, page.url());
+  if (!detection.blocked) return null;
+  log(`⏳ 官方拦截：${detection.reason}`);
+  return {
+    status: 'window_blocked',
+    reason: detection.reason,
+    retryAfter: detection.retryAfter,
+  };
 }
 
 // ============================================================
@@ -1106,9 +1157,41 @@ async function main() {
     );
     log(`📊 VPS 信息: 服务器名=${renewalData.vpsInfo.serverName}, 规格=${renewalData.vpsInfo.plan}, 原到期日=${renewalData.vpsInfo.expireDate}`);
 
-    // 步骤 3：续期确认
+    // 步骤 3：续期确认（可能被官方「12時間前」拦截页软跳过，见 #5）
     pushStep('打开续期确认页');
-    await handleRenewalConfirm(page, renewalData.renewUrl);
+    const confirmResult = await handleRenewalConfirm(page, renewalData.renewUrl);
+    if (confirmResult.status === 'window_blocked') {
+      const skipLabel = confirmResult.reason || '未进入官方 12 小时续期窗口';
+      pushStep(`判定结果: ${skipLabel}`);
+      log(`无需续期（官方窗口未开）: ${skipLabel}`);
+      persistRenewalRecord(buildRenewalRecord({
+        success: true,
+        skipped: true,
+        serverName: renewalData.vpsInfo?.serverName,
+        plan: renewalData.vpsInfo?.plan,
+        oldExpireDate: renewalData.vpsInfo?.expireDate,
+        errorMessage: skipLabel,
+      }));
+
+      const nextRunStr = resolveNextRun();
+      const executedAt = formatTokyoDateTime();
+      await notify(buildSkipNotifyMessage({
+        reasonCode: 'window_blocked',
+        serverName: renewalData.vpsInfo?.serverName,
+        plan: renewalData.vpsInfo?.plan,
+        expireDate: renewalData.vpsInfo?.expireDate,
+        remainingHours: renewalData.remainingHours,
+        reasonDetail: skipLabel,
+        executedAt,
+        nextRunAt: nextRunStr,
+        maxHours: FREE_VPS_MAX_HOURS,
+        windowHours: RENEWAL_WINDOW_HOURS,
+        processSteps,
+        detail: CONFIG.TG_NOTIFY_DETAIL,
+      }));
+      await page.close();
+      return;
+    }
 
     // 步骤 4-6：验证码 + Turnstile + 提交
     pushStep('识别验证码并求解 Turnstile，提交续期');
@@ -1234,6 +1317,7 @@ export {
   isRenewalDue,
   buildRenewUrl,
   evaluateSubmissionResult,
+  detectRenewalWindowBlocked,
   extractExpireDateFromText,
   resolveCaptchaRetryUrl,
   buildSuccessNotifyMessage,

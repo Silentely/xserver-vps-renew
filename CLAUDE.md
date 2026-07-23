@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-23 | 修复 #5：纯日期误判「明天到期」可续；识别官方「12時間前」拦截页并软跳过，避免误等验证码图 |
 | 2026-07-22 | Telegram：每次执行均推送（含无需续期）；`TG_NOTIFY_DETAIL=full\|compact` 控制完整/简洁摘要（#4） |
 | 2026-07-20 | 新增 YesCaptcha 作为 Turnstile 可选备选（CapSolver > YesCaptcha > 2Captcha） |
 | 2026-07-16 | 文档强调：必须配置 CapSolver API（Turnstile），否则成功率极低 |
@@ -117,7 +118,7 @@ graph TD
 | `src/turnstile.mjs` | Turnstile 求解（纯函数 + 浏览器操作） | `getTurnstileProvider()`, `extractTurnstileParams()`, `buildTurnstileTask()`, `buildCreateTaskPayload()`, `maskTaskForLog()`, `solveTurnstileViaAPI()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |

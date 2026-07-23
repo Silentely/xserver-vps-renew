@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-23）
+- **误判「明天到期」为可续期并进入验证码页**（[#5](https://github.com/Silentely/xserver-vps-renew/issues/5)）
+  - `isRenewalDue`：纯日期改为按东京日末估算剩余小时，统一走 ≤12h 窗口；不再把「今天或明天」一律判为可续
+  - 新增 `detectRenewalWindowBlocked` / `extractRetryAfterFromText`：识别官方「…以降にお試しください」拦截页
+  - `handleRenewalConfirm`：index/conf 遇到窗口未开时软跳过并 Telegram 通知（`reasonCode: window_blocked`），不再误等验证码图导致失败
+  - **官方面板核对**（已登录，到期 `2026-07-25`）：
+    - 列表 `.contract__term` 仍为纯日期 `YYYY-MM-DD`（无时分）
+    - 拦截文案在 `/freevps/extend/index` 与 `/freevps/extend/conf` 均会出现；**#5 用户报错 URL 即 conf 纯拦截页**
+    - 未开窗时 index 仍可能保留确认按钮，故不能只靠按钮有无判断
+    - conf 页无验证码图 / 输入框，仅标题 + 说明 + 戻る
+  - 复现日志：剩余约 47h、到期 `2026-07-24` 时曾错误进入 `extend/conf` 并 `waitForSelector img[src^="data:image"]` 超时
+
 ### 修复（2026-07-22）
 - Trivy 门禁：`brace-expansion` CVE-2026-13149（1.1.15 → 1.1.16，`package.json` overrides）
 

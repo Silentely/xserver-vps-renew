@@ -34,6 +34,32 @@ export const KNOWN_FAILURE_REASONS = [
 ];
 
 /**
+ * 官方「未进入 12 小时续期窗口」拦截页特征（2026-07-23 官方面板核对）
+ *
+ * 路径：
+ * - `/freevps/extend/index`：可能同时展示政策说明 +「以降にお試し」+ 继续按钮
+ * - `/freevps/extend/conf`：纯拦截页（无验证码图、无提交），用户 issue #5 报错即此 URL
+ *
+ * 判定以「请之后再试」为主信号，避免仅出现政策脚注「12時間前から更新手続きが可能」时误拦。
+ * 文案示例：
+ *   利用期限の12時間前から更新手続きが可能です。
+ *   利用を継続される場合は、2026年7月24日12：00以降にお試しください。
+ */
+export const RENEWAL_WINDOW_BLOCKED_PATTERNS = [
+  '以降にお試し',
+  '以降に再度',
+  '以降にお申し込み',
+];
+
+/** 辅助确认：与「请之后再试」同时出现时增强可信度 */
+export const RENEWAL_WINDOW_CONTEXT_PATTERNS = [
+  '12時間前',
+  '更新手続き',
+  '契約更新',
+  '利用期限',
+];
+
+/**
  * 从页面到期文案解析东京时区下的到期时间戳（毫秒）
  * 支持：YYYY-MM-DD、YYYY/MM/DD、含 HH:mm[:ss]、日本格式年月日
  * 仅日期时按当天结束（23:59:59 东京）处理，便于保守判定
@@ -114,12 +140,15 @@ export function getRemainingHours(expireText, nowMs = Date.now()) {
  * 判断是否进入可续期窗口
  *
  * 官方规则：剩余使用时间 ≤ {@link RENEWAL_WINDOW_HOURS} 小时时可续期。
- * - 能解析到具体时间：按剩余小时判定（含短暂过期宽限）
- * - 仅有日期或无法解析时间：回退为「今天或明天到期」（24h 寿命下的日期粒度策略）
+ * - 优先按剩余小时判定（含时分则精确；仅日期时按东京日末 23:59:59 保守估算）
+ * - 无法解析时间戳时：回退为「今天到期」（不再把「明天」一律视为可续，避免 #5 误入流程）
+ *
+ * 说明：面板常只显示日期。纯日期按日末估算时，剩余 ≤12h 约等于「到期日 12:00 之后」，
+ * 与官方「利用期限の12時間前から」在「期限=当日结束」场景一致。
  *
  * @param {string|null|undefined} expireDate - 页面上的到期日/时间文案
  * @param {string} today - 东京时区今天 YYYY-MM-DD
- * @param {string} tomorrow - 东京时区明天 YYYY-MM-DD
+ * @param {string} tomorrow - 东京时区明天 YYYY-MM-DD（保留参数兼容调用方；小时判定下可不依赖）
  * @param {{ nowMs?: number, windowHours?: number, overdueGraceHours?: number }} [opts]
  * @returns {boolean}
  */
@@ -132,29 +161,110 @@ export function isRenewalDue(expireDate, today, tomorrow, opts = {}) {
   const overdueGraceHours = opts.overdueGraceHours ?? RENEWAL_OVERDUE_GRACE_HOURS;
   const nowMs = opts.nowMs ?? Date.now();
 
-  // 文案含时分 → 按剩余小时精确判定
-  const hasClock = /(?:\d{1,2}:\d{2}|\d{1,2}時\d{1,2})/.test(text);
-  if (hasClock) {
-    const remaining = getRemainingHours(text, nowMs);
-    if (remaining == null) return false;
+  // 能解析时间戳 → 统一按剩余小时（官方 12h 窗口 + 过期宽限）
+  const remaining = getRemainingHours(text, nowMs);
+  if (remaining != null) {
     return remaining <= windowHours && remaining >= -overdueGraceHours;
   }
 
-  // 仅日期：提取 YYYY-MM-DD（或日本格式）后与今天/明天比较
+  // 无法解析：仅当文案明确是「今天」时才视为可续（避免明天日期误触发）
   const iso = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   if (iso) {
     const date = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
-    return date === today || date === tomorrow;
+    return date === today;
   }
 
   const jp = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
   if (jp) {
     const date = `${jp[1]}-${jp[2].padStart(2, '0')}-${jp[3].padStart(2, '0')}`;
-    return date === today || date === tomorrow;
+    return date === today;
   }
 
-  // 纯日期字符串 YYYY-MM-DD（无多余文字）
-  return text === today || text === tomorrow;
+  return text === today;
+}
+
+/**
+ * 从官方拦截页文案提取「请于某时之后再试」的建议时间
+ * 支持：2026年7月24日12：00 / 2026年7月24日 12:00 / 2026-07-24 12:00
+ * @param {string} pageText
+ * @returns {string|null} 规范化展示文案，如 `2026-07-24 12:00`
+ */
+export function extractRetryAfterFromText(pageText) {
+  if (!pageText || typeof pageText !== 'string') return null;
+  const text = pageText.replace(/\s+/g, ' ');
+
+  // 日本格式：2026年7月24日12：00 / 2026年7月24日 12:00
+  const jp = text.match(
+    /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[：:時](\d{1,2})/,
+  );
+  if (jp) {
+    const [, y, mo, d, hh, mm] = jp;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')} ${hh.padStart(2, '0')}:${mm.padStart(2, '0')}`;
+  }
+
+  // ISO：2026-07-24 12:00 或 2026/07/24 12:00
+  const iso = text.match(
+    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})/,
+  );
+  if (iso) {
+    const [, y, mo, d, hh, mm] = iso;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')} ${hh.padStart(2, '0')}:${mm}`;
+  }
+
+  return null;
+}
+
+/**
+ * 检测是否为官方「未满 12 小时续期窗口」拦截页（非验证码页）
+ *
+ * 实机观察（已登录面板，到期 2026-07-25，剩余约 52h）：
+ * - index / conf 均可出现「12時間前…」「yyyy年m月d日 HH:mm以降にお試し」
+ * - conf 页无 `img[src^=data:]`、无验证码输入框；仅标题 + 说明 + 戻る
+ * - index 页即使未开窗也可能仍有「引き続き無料VPSの利用を継続する」按钮，故必须以文案判定，不能只靠按钮有无
+ *
+ * @param {string} pageText - document.body.innerText
+ * @param {string} [currentUrl]
+ * @returns {{ blocked: boolean, reason: string|null, retryAfter: string|null, matched: string|null, url?: string|null }}
+ */
+export function detectRenewalWindowBlocked(pageText = '', currentUrl = '') {
+  const text = String(pageText || '');
+  if (!text.trim()) {
+    return { blocked: false, reason: null, retryAfter: null, matched: null };
+  }
+
+  // 已进入验证码流程则不当作窗口拦截
+  if (
+    text.includes('画像認証') ||
+    text.includes('上の画像') ||
+    /cf-turnstile|turnstile/i.test(text)
+  ) {
+    return { blocked: false, reason: null, retryAfter: null, matched: null };
+  }
+
+  const matched = RENEWAL_WINDOW_BLOCKED_PATTERNS.find((pat) => text.includes(pat));
+  if (!matched) {
+    return { blocked: false, reason: null, retryAfter: null, matched: null };
+  }
+
+  // 要求同时具备续期语境，降低其它「以降にお試し」页面的误匹配
+  const hasContext = RENEWAL_WINDOW_CONTEXT_PATTERNS.some((pat) => text.includes(pat));
+  if (!hasContext) {
+    return { blocked: false, reason: null, retryAfter: null, matched: null };
+  }
+
+  const retryAfter = extractRetryAfterFromText(text);
+  const reason = retryAfter
+    ? `未进入官方续期窗口（剩余须 ≤${RENEWAL_WINDOW_HOURS}h）；请于 ${retryAfter}（东京）之后再试`
+    : `未进入官方续期窗口（剩余须 ≤${RENEWAL_WINDOW_HOURS}h 方可办理更新手续）`;
+
+  return {
+    blocked: true,
+    reason,
+    retryAfter,
+    matched,
+    // 附带 URL 便于日志（不参与判定）
+    url: currentUrl || null,
+  };
 }
 
 /**
@@ -501,13 +611,18 @@ export function buildSkipNotifyMessage({
 } = {}) {
   const mode = parseNotifyDetail(detail);
   const isNoVps = reasonCode === 'no_free_vps';
+  const isWindowBlocked = reasonCode === 'window_blocked';
   const title = isNoVps
     ? 'ℹ️ <b>Xserver VPS 检查完成 · 未找到免费 VPS</b>'
-    : 'ℹ️ <b>Xserver VPS 检查完成 · 无需续期</b>';
+    : isWindowBlocked
+      ? 'ℹ️ <b>Xserver VPS 检查完成 · 未进入 12h 续期窗口</b>'
+      : 'ℹ️ <b>Xserver VPS 检查完成 · 无需续期</b>';
 
   const defaultDetail = isNoVps
     ? '面板中未找到带免费标识的 VPS 条目'
-    : `剩余时间未进入可续期窗口（规则: 最长 ${maxHours}h / 剩余≤${windowHours}h 可续）`;
+    : isWindowBlocked
+      ? `官方页面提示：须在利用期限的 ${windowHours} 小时前起方可办理更新（最长 ${maxHours}h）`
+      : `剩余时间未进入可续期窗口（规则: 最长 ${maxHours}h / 剩余≤${windowHours}h 可续）`;
 
   const time = escapeHtml(executedAt || formatTokyoDateTime());
   const name = escapeHtml(serverName || (isNoVps ? '—' : '未知'));
