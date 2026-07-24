@@ -14,11 +14,12 @@
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
 - ✅ **图形验证码识别** - Keras 模型 API（Cloud Run，准确率 95%+；内置默认端点，可自建覆盖）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
-- ✅ Cloudflare Turnstile 人机验证：
-  - **CapSolver API（必须配置）**：`CAPSOLVER_API_KEY`，使用 `AntiTurnstileTaskProxyLess`；**未配置时成功率极低**；[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)
-  - **YesCaptcha API**（备选）：配置 `YESCAPTCHA_API_KEY` 后使用 `TurnstileTaskProxyless`（国内节点友好；自动附带 `softID: 97020`）
-  - **2Captcha API**（备选）：配置 `TWOCAPTCHA_API_KEY` 后使用 `TurnstileTask` 或 `TurnstileTaskProxyless`
-  - **降级**：无 API 密钥时等待自然通过（Docker / 无头环境几乎不可用，**不建议**）
+- ✅ Cloudflare Turnstile 人机验证（**多平台 failover**）：
+  - **CapSolver**（推荐主平台）：`CAPSOLVER_API_KEY`，`AntiTurnstileTaskProxyLess`；[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)
+  - **Anti-Captcha**（推荐异构备份）：`ANTICAPTCHA_API_KEY`，`TurnstileTaskProxyless` / `TurnstileTask`；[官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless)
+  - **YesCaptcha** / **2Captcha**：备选；多 key 时**全部参与**串行降级（非「只启用一家」）
+  - 单平台连续失败 N 次（默认 3）自动切换下一家；全部熔断 → Telegram **最高级删机风险告警**
+  - **无密钥降级**：等待自然通过（Docker / 无头几乎不可用，**不建议**）
 - ✅ Telegram 通知：每次执行均推送（成功 / 失败 / **无需续期**）；`TG_NOTIFY_DETAIL` 可选完整/简洁摘要
 - ✅ Docker 部署，内置 supercronic 定时调度，开箱即用
 
@@ -34,14 +35,16 @@ mkdir xserver-vps-renew && cd xserver-vps-renew
 curl -O https://raw.githubusercontent.com/Silentely/xserver-vps-renew/main/docker-compose.yml
 
 # 3. 创建环境变量
-# 必填：XSERVER_MEMBER_ID、XSERVER_PASSWORD、CAPSOLVER_API_KEY（Turnstile，否则成功率极低）
+# 必填：XSERVER_MEMBER_ID、XSERVER_PASSWORD；Turnstile 至少 1 家打码 key（推荐 CapSolver + Anti-Captcha）
 cat > .env <<EOF
 XSERVER_MEMBER_ID=你的会员ID
 XSERVER_PASSWORD=你的密码
 
-# Turnstile 人机验证（必须配置 CapSolver，否则成功率极低）
+# Turnstile 主平台（推荐）
 # 注册（邀请链接）：https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG
 CAPSOLVER_API_KEY=你的CapSolver密钥
+# 异构备份（强烈建议，CF 大更新时 failover）
+# ANTICAPTCHA_API_KEY=你的AntiCaptcha密钥
 
 # 验证码识别（可选；不填则使用内置默认公共端点）
 # CAPTCHA_API=https://captcha-120546510085.asia-northeast1.run.app
@@ -66,9 +69,10 @@ npm install
 # 设置环境变量
 export XSERVER_MEMBER_ID="你的会员ID"
 export XSERVER_PASSWORD="你的密码"
-# Turnstile 必须配置 CapSolver，否则成功率极低
+# Turnstile 至少配置 1 家；建议再配 Anti-Captcha 作 failover
 # 注册（邀请链接）：https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG
 export CAPSOLVER_API_KEY="你的CapSolver密钥"
+# export ANTICAPTCHA_API_KEY="你的AntiCaptcha密钥"
 # CAPTCHA_API 可选，默认公共端点
 # export CAPTCHA_API="https://your-own-captcha-api.example.com"
 
@@ -96,15 +100,22 @@ node xserver-vps-renew.mjs
 
 ### Turnstile 求解策略
 
-> ⚠️ **必须配置 CapSolver API**（`CAPSOLVER_API_KEY`）用于 Cloudflare Turnstile 人机验证。  
-> 未配置时脚本会降级为等待自然通过，**成功率极低**（尤其 Docker / 无头环境几乎必然失败）。费用约 **~$0.0015–0.002/次**，按每 6 小时续期约 **$0.06/月**。
+> ⚠️ **至少配置 1 家 Turnstile 打码平台**（推荐 `CAPSOLVER_API_KEY`）。  
+> **强烈建议再配 1 家异构备份**（如 `ANTICAPTCHA_API_KEY`）：CF 算法大更新时，单平台可能整段时间失效，双平台可显著降低删机风险。  
+> 未配置任何 key 时会降级为等待自然通过，**成功率极低**（Docker / 无头几乎必然失败）。
 
-Docker / 生产环境下直接使用 API 求解（跳过自然通过，因为自动化浏览器通过率很低）。优先级（只启用一家）：
+Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 
-1. **CapSolver API（必须 / 优先）**：配置 `CAPSOLVER_API_KEY` 后使用 `AntiTurnstileTaskProxyLess`。注册：[CapSolver（邀请链接）](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)
-2. **YesCaptcha API**（备选）：无 CapSolver 时配置 `YESCAPTCHA_API_KEY`，使用 `TurnstileTaskProxyless`（可选 `TurnstileTaskProxylessM1`）；国际节点 `https://api.yescaptcha.com`，国内可用 `YESCAPTCHA_API_BASE=https://cn.yescaptcha.com`。文档：[YesCaptcha Turnstile](https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/61734913)。请求会自动附带开发者参数 `softID: 97020`（[getSoftID 说明](https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/25526273)）
-3. **2Captcha API**（备选）：无 CapSolver / YesCaptcha 时可用 `TWOCAPTCHA_API_KEY`（`TurnstileTask` / `TurnstileTaskProxyless`）
-4. **降级（不推荐）**：无任何 Turnstile API 密钥时等待自然通过——**成功率极低，请勿在生产环境依赖此模式**
+| 顺序（默认） | 环境变量 | 任务类型 | 说明 |
+|--------------|----------|----------|------|
+| 1 | `CAPSOLVER_API_KEY` | `AntiTurnstileTaskProxyLess` | AI 求解，速度快；[注册](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG) |
+| 2 | `ANTICAPTCHA_API_KEY` | `TurnstileTaskProxyless`（有代理则为 `TurnstileTask`） | 真人/混合异构备份；[文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) |
+| 3 | `YESCAPTCHA_API_KEY` | `TurnstileTaskProxyless` / `M1` | 国内友好；自动 `softID: 97020` |
+| 4 | `TWOCAPTCHA_API_KEY` | `TurnstileTask` / `Proxyless` | 备选 |
+
+- **Failover**：对每个已配置平台，连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换下一家  
+- **顺序可配**：`TURNSTILE_PROVIDER_ORDER=CapSolver,AntiCaptcha,YesCaptcha,2Captcha`  
+- **全挂告警**：全部熔断时 Telegram 推送【最高级告警·删机风险】，请**当日手动上官网续期**
 
 ## ⚙️ 环境变量
 
@@ -122,14 +133,18 @@ Docker / 生产环境下直接使用 API 求解（跳过自然通过，因为自
 |------|--------|------|------|
 | `CAPTCHA_API` | `https://captcha-120546510085.asia-northeast1.run.app` | Keras 模型 API（Cloud Run；可覆盖为自建端点） | 完全免费 |
 
-### 可选 - Turnstile 备选
+### 可选 - Turnstile 多平台 failover
 
 | 变量 | 说明 |
 |------|------|
-| `YESCAPTCHA_API_KEY` | YesCaptcha API 密钥（无 CapSolver 时的备选；注册：[yescaptcha.com](https://yescaptcha.com/)，`TurnstileTaskProxyless`；内置 `softID: 97020`） |
+| `ANTICAPTCHA_API_KEY` | Anti-Captcha API 密钥（推荐异构备份；注册：[anti-captcha.com](https://anti-captcha.com/)，`TurnstileTaskProxyless`） |
+| `ANTICAPTCHA_SOFT_ID` | Anti-Captcha 开发者 softId（可选） |
+| `YESCAPTCHA_API_KEY` | YesCaptcha API 密钥（注册：[yescaptcha.com](https://yescaptcha.com/)，`TurnstileTaskProxyless`；内置 `softID: 97020`） |
 | `YESCAPTCHA_API_BASE` | YesCaptcha API 节点（可选，默认 `https://api.yescaptcha.com`；国内可用 `https://cn.yescaptcha.com`） |
 | `YESCAPTCHA_TASK_TYPE` | 任务类型（可选，默认 `TurnstileTaskProxyless`；或 `TurnstileTaskProxylessM1`） |
-| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（无 CapSolver / YesCaptcha 时的备选；注册：https://2captcha.com/，仅用于 Turnstile） |
+| `TWOCAPTCHA_API_KEY` | 2Captcha API 密钥（注册：https://2captcha.com/，仅用于 Turnstile） |
+| `TURNSTILE_PROVIDER_ORDER` | 自定义 failover 顺序（逗号分隔，可选） |
+| `TURNSTILE_PROVIDER_MAX_FAILURES` | 单平台连续失败后切换阈值（默认 `3`） |
 
 ### 可选 - Telegram 通知
 
@@ -309,22 +324,24 @@ npm run test:watch
 4. Docker 环境 GPU / 指纹信息异常
 
 **解决方法**：
-1. **必须**：在 `.env` 中配置 `CAPSOLVER_API_KEY`（[注册 CapSolver（邀请链接）](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)）并重启容器
-2. 检查 CapSolver 控制台余额是否充足
-3. 可选：配置住宅代理提升网络侧通过率
-4. 无法使用 CapSolver 时，可改配 `YESCAPTCHA_API_KEY`（[YesCaptcha](https://yescaptcha.com/)，国内可用 `YESCAPTCHA_API_BASE=https://cn.yescaptcha.com`）或 `TWOCAPTCHA_API_KEY` 作为备选
+1. **至少配置 1 家** Turnstile key（推荐 `CAPSOLVER_API_KEY`，[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)）并重启容器
+2. **强烈建议再配** `ANTICAPTCHA_API_KEY`（[Anti-Captcha](https://anti-captcha.com/)）实现 failover
+3. 检查各打码平台余额是否充足
+4. 可选：配置住宅代理；也可改用/加配 `YESCAPTCHA_API_KEY` / `TWOCAPTCHA_API_KEY`
+5. 若收到【最高级告警·删机风险】：请**当日手动登录官网续期**，勿只等脚本
 
 ## 💰 成本估算
 
 | 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（约 30 次） |
 |------|------|---------|---------|---------------------|
 | Keras 模型 API | 验证码识别（Cloud Run） | 有免费额度 | $0 | **$0** |
-| CapSolver | **Turnstile 验证（必须配置）** | — | ~$0.002/次 | **~$0.06** |
-| YesCaptcha | Turnstile 验证（备选，国内友好） | 约 25 点/次 | 按官方点数 | 按充值计 |
-| 2Captcha | Turnstile 验证（备选） | — | ~$0.002/次 | ~$0.06 |
+| CapSolver | Turnstile（推荐主平台） | — | ~$0.002/次 | **~$0.06** |
+| Anti-Captcha | Turnstile（推荐异构备份） | — | ~$0.0015–0.003/次 | 平时几乎不触发 |
+| YesCaptcha | Turnstile（备选，国内友好） | 约 25 点/次 | 按官方点数 | 按充值计 |
+| 2Captcha | Turnstile（备选） | — | ~$0.002/次 | ~$0.06 |
 
 **总计**：
-- **推荐 / 生产配置**（Keras 模型 API + **CapSolver**）：**约 $0.06/月**
+- **推荐 / 生产配置**（Keras + CapSolver + Anti-Captcha 备份）：常态约 **$0.06/月**（备份仅主平台失败时计费）
 - 不配置 Turnstile API 虽“免费”，但 **成功率极低，不建议**，尤其 Docker 部署几乎无法完成续期
 
 ## 📜 许可证

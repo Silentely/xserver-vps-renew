@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### 功能（2026-07-24）
+- **Turnstile 多平台 failover + Anti-Captcha**
+  - 新增 `ANTICAPTCHA_API_KEY`：按 [Anti-Captcha 官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) 调用 `TurnstileTaskProxyless` / `TurnstileTask`（字段 `cData`/`chlPageData`，createTask 可选 `softId`，不提交自定义 UA）
+  - 多 key 时按顺序串行降级：默认 `CapSolver → AntiCaptcha → YesCaptcha → 2Captcha`（可用 `TURNSTILE_PROVIDER_ORDER` 覆盖）
+  - 单平台连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换下一家；全部熔断抛出 `TURNSTILE_ALL_PROVIDERS_FAILED`
+  - Telegram 多平台全挂时推送【最高级告警·删机风险】，明确要求当日手动续期
+  - 全挂时跳过图形验证码重试，立即上抛；错误摘要截断，避免日志/Telegram 过长
+  - 不再「只启用一家」：预埋的备选 key 会在主平台挂掉时真正被使用
+
 ### 修复（2026-07-23）
 - **误判「明天到期」为可续期并进入验证码页**（[#5](https://github.com/Silentely/xserver-vps-renew/issues/5)）
   - `isRenewalDue`：纯日期改为按东京日末估算剩余小时，统一走 ≤12h 窗口；不再把「今天或明天」一律判为可续

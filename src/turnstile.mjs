@@ -1,6 +1,15 @@
 /**
  * Turnstile 求解模块
- * 负责 Cloudflare Turnstile 的参数提取、API 求解、token 注入
+ * 负责 Cloudflare Turnstile 的参数提取、API 求解、token 注入、多平台 failover
+ *
+ * 支持提供商（默认可配置顺序）：
+ * CapSolver / Anti-Captcha / YesCaptcha / 2Captcha
+ *
+ * Anti-Captcha 官方文档（2026 核对）：
+ * - https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless
+ * - https://anti-captcha.com/apidoc/task-types/TurnstileTask
+ * - https://anti-captcha.com/apidoc/methods/createTask
+ * - https://anti-captcha.com/apidoc/methods/getTaskResult
  */
 
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -23,6 +32,29 @@ export const YESCAPTCHA_DEFAULT_TASK_TYPE = 'TurnstileTaskProxyless';
  * 文档：https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/25526273
  */
 export const YESCAPTCHA_SOFT_ID = 97020;
+
+/** Anti-Captcha API 基址 */
+export const ANTICAPTCHA_API_BASE = 'https://api.anti-captcha.com';
+
+/**
+ * 默认提供商顺序（多 key 同时配置时按此链 failover）
+ * CapSolver（AI）→ Anti-Captcha（真人/混合，CF 大更新时异构备份）→ YesCaptcha → 2Captcha
+ */
+export const DEFAULT_TURNSTILE_PROVIDER_ORDER = [
+  'CapSolver',
+  'AntiCaptcha',
+  'YesCaptcha',
+  '2Captcha',
+];
+
+/** 单平台连续失败达到此次数后切换下一平台 */
+export const DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES = 3;
+
+/** 多平台全挂错误码（供主流程识别高级告警） */
+export const TURNSTILE_ALL_PROVIDERS_FAILED = 'TURNSTILE_ALL_PROVIDERS_FAILED';
+
+/** 全挂错误摘要最大长度（避免 Telegram / 日志被超长堆栈撑爆） */
+export const TURNSTILE_ERROR_SUMMARY_MAX_LEN = 800;
 
 /**
  * 解析 YesCaptcha API 基址（去掉尾部斜杠；非法时回退默认国际节点）
@@ -58,46 +90,135 @@ export function resolveYesCaptchaTaskType(taskType) {
 }
 
 /**
- * 获取 Turnstile 求解服务商配置
- * 优先级：CapSolver > YesCaptcha > 2Captcha
+ * 规范化提供商名称（配置别名 → 内部名）
+ * @param {string} raw
+ * @returns {string|null}
+ */
+export function normalizeProviderName(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const key = raw.trim().toLowerCase().replace(/[-_\s]/g, '');
+  const map = {
+    capsolver: 'CapSolver',
+    anticaptcha: 'AntiCaptcha',
+    anti: 'AntiCaptcha',
+    yescaptcha: 'YesCaptcha',
+    yes: 'YesCaptcha',
+    '2captcha': '2Captcha',
+    twocaptcha: '2Captcha',
+    '2cap': '2Captcha',
+  };
+  return map[key] || null;
+}
+
+/**
+ * 解析 TURNSTILE_PROVIDER_ORDER（逗号分隔）
+ * 非法项忽略；空/未配置时返回默认顺序
+ * @param {string|undefined} orderStr
+ * @returns {string[]}
+ */
+export function parseTurnstileProviderOrder(orderStr) {
+  if (!orderStr || typeof orderStr !== 'string' || !orderStr.trim()) {
+    return [...DEFAULT_TURNSTILE_PROVIDER_ORDER];
+  }
+  const seen = new Set();
+  const order = [];
+  for (const part of orderStr.split(/[,|]/)) {
+    const name = normalizeProviderName(part);
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      order.push(name);
+    }
+  }
+  return order.length > 0 ? order : [...DEFAULT_TURNSTILE_PROVIDER_ORDER];
+}
+
+/**
+ * 根据 config 构建单个提供商对象（未配置 key 时返回 null）
+ * @param {string} name - CapSolver | AntiCaptcha | YesCaptcha | 2Captcha
+ * @param {object} config
+ * @returns {object|null}
+ */
+export function buildProviderByName(name, config) {
+  if (!config || typeof config !== 'object') return null;
+  const hasProxy = !!(config.PROXY_TYPE && config.PROXY_ADDRESS && config.PROXY_PORT);
+
+  switch (name) {
+    case 'CapSolver':
+      if (!config.CAPSOLVER_API_KEY) return null;
+      return {
+        name: 'CapSolver',
+        apiBase: 'https://api.capsolver.com',
+        clientKey: config.CAPSOLVER_API_KEY,
+        taskType: 'AntiTurnstileTaskProxyLess',
+        supportsProxy: false,
+      };
+    case 'AntiCaptcha': {
+      if (!config.ANTICAPTCHA_API_KEY) return null;
+      // 官方：优先 TurnstileTaskProxyless；仅当 proxyless 失败时才用带代理的 TurnstileTask
+      // 文档：https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless
+      const softIdRaw = config.ANTICAPTCHA_SOFT_ID;
+      const softIdNum = softIdRaw === '' || softIdRaw == null
+        ? NaN
+        : Number(softIdRaw);
+      return {
+        name: 'AntiCaptcha',
+        apiBase: ANTICAPTCHA_API_BASE,
+        clientKey: config.ANTICAPTCHA_API_KEY,
+        taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
+        supportsProxy: hasProxy,
+        // 官方 createTask 顶层 softId（camelCase）；非法/未配置时不传
+        softId: Number.isFinite(softIdNum) ? softIdNum : undefined,
+      };
+    }
+    case 'YesCaptcha':
+      if (!config.YESCAPTCHA_API_KEY) return null;
+      return {
+        name: 'YesCaptcha',
+        apiBase: resolveYesCaptchaApiBase(config.YESCAPTCHA_API_BASE),
+        clientKey: config.YESCAPTCHA_API_KEY,
+        taskType: resolveYesCaptchaTaskType(config.YESCAPTCHA_TASK_TYPE),
+        supportsProxy: false,
+        softID: YESCAPTCHA_SOFT_ID,
+      };
+    case '2Captcha':
+      if (!config.TWOCAPTCHA_API_KEY) return null;
+      return {
+        name: '2Captcha',
+        apiBase: 'https://api.2captcha.com',
+        clientKey: config.TWOCAPTCHA_API_KEY,
+        taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
+        supportsProxy: hasProxy,
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * 列出已配置的 Turnstile 提供商（按顺序，仅含有 key 的）
+ * @param {object} config - CONFIG 对象
+ * @returns {object[]}
+ */
+export function listTurnstileProviders(config) {
+  if (!config || typeof config !== 'object') return [];
+  const order = parseTurnstileProviderOrder(config.TURNSTILE_PROVIDER_ORDER);
+  const providers = [];
+  for (const name of order) {
+    const p = buildProviderByName(name, config);
+    if (p) providers.push(p);
+  }
+  return providers;
+}
+
+/**
+ * 获取 Turnstile 求解服务商配置（兼容旧接口：返回链上第一家）
+ * 优先级默认：CapSolver > AntiCaptcha > YesCaptcha > 2Captcha
  * @param {object} config - CONFIG 对象
  * @returns {object|null} - 服务商配置或 null
  */
 export function getTurnstileProvider(config) {
-  if (!config || typeof config !== 'object') return null;
-  const hasProxy = !!(config.PROXY_TYPE && config.PROXY_ADDRESS && config.PROXY_PORT);
-
-  if (config.CAPSOLVER_API_KEY) {
-    return {
-      name: 'CapSolver',
-      apiBase: 'https://api.capsolver.com',
-      clientKey: config.CAPSOLVER_API_KEY,
-      taskType: 'AntiTurnstileTaskProxyLess',
-      supportsProxy: false,
-    };
-  }
-  // YesCaptcha：协议与 CapSolver/2Captcha 同构（createTask / getTaskResult）
-  // 文档：https://yescaptcha.atlassian.net/wiki/spaces/YESCAPTCHA/pages/61734913
-  if (config.YESCAPTCHA_API_KEY) {
-    return {
-      name: 'YesCaptcha',
-      apiBase: resolveYesCaptchaApiBase(config.YESCAPTCHA_API_BASE),
-      clientKey: config.YESCAPTCHA_API_KEY,
-      taskType: resolveYesCaptchaTaskType(config.YESCAPTCHA_TASK_TYPE),
-      supportsProxy: false,
-      softID: YESCAPTCHA_SOFT_ID,
-    };
-  }
-  if (config.TWOCAPTCHA_API_KEY) {
-    return {
-      name: '2Captcha',
-      apiBase: 'https://api.2captcha.com',
-      clientKey: config.TWOCAPTCHA_API_KEY,
-      taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
-      supportsProxy: hasProxy,
-    };
-  }
-  return null;
+  const list = listTurnstileProviders(config);
+  return list.length > 0 ? list[0] : null;
 }
 
 /**
@@ -138,7 +259,7 @@ export async function extractTurnstileParams(page, logger = () => {}) {
 
 /**
  * 构建 Turnstile 求解 API 的任务参数（纯函数，便于单元测试）
- * @param {object} provider - getTurnstileProvider() 返回的服务商配置
+ * @param {object} provider - getTurnstileProvider() / listTurnstileProviders() 返回的服务商配置
  * @param {object} params - { sitekey, action, cData, chlPageData }
  * @param {object} config - { proxyType, proxyAddress, proxyPort, proxyLogin, proxyPassword, userAgent }
  * @param {string} websiteURL - 目标页面 URL
@@ -149,8 +270,14 @@ export function buildTurnstileTask(provider, params, config, websiteURL) {
     type: provider.taskType,
     websiteURL,
     websiteKey: params.sitekey,
-    userAgent: config.userAgent || '',
   };
+
+  // CapSolver / YesCaptcha / 2Captcha 可带 userAgent；
+  // Anti-Captcha 官方明确：自定义 User-Agent 无效且不应提交
+  // https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless
+  if (provider.name !== 'AntiCaptcha') {
+    task.userAgent = config.userAgent || '';
+  }
 
   if (provider.supportsProxy) {
     task.proxyType = config.proxyType;
@@ -160,15 +287,23 @@ export function buildTurnstileTask(provider, params, config, websiteURL) {
     if (config.proxyPassword) task.proxyPassword = config.proxyPassword;
   }
 
-  // CapSolver 用 metadata；YesCaptcha 仅需 websiteURL/websiteKey（官方文档无扩展字段）
-  // 其余（如 2Captcha）用顶层 action / data / pagedata
+  // CapSolver 用 metadata；YesCaptcha 仅需 websiteURL/websiteKey；
+  // Anti-Captcha 用 action / cData / chlPageData（官方字段名）；
+  // 2Captcha 用顶层 action / data / pagedata
   if (provider.name === 'CapSolver') {
     if (params.action || params.cData) {
       task.metadata = {};
       if (params.action) task.metadata.action = params.action;
       if (params.cData) task.metadata.cdata = params.cData;
     }
-  } else if (provider.name !== 'YesCaptcha') {
+  } else if (provider.name === 'YesCaptcha') {
+    // 官方文档无扩展字段
+  } else if (provider.name === 'AntiCaptcha') {
+    if (params.action) task.action = params.action;
+    if (params.cData) task.cData = params.cData;
+    if (params.chlPageData) task.chlPageData = params.chlPageData;
+  } else {
+    // 2Captcha 及其他同构协议
     if (params.action) task.action = params.action;
     if (params.cData) task.data = params.cData;
     if (params.chlPageData) task.pagedata = params.chlPageData;
@@ -195,7 +330,8 @@ export function maskTaskForLog(task) {
 
 /**
  * 构建 createTask 请求体（纯函数，便于单元测试）
- * YesCaptcha 在顶层附带 softID 开发者参数（与 task 同级，注意大小写）
+ * - YesCaptcha：顶层 softID（注意大小写）
+ * - Anti-Captcha：顶层 softId（官方 camelCase，可选）
  * @param {object} provider - getTurnstileProvider() 返回值
  * @param {object} task - buildTurnstileTask 返回的任务参数
  * @returns {object}
@@ -208,20 +344,66 @@ export function buildCreateTaskPayload(provider, task) {
   if (provider.name === 'YesCaptcha') {
     payload.softID = provider.softID ?? YESCAPTCHA_SOFT_ID;
   }
+  // Anti-Captcha createTask 可选 softId（开发者分成）
+  // 文档：https://anti-captcha.com/apidoc/methods/createTask
+  if (provider.name === 'AntiCaptcha' && Number.isFinite(provider.softId)) {
+    payload.softId = provider.softId;
+  }
   return payload;
 }
 
 /**
- * 通过 CapSolver / YesCaptcha / 2Captcha API 求解 Turnstile token
+ * 截断错误摘要（纯函数）
+ * @param {string} text
+ * @param {number} [maxLen]
+ * @returns {string}
+ */
+export function truncateErrorSummary(text, maxLen = TURNSTILE_ERROR_SUMMARY_MAX_LEN) {
+  const s = String(text || '');
+  const limit = Math.max(32, Number(maxLen) || TURNSTILE_ERROR_SUMMARY_MAX_LEN);
+  if (s.length <= limit) return s;
+  const marker = `…(已截断,共${s.length}字)`;
+  const bodyLen = Math.max(8, limit - marker.length);
+  return `${s.slice(0, bodyLen)}${marker}`;
+}
+
+/**
+ * 是否为 Turnstile 多平台全挂错误（优先读 error.code）
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isTurnstileOutageError(error) {
+  if (!error || typeof error !== 'object') {
+    const msg = String(error || '');
+    return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED)
+      || msg.includes('Turnstile 多平台均失败');
+  }
+  const err = /** @type {{ code?: string, message?: string }} */ (error);
+  if (err.code === TURNSTILE_ALL_PROVIDERS_FAILED) return true;
+  const msg = String(err.message || '');
+  return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED)
+    || msg.includes('Turnstile 多平台均失败');
+}
+
+/**
+ * 通过指定/默认提供商 API 求解 Turnstile token（单平台单次）
  * @param {string} websiteURL - 目标页面 URL
  * @param {object} params - { sitekey, action, cData, chlPageData }
  * @param {object} config - CONFIG 对象
  * @param {Function} logger - 日志函数
  * @param {number} timeout - 轮询超时（毫秒）
- * @returns {Promise<{ token: string, userAgent: string|null }>}
+ * @param {object|null} [providerOverride] - 指定提供商；默认取链上第一家
+ * @returns {Promise<{ token: string, userAgent: string|null, providerName: string }>}
  */
-export async function solveTurnstileViaAPI(websiteURL, params, config, logger = () => {}, timeout = 120_000) {
-  const provider = getTurnstileProvider(config);
+export async function solveTurnstileViaAPI(
+  websiteURL,
+  params,
+  config,
+  logger = () => {},
+  timeout = 120_000,
+  providerOverride = null,
+) {
+  const provider = providerOverride || getTurnstileProvider(config);
   if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
   if (!params?.sitekey) throw new Error('Turnstile sitekey 为空，无法求解');
 
@@ -334,13 +516,115 @@ export async function solveTurnstileViaAPI(websiteURL, params, config, logger = 
       const userAgent = resultData.solution.userAgent || null;
       logger(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
         (userAgent ? `，UA: ${userAgent.substring(0, 50)}...` : ''));
-      return { token, userAgent };
+      return { token, userAgent, providerName: provider.name };
     }
 
     logger(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
   }
 
   throw new Error(`${provider.name} 轮询次数耗尽，求解失败`);
+}
+
+/**
+ * 多平台串行 failover 求解 Turnstile
+ * 对每个已配置提供商：连续失败 maxFailuresPerProvider 次后切换下一家；
+ * 全部熔断后抛出 code=TURNSTILE_ALL_PROVIDERS_FAILED 的错误
+ *
+ * @param {string} websiteURL
+ * @param {object} params
+ * @param {object} config
+ * @param {Function} [logger]
+ * @param {object} [options]
+ * @param {number} [options.timeout]
+ * @param {number} [options.maxFailuresPerProvider]
+ * @param {Function} [options.solveFn] - 可注入，便于单测
+ * @returns {Promise<{ token: string, userAgent: string|null, providerName: string, attempts: object[] }>}
+ */
+export async function solveTurnstileWithFailover(
+  websiteURL,
+  params,
+  config,
+  logger = () => {},
+  options = {},
+) {
+  const timeout = options.timeout ?? 120_000;
+  const maxFailuresPerProvider = Math.max(
+    1,
+    Number(options.maxFailuresPerProvider) || DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
+  );
+  const solveFn = options.solveFn || solveTurnstileViaAPI;
+
+  const providers = listTurnstileProviders(config);
+  if (providers.length === 0) {
+    throw new Error('未配置 Turnstile 求解 API 密钥');
+  }
+
+  const chain = providers.map((p) => p.name).join(' → ');
+  logger(`Turnstile 多平台链路: ${chain}（每平台最多连续失败 ${maxFailuresPerProvider} 次后切换）`);
+
+  /** @type {{ provider: string, success: boolean, failures: number, lastError?: string }[]} */
+  const attempts = [];
+  /** @type {{ provider: string, attempt: number, error: string }[]} */
+  const allErrors = [];
+
+  for (const provider of providers) {
+    let consecutiveFailures = 0;
+    let lastError = '';
+
+    while (consecutiveFailures < maxFailuresPerProvider) {
+      const tryNo = consecutiveFailures + 1;
+      try {
+        logger(`▶ ${provider.name} 第 ${tryNo}/${maxFailuresPerProvider} 次尝试...`);
+        const result = await solveFn(websiteURL, params, config, logger, timeout, provider);
+        attempts.push({
+          provider: provider.name,
+          success: true,
+          failures: consecutiveFailures,
+        });
+        logger(`✅ ${provider.name} 求解成功（本平台此前失败 ${consecutiveFailures} 次）`);
+        return {
+          token: result.token,
+          userAgent: result.userAgent ?? null,
+          providerName: provider.name,
+          attempts: [...attempts],
+        };
+      } catch (error) {
+        consecutiveFailures += 1;
+        lastError = truncateErrorSummary(error?.message || String(error), 200);
+        allErrors.push({
+          provider: provider.name,
+          attempt: consecutiveFailures,
+          error: lastError,
+        });
+        logger(`✖ ${provider.name} 第 ${consecutiveFailures}/${maxFailuresPerProvider} 次失败: ${lastError}`);
+      }
+    }
+
+    attempts.push({
+      provider: provider.name,
+      success: false,
+      failures: consecutiveFailures,
+      lastError,
+    });
+    const isLast = provider === providers[providers.length - 1];
+    if (!isLast) {
+      logger(`⚡ ${provider.name} 已熔断（连续 ${maxFailuresPerProvider} 次失败），切换下一平台`);
+    }
+  }
+
+  const summary = truncateErrorSummary(
+    allErrors
+      .map((e) => `${e.provider}#${e.attempt}: ${e.error}`)
+      .join('; '),
+  );
+  const err = new Error(
+    `Turnstile 多平台均失败（链路: ${chain}）: ${summary}`,
+  );
+  err.code = TURNSTILE_ALL_PROVIDERS_FAILED;
+  err.attempts = attempts;
+  err.errors = allErrors;
+  err.providerNames = providers.map((p) => p.name);
+  throw err;
 }
 
 /**

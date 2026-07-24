@@ -658,10 +658,34 @@ export function buildSkipNotifyMessage({
 }
 
 /**
+ * 是否为 Turnstile 多平台全挂（删机风险最高级）
+ * 与 src/turnstile.mjs 的 TURNSTILE_ALL_PROVIDERS_FAILED 语义对齐（避免循环依赖，字面量保持同步）
+ * @param {object} opts
+ * @param {boolean} [opts.turnstileAllProvidersFailed]
+ * @param {string} [opts.errorMessage]
+ * @param {string} [opts.errorCode]
+ * @returns {boolean}
+ */
+export function isTurnstileAllProvidersFailed({
+  turnstileAllProvidersFailed,
+  errorMessage,
+  errorCode,
+} = {}) {
+  if (turnstileAllProvidersFailed === true) return true;
+  if (errorCode === 'TURNSTILE_ALL_PROVIDERS_FAILED') return true;
+  const msg = String(errorMessage || '');
+  return msg.includes('TURNSTILE_ALL_PROVIDERS_FAILED')
+    || msg.includes('Turnstile 多平台均失败');
+}
+
+/**
  * 构建续期失败 Telegram 消息
  * @param {object} params
  * @param {string[]} [params.processSteps] - 执行过程（仅 detail=full 时展示）
  * @param {'full'|'compact'|string} [params.detail='full']
+ * @param {boolean} [params.turnstileAllProvidersFailed] - 多平台全挂最高级告警
+ * @param {string[]} [params.failedProviders] - 已熔断的平台名列表
+ * @param {string} [params.errorCode]
  * @returns {string}
  */
 export function buildFailureNotifyMessage({
@@ -673,28 +697,66 @@ export function buildFailureNotifyMessage({
   executedAt,
   processSteps,
   detail = DEFAULT_TG_NOTIFY_DETAIL,
+  turnstileAllProvidersFailed = false,
+  failedProviders = [],
+  errorCode = '',
 }) {
   const mode = parseNotifyDetail(detail);
+  const multiProviderOutage = isTurnstileAllProvidersFailed({
+    turnstileAllProvidersFailed,
+    errorMessage,
+    errorCode,
+  });
+  // 多平台全挂视为最高级：即使连续失败未达阈值也升级
+  const escalate = isEscalation || multiProviderOutage;
+
+  let titlePrefix = escalate ? '🚨 <b>【告警升级】</b>' : '❌';
+  if (multiProviderOutage) {
+    titlePrefix = '🚨🚨 <b>【最高级告警·删机风险】</b>';
+  }
+
   const head =
-    `${isEscalation ? '🚨 <b>【告警升级】</b>' : '❌'} <b>Xserver VPS 续期失败</b>\n\n` +
+    `${titlePrefix} <b>Xserver VPS 续期失败</b>\n\n` +
     `⏰ 执行时间: ${escapeHtml(executedAt || formatTokyoDateTime())}\n` +
     `💥 错误信息: <code>${escapeHtml(errorMessage || '未知错误')}</code>\n` +
-    `${isEscalation ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}`;
+    `${multiProviderOutage
+      ? `🛑 <b>Turnstile 打码平台已全部失败</b>${failedProviders?.length
+        ? `（${escapeHtml(failedProviders.join(' → '))}）`
+        : ''}，请<strong>今天内手动登录官网续期</strong>，否则 VPS 可能被删除！\n`
+      : ''}` +
+    `${escalate && consecutiveFailures > 0
+      ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n`
+      : ''}`;
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     return head.trimEnd();
   }
 
+  const failHints = multiProviderOutage
+    ? [
+      `📋 失败说明:`,
+      `- 已配置的 Turnstile 打码平台均已熔断（每平台连续失败达阈值后切换）`,
+      `- 常见原因：Cloudflare 算法更新导致打码平台暂时失效`,
+      `- <b>立即行动</b>:`,
+      `  1. 立即人工登录 https://secure.xserver.ne.jp 完成续期`,
+      `  2. 检查各打码平台余额与官方状态（CapSolver / Anti-Captcha / YesCaptcha / 2Captcha）`,
+      `  3. 平台恢复后可依赖下次 cron 自动重试`,
+    ].join('\n')
+    : [
+      `📋 失败说明:`,
+      `- 验证码识别已自动重试 ${captchaMaxRetry} 次`,
+      `- Turnstile 已使用 API 求解（支持多平台自动降级）`,
+      `- 如持续失败，可尝试:`,
+      `  1. 配置住宅 IP 代理（PROXY_* 环境变量）`,
+      `  2. 检查打码平台 API 余额是否充足`,
+      `  3. 配置第二家打码平台 key（如 ANTICAPTCHA_API_KEY）实现 failover`,
+      `  4. 人工登录确认账号状态`,
+    ].join('\n');
+
   return (
     head +
     `\n${proxyHint}\n\n` +
-    `📋 失败说明:\n` +
-    `- 验证码识别已自动重试 ${captchaMaxRetry} 次\n` +
-    `- Turnstile 已使用 API 求解\n` +
-    `- 如持续失败，可尝试:\n` +
-    `  1. 配置住宅 IP 代理（PROXY_* 环境变量）\n` +
-    `  2. 检查 CapSolver API 余额是否充足\n` +
-    `  3. 人工登录确认账号状态` +
+    failHints +
     formatProcessSteps(processSteps, mode)
   );
 }

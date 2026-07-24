@@ -1,20 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getTurnstileProvider,
+  listTurnstileProviders,
   resolveYesCaptchaApiBase,
   resolveYesCaptchaTaskType,
   YESCAPTCHA_DEFAULT_API_BASE,
   YESCAPTCHA_DEFAULT_TASK_TYPE,
   YESCAPTCHA_SOFT_ID,
+  ANTICAPTCHA_API_BASE,
 } from '../../src/turnstile.mjs';
 
 // 构造一个可变 CONFIG 对象供测试修改
 const CONFIG = {
   CAPSOLVER_API_KEY: '',
+  ANTICAPTCHA_API_KEY: '',
+  ANTICAPTCHA_SOFT_ID: '',
   YESCAPTCHA_API_KEY: '',
   YESCAPTCHA_API_BASE: '',
   YESCAPTCHA_TASK_TYPE: '',
   TWOCAPTCHA_API_KEY: '',
+  TURNSTILE_PROVIDER_ORDER: '',
   PROXY_TYPE: '',
   PROXY_ADDRESS: '',
   PROXY_PORT: '',
@@ -26,19 +31,25 @@ describe('getTurnstileProvider', () => {
   beforeEach(() => {
     // 备份并清空 CONFIG 中与 Turnstile 相关的字段
     saved.CAPSOLVER_API_KEY = CONFIG.CAPSOLVER_API_KEY;
+    saved.ANTICAPTCHA_API_KEY = CONFIG.ANTICAPTCHA_API_KEY;
+    saved.ANTICAPTCHA_SOFT_ID = CONFIG.ANTICAPTCHA_SOFT_ID;
     saved.YESCAPTCHA_API_KEY = CONFIG.YESCAPTCHA_API_KEY;
     saved.YESCAPTCHA_API_BASE = CONFIG.YESCAPTCHA_API_BASE;
     saved.YESCAPTCHA_TASK_TYPE = CONFIG.YESCAPTCHA_TASK_TYPE;
     saved.TWOCAPTCHA_API_KEY = CONFIG.TWOCAPTCHA_API_KEY;
+    saved.TURNSTILE_PROVIDER_ORDER = CONFIG.TURNSTILE_PROVIDER_ORDER;
     saved.PROXY_TYPE = CONFIG.PROXY_TYPE;
     saved.PROXY_ADDRESS = CONFIG.PROXY_ADDRESS;
     saved.PROXY_PORT = CONFIG.PROXY_PORT;
 
     CONFIG.CAPSOLVER_API_KEY = '';
+    CONFIG.ANTICAPTCHA_API_KEY = '';
+    CONFIG.ANTICAPTCHA_SOFT_ID = '';
     CONFIG.YESCAPTCHA_API_KEY = '';
     CONFIG.YESCAPTCHA_API_BASE = '';
     CONFIG.YESCAPTCHA_TASK_TYPE = '';
     CONFIG.TWOCAPTCHA_API_KEY = '';
+    CONFIG.TURNSTILE_PROVIDER_ORDER = '';
     CONFIG.PROXY_TYPE = '';
     CONFIG.PROXY_ADDRESS = '';
     CONFIG.PROXY_PORT = '';
@@ -47,10 +58,13 @@ describe('getTurnstileProvider', () => {
   afterEach(() => {
     // 恢复原始值
     CONFIG.CAPSOLVER_API_KEY = saved.CAPSOLVER_API_KEY;
+    CONFIG.ANTICAPTCHA_API_KEY = saved.ANTICAPTCHA_API_KEY;
+    CONFIG.ANTICAPTCHA_SOFT_ID = saved.ANTICAPTCHA_SOFT_ID;
     CONFIG.YESCAPTCHA_API_KEY = saved.YESCAPTCHA_API_KEY;
     CONFIG.YESCAPTCHA_API_BASE = saved.YESCAPTCHA_API_BASE;
     CONFIG.YESCAPTCHA_TASK_TYPE = saved.YESCAPTCHA_TASK_TYPE;
     CONFIG.TWOCAPTCHA_API_KEY = saved.TWOCAPTCHA_API_KEY;
+    CONFIG.TURNSTILE_PROVIDER_ORDER = saved.TURNSTILE_PROVIDER_ORDER;
     CONFIG.PROXY_TYPE = saved.PROXY_TYPE;
     CONFIG.PROXY_ADDRESS = saved.PROXY_ADDRESS;
     CONFIG.PROXY_PORT = saved.PROXY_PORT;
@@ -102,17 +116,45 @@ describe('getTurnstileProvider', () => {
     expect(provider.supportsProxy).toBe(false);
   });
 
-  it('prefers CapSolver over YesCaptcha and 2Captcha', () => {
+  it('prefers CapSolver over AntiCaptcha / YesCaptcha / 2Captcha', () => {
     CONFIG.CAPSOLVER_API_KEY = 'cap-key';
+    CONFIG.ANTICAPTCHA_API_KEY = 'anti-key';
     CONFIG.YESCAPTCHA_API_KEY = 'yes-key';
     CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
     expect(getTurnstileProvider(CONFIG).name).toBe('CapSolver');
   });
 
-  it('prefers YesCaptcha over 2Captcha when CapSolver missing', () => {
+  it('prefers AntiCaptcha over YesCaptcha when CapSolver missing', () => {
+    CONFIG.ANTICAPTCHA_API_KEY = 'anti-key';
+    CONFIG.YESCAPTCHA_API_KEY = 'yes-key';
+    CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
+    expect(getTurnstileProvider(CONFIG).name).toBe('AntiCaptcha');
+  });
+
+  it('prefers YesCaptcha over 2Captcha when CapSolver/AntiCaptcha missing', () => {
     CONFIG.YESCAPTCHA_API_KEY = 'yes-key';
     CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
     expect(getTurnstileProvider(CONFIG).name).toBe('YesCaptcha');
+  });
+
+  it('returns AntiCaptcha when only ANTICAPTCHA_API_KEY is set', () => {
+    CONFIG.ANTICAPTCHA_API_KEY = 'anti-key';
+    const provider = getTurnstileProvider(CONFIG);
+    expect(provider.name).toBe('AntiCaptcha');
+    expect(provider.apiBase).toBe(ANTICAPTCHA_API_BASE);
+    expect(provider.taskType).toBe('TurnstileTaskProxyless');
+    expect(provider.supportsProxy).toBe(false);
+  });
+
+  it('listTurnstileProviders 返回全部已配置平台', () => {
+    CONFIG.CAPSOLVER_API_KEY = 'cap-key';
+    CONFIG.ANTICAPTCHA_API_KEY = 'anti-key';
+    CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
+    expect(listTurnstileProviders(CONFIG).map((p) => p.name)).toEqual([
+      'CapSolver',
+      'AntiCaptcha',
+      '2Captcha',
+    ]);
   });
 
   it('enables proxy mode for 2Captcha when proxy vars set', () => {

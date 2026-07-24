@@ -33,6 +33,15 @@ const makeYesCaptchaProvider = (taskType = 'TurnstileTaskProxyless') => ({
   supportsProxy: false,
 });
 
+const makeAntiCaptchaProvider = (withProxy = false, softId) => ({
+  name: 'AntiCaptcha',
+  apiBase: 'https://api.anti-captcha.com',
+  clientKey: 'anti-key',
+  taskType: withProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
+  supportsProxy: withProxy,
+  softId,
+});
+
 const makeConfig = (overrides = {}) => ({
   proxyType: '',
   proxyAddress: '',
@@ -290,6 +299,58 @@ describe('buildTurnstileTask', () => {
     expect(task.type).toBe('TurnstileTaskProxylessM1');
   });
 
+  // === Anti-Captcha（官方 cData / chlPageData，禁止自定义 UA）===
+
+  it('AntiCaptcha 无代理时使用 TurnstileTaskProxyless 且不带 userAgent', () => {
+    const task = buildTurnstileTask(
+      makeAntiCaptchaProvider(false),
+      makeParams({ sitekey: '0x4ANTI' }),
+      makeConfig(),
+      'https://example.com/page',
+    );
+    expect(task.type).toBe('TurnstileTaskProxyless');
+    expect(task.websiteURL).toBe('https://example.com/page');
+    expect(task.websiteKey).toBe('0x4ANTI');
+    expect(task.userAgent).toBeUndefined();
+  });
+
+  it('AntiCaptcha 使用官方字段 action / cData / chlPageData', () => {
+    const task = buildTurnstileTask(
+      makeAntiCaptchaProvider(false),
+      makeParams({ action: 'login', cData: 'cd', chlPageData: 'chl' }),
+      makeConfig(),
+      'https://example.com',
+    );
+    expect(task.action).toBe('login');
+    expect(task.cData).toBe('cd');
+    expect(task.chlPageData).toBe('chl');
+    // 不应误用 2Captcha 字段名
+    expect(task.data).toBeUndefined();
+    expect(task.pagedata).toBeUndefined();
+    expect(task.metadata).toBeUndefined();
+  });
+
+  it('AntiCaptcha 带代理时写入 proxy 字段', () => {
+    const task = buildTurnstileTask(
+      makeAntiCaptchaProvider(true),
+      makeParams(),
+      makeConfig({
+        proxyType: 'http',
+        proxyAddress: '8.8.8.8',
+        proxyPort: '1234',
+        proxyLogin: 'u',
+        proxyPassword: 'p',
+      }),
+      'https://example.com',
+    );
+    expect(task.type).toBe('TurnstileTask');
+    expect(task.proxyType).toBe('http');
+    expect(task.proxyAddress).toBe('8.8.8.8');
+    expect(task.proxyPort).toBe(1234);
+    expect(task.proxyLogin).toBe('u');
+    expect(task.proxyPassword).toBe('p');
+  });
+
   // === 不修改输入对象 ===
 
   it('不修改原始 params 对象', () => {
@@ -308,7 +369,7 @@ describe('buildTurnstileTask', () => {
 });
 
 describe('buildCreateTaskPayload', () => {
-  it('CapSolver / 2Captcha 仅含 clientKey 与 task，不含 softID', () => {
+  it('CapSolver / 2Captcha 仅含 clientKey 与 task，不含 softID/softId', () => {
     const task = { type: 'AntiTurnstileTaskProxyLess', websiteURL: 'https://a.com', websiteKey: 'k' };
     expect(buildCreateTaskPayload(makeCapSolverProvider(), task)).toEqual({
       clientKey: 'cap-key',
@@ -335,6 +396,21 @@ describe('buildCreateTaskPayload', () => {
     const provider = { ...makeYesCaptchaProvider(), softID: 12345 };
     const payload = buildCreateTaskPayload(provider, { type: 'TurnstileTaskProxyless' });
     expect(payload.softID).toBe(12345);
+  });
+
+  it('AntiCaptcha 无 softId 时不附带 softId 字段', () => {
+    const task = { type: 'TurnstileTaskProxyless', websiteURL: 'https://a.com', websiteKey: 'k' };
+    const payload = buildCreateTaskPayload(makeAntiCaptchaProvider(false), task);
+    expect(payload).toEqual({ clientKey: 'anti-key', task });
+    expect(payload.softId).toBeUndefined();
+    expect(payload.softID).toBeUndefined();
+  });
+
+  it('AntiCaptcha 配置 softId 时 createTask 顶层附带 softId（官方 camelCase）', () => {
+    const task = { type: 'TurnstileTaskProxyless', websiteURL: 'https://a.com', websiteKey: 'k' };
+    const payload = buildCreateTaskPayload(makeAntiCaptchaProvider(false, 1187), task);
+    expect(payload.softId).toBe(1187);
+    expect(payload.clientKey).toBe('anti-key');
   });
 });
 

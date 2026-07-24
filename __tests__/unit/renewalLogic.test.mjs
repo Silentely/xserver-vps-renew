@@ -23,6 +23,7 @@ import {
   formatProcessSteps,
   parseNotifyDetail,
   isFullNotifyDetail,
+  isTurnstileAllProvidersFailed,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
   DEFAULT_NEXT_RUN_INTERVAL_HOURS,
@@ -585,6 +586,20 @@ describe('buildSkipNotifyMessage', () => {
   });
 });
 
+describe('isTurnstileAllProvidersFailed', () => {
+  it('flag / errorCode / 文案均可识别', () => {
+    expect(isTurnstileAllProvidersFailed({ turnstileAllProvidersFailed: true })).toBe(true);
+    expect(isTurnstileAllProvidersFailed({
+      errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
+    })).toBe(true);
+    expect(isTurnstileAllProvidersFailed({
+      errorMessage: 'Turnstile 多平台均失败（链路: CapSolver）',
+    })).toBe(true);
+    expect(isTurnstileAllProvidersFailed({ errorMessage: 'timeout' })).toBe(false);
+    expect(isTurnstileAllProvidersFailed()).toBe(false);
+  });
+});
+
 describe('buildFailureNotifyMessage', () => {
   it('普通失败不含告警升级', () => {
     const msg = buildFailureNotifyMessage({
@@ -639,6 +654,33 @@ describe('buildFailureNotifyMessage', () => {
     expect(msg).not.toContain('执行过程');
     expect(msg).not.toContain('失败说明');
     expect(msg).not.toContain('hint');
+  });
+
+  it('多平台全挂时发出最高级删机风险告警', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'Turnstile 多平台均失败（链路: CapSolver → AntiCaptcha）: ...',
+      executedAt: 't',
+      turnstileAllProvidersFailed: true,
+      failedProviders: ['CapSolver', 'AntiCaptcha'],
+      processSteps: ['API 熔断'],
+      detail: 'full',
+      proxyHint: 'hint',
+    });
+    expect(msg).toContain('最高级告警');
+    expect(msg).toContain('删机风险');
+    expect(msg).toContain('手动登录');
+    expect(msg).toContain('CapSolver');
+    expect(msg).toContain('AntiCaptcha');
+  });
+
+  it('errorCode 为 TURNSTILE_ALL_PROVIDERS_FAILED 时同样升级', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'boom',
+      errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
+      executedAt: 't',
+      detail: 'compact',
+    });
+    expect(msg).toContain('最高级告警');
   });
 });
 

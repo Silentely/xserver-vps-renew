@@ -9,15 +9,18 @@
  * 环境变量：
  *   XSERVER_MEMBER_ID  - 会员ID（必填）
  *   XSERVER_PASSWORD   - 密码（必填）
- *   CAPSOLVER_API_KEY  - CapSolver API 密钥（必须：Turnstile 人机验证；未配置成功率极低）
- *   CAPTCHA_API        - 验证码识别API地址（可选，有默认公共端点）
- *   YESCAPTCHA_API_KEY - YesCaptcha API 密钥（Turnstile 备选，无 CapSolver 时使用）
- *   TWOCAPTCHA_API_KEY - 2Captcha API 密钥（Turnstile 备选，无 CapSolver/YesCaptcha 时使用）
- *   CHROME_PATH        - Chrome 可执行文件路径（默认自动检测）
- *   CHROME_USER_DATA   - Chrome 用户数据目录（默认 /data/chrome-profile）
- *   TG_BOT_TOKEN       - Telegram Bot Token（可选，启用通知）
- *   TG_CHAT_ID         - Telegram Chat ID（可选，启用通知）
- *   TG_NOTIFY_DETAIL   - 通知详细程度：full（完整摘要，默认）/ compact（简洁摘要）
+ *   CAPSOLVER_API_KEY     - CapSolver API 密钥（推荐：Turnstile 人机验证）
+ *   ANTICAPTCHA_API_KEY   - Anti-Captcha API 密钥（Turnstile 异构备份，推荐作第二家）
+ *   YESCAPTCHA_API_KEY    - YesCaptcha API 密钥（Turnstile 备选）
+ *   TWOCAPTCHA_API_KEY    - 2Captcha API 密钥（Turnstile 备选）
+ *   TURNSTILE_PROVIDER_ORDER - 多 key 时的 failover 顺序（可选）
+ *   TURNSTILE_PROVIDER_MAX_FAILURES - 单平台连续失败后切换阈值（默认 3）
+ *   CAPTCHA_API           - 验证码识别API地址（可选，有默认公共端点）
+ *   CHROME_PATH           - Chrome 可执行文件路径（默认自动检测）
+ *   CHROME_USER_DATA      - Chrome 用户数据目录（默认 /data/chrome-profile）
+ *   TG_BOT_TOKEN          - Telegram Bot Token（可选，启用通知）
+ *   TG_CHAT_ID            - Telegram Chat ID（可选，启用通知）
+ *   TG_NOTIFY_DETAIL      - 通知详细程度：full（完整摘要，默认）/ compact（简洁摘要）
  */
 
 import { addExtra } from 'puppeteer-extra';
@@ -34,10 +37,12 @@ import {
   recognizeCaptcha as _recognizeCaptcha,
 } from './src/captcha.mjs';
 import {
-  getTurnstileProvider as _getTurnstileProvider,
+  listTurnstileProviders as _listTurnstileProviders,
   extractTurnstileParams as _extractTurnstileParams,
-  solveTurnstileViaAPI as _solveTurnstileViaAPI,
+  solveTurnstileWithFailover as _solveTurnstileWithFailover,
   injectTurnstileToken as _injectTurnstileToken,
+  isTurnstileOutageError,
+  DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
 } from './src/turnstile.mjs';
 import {
   writeRenewalStatus,
@@ -69,6 +74,7 @@ import {
   buildProxyHint,
   getRemainingHours,
   parseNotifyDetail,
+  isTurnstileAllProvidersFailed,
   RENEWAL_WINDOW_HOURS,
   FREE_VPS_MAX_HOURS,
   resolveNextRunAt,
@@ -88,9 +94,9 @@ async function recognizeCaptcha(imgSrc) {
   return _recognizeCaptcha(imgSrc, CONFIG.CAPTCHA_API, log);
 }
 
-/** Turnstile 服务商选择包装（注入 CONFIG） */
-function getTurnstileProvider() {
-  return _getTurnstileProvider(CONFIG);
+/** 已配置的 Turnstile 提供商列表（按 failover 顺序） */
+function listTurnstileProviders() {
+  return _listTurnstileProviders(CONFIG);
 }
 
 /** Turnstile 参数提取包装（注入 log） */
@@ -98,9 +104,12 @@ async function extractTurnstileParams(page) {
   return _extractTurnstileParams(page, log);
 }
 
-/** Turnstile API 求解包装（注入 CONFIG 和 log） */
-async function solveTurnstileViaAPI(websiteURL, params) {
-  return _solveTurnstileViaAPI(websiteURL, params, CONFIG, log, CONFIG.TURNSTILE_API_TIMEOUT);
+/** Turnstile 多平台 failover 求解（主路径） */
+async function solveTurnstileWithFailover(websiteURL, params) {
+  return _solveTurnstileWithFailover(websiteURL, params, CONFIG, log, {
+    timeout: CONFIG.TURNSTILE_API_TIMEOUT,
+    maxFailuresPerProvider: CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES,
+  });
 }
 
 /** Turnstile token 注入包装（注入 log） */
@@ -148,16 +157,27 @@ const CONFIG = {
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
 
-  // Turnstile API 求解（CapSolver > YesCaptcha > 2Captcha）
+  // Turnstile API 求解（多 key 时按顺序 failover，默认 CapSolver → AntiCaptcha → YesCaptcha → 2Captcha）
   CAPSOLVER_API_KEY: process.env.CAPSOLVER_API_KEY || '',
+  ANTICAPTCHA_API_KEY: process.env.ANTICAPTCHA_API_KEY || '', // 异构备份（真人/混合）
+  // Anti-Captcha 开发者 softId（可选，未注册可不填）
+  ANTICAPTCHA_SOFT_ID: process.env.ANTICAPTCHA_SOFT_ID || '',
   YESCAPTCHA_API_KEY: process.env.YESCAPTCHA_API_KEY || '',  // Turnstile 备选（国内友好）
   // 国际: https://api.yescaptcha.com ；国内: https://cn.yescaptcha.com
   YESCAPTCHA_API_BASE: process.env.YESCAPTCHA_API_BASE || '',
   // TurnstileTaskProxyless（默认）或 TurnstileTaskProxylessM1
   YESCAPTCHA_TASK_TYPE: process.env.YESCAPTCHA_TASK_TYPE || '',
   TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',  // 仅用于 Turnstile 求解
+  // 逗号分隔自定义顺序，例如: CapSolver,AntiCaptcha,YesCaptcha,2Captcha
+  TURNSTILE_PROVIDER_ORDER: process.env.TURNSTILE_PROVIDER_ORDER || '',
+  // 单平台连续失败达到此次数后切换下一平台
+  TURNSTILE_PROVIDER_MAX_FAILURES: parsePositiveInt(
+    process.env.TURNSTILE_PROVIDER_MAX_FAILURES,
+    DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
+    { min: 1, max: 10 },
+  ),
 
-  // 住宅代理（可选，用于 2Captcha TurnstileTask 带代理求解）
+  // 住宅代理（可选，用于 2Captcha / Anti-Captcha 带代理求解）
   PROXY_TYPE: process.env.PROXY_TYPE || '',           // http | socks4 | socks5
   PROXY_ADDRESS: process.env.PROXY_ADDRESS || '',     // IP 或域名
   PROXY_PORT: process.env.PROXY_PORT || '',            // 端口
@@ -713,18 +733,16 @@ async function waitForTurnstile(page) {
     log(`截图失败: ${e.message}`);
   }
 
-  // ========== Turnstile 验证：直接使用 API 求解 ==========
-  // 🔧 优化说明：
-  // - 策略 1（点击 checkbox 自然通过）在 Docker 环境成功率极低（<5%），且耗时 8-9 秒
-  // - 直接使用策略 2（API 求解），成功率 >90%，耗时 5-7 秒
-  // - 总耗时优化：22.9s → 12.1s（-10.8s）
-  log('Turnstile 验证: 跳过自然通过方式（Docker 环境成功率低），直接使用 API 求解');
+  // ========== Turnstile 验证：多平台 API failover 求解 ==========
+  // - 策略 1（点击 checkbox 自然通过）在 Docker 环境成功率极低（<5%）
+  // - 直接使用 API 求解；多 key 时主平台连续失败后自动切换副平台
+  log('Turnstile 验证: 跳过自然通过方式（Docker 环境成功率低），使用多平台 API failover 求解');
 
-  // ========== API 求解模式 ==========
-  const provider = getTurnstileProvider();
+  const providers = listTurnstileProviders();
 
-  if (provider) {
-    log(`正在调用 ${provider.name} API 求解 Turnstile...`);
+  if (providers.length > 0) {
+    const chain = providers.map((p) => p.name).join(' → ');
+    log(`已配置 Turnstile 平台: ${chain}`);
 
     // 提取 sitekey 及参数
     const params = await extractTurnstileParams(page);
@@ -735,9 +753,11 @@ async function waitForTurnstile(page) {
 
     try {
       const currentURL = page.url();
-      const result = await solveTurnstileViaAPI(currentURL, params);
+      const result = await solveTurnstileWithFailover(currentURL, params);
+      log(`Turnstile 由 ${result.providerName} 求解成功`);
 
       // 如果 API 返回的 UA 与当前不同，更新浏览器 UA 以匹配 token 绑定
+      // Anti-Captcha 官方也会返回 worker 的 userAgent，提交时建议对齐
       if (result.userAgent) {
         const currentUA = await page.evaluate(() => navigator.userAgent);
         if (currentUA !== result.userAgent) {
@@ -796,6 +816,11 @@ async function waitForTurnstile(page) {
 
       return true;
     } catch (e) {
+      // 多平台全挂：向上抛出，触发最高级 Telegram 告警（勿吞为 false）
+      if (isTurnstileOutageError(e)) {
+        err(`Turnstile 多平台均失败，触发最高级告警: ${e.message}`);
+        throw e;
+      }
       err(`API 求解失败: ${e.message}`);
       return false;
     }
@@ -952,6 +977,12 @@ async function handleCaptchaPage(page) {
     } catch (error) {
       lastError = error;
 
+      // Turnstile 多平台全挂：不可靠图形验证码重试挽回，立即上抛触发最高级告警
+      if (isTurnstileOutageError(error)) {
+        log('❌ Turnstile 多平台均已熔断，跳过验证码重试，立即终止本轮');
+        throw error;
+      }
+
       if (attempt < maxRetries) {
         log(`❌ 第 ${attempt} 次尝试失败: ${error.message}`);
         log(`⏭️ 准备第 ${attempt + 1} 次尝试...`);
@@ -997,12 +1028,20 @@ async function main() {
     throw new Error(`配置校验失败: ${configErrors.join('；')}`);
   }
 
-  if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.YESCAPTCHA_API_KEY && !CONFIG.TWOCAPTCHA_API_KEY) {
-    log('⚠️ 未配置 CAPSOLVER_API_KEY（必须）：Turnstile 人机验证将依赖自然通过，成功率极低（Docker 环境几乎不可用）。请配置 CapSolver：https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG ；备选 YesCaptcha / 2Captcha');
-  } else if (!CONFIG.CAPSOLVER_API_KEY && CONFIG.YESCAPTCHA_API_KEY) {
-    log('ℹ️ 未配置 CAPSOLVER_API_KEY，将使用 YesCaptcha 作为 Turnstile 备选求解。推荐优先配置 CapSolver');
-  } else if (!CONFIG.CAPSOLVER_API_KEY && !CONFIG.YESCAPTCHA_API_KEY && CONFIG.TWOCAPTCHA_API_KEY) {
-    log('ℹ️ 未配置 CAPSOLVER_API_KEY，将使用 2Captcha 作为 Turnstile 备选求解。推荐优先配置 CapSolver');
+  {
+    const tsProviders = listTurnstileProviders();
+    if (tsProviders.length === 0) {
+      log('⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份');
+    } else {
+      const chain = tsProviders.map((p) => p.name).join(' → ');
+      log(`Turnstile 多平台链路: ${chain}（每平台连续失败 ${CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES} 次后切换）`);
+      if (!CONFIG.CAPSOLVER_API_KEY) {
+        log('ℹ️ 未配置 CAPSOLVER_API_KEY，将按已配置链路求解。仍推荐配置 CapSolver 作为主平台');
+      }
+      if (tsProviders.length === 1) {
+        log('💡 仅配置 1 家打码平台：CF 大更新时无 failover。建议再配 ANTICAPTCHA_API_KEY 或另一家 key 提升容错');
+      }
+    }
   }
 
   let browser = null;
@@ -1272,15 +1311,28 @@ async function main() {
 
     const failureSteps = [...processSteps, `异常终止: ${e.message}`];
 
+    const turnstileAllProvidersFailed = isTurnstileAllProvidersFailed({
+      errorMessage: e.message,
+      errorCode: e?.code,
+    });
+    const failedProviders = Array.isArray(e?.providerNames)
+      ? e.providerNames
+      : (Array.isArray(e?.attempts)
+        ? e.attempts.map((a) => a.provider).filter(Boolean)
+        : []);
+
     await notify(buildFailureNotifyMessage({
       errorMessage: e.message,
       consecutiveFailures,
-      isEscalation,
+      isEscalation: isEscalation || turnstileAllProvidersFailed,
       proxyHint,
       captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
       executedAt: formatTokyoDateTime(),
       processSteps: failureSteps,
       detail: CONFIG.TG_NOTIFY_DETAIL,
+      turnstileAllProvidersFailed,
+      failedProviders,
+      errorCode: e?.code || '',
     }));
     process.exitCode = 1;
   } finally {
@@ -1326,4 +1378,6 @@ export {
   buildProxyHint,
   parseNotifyDetail,
   formatTokyoDateTime,
+  listTurnstileProviders,
+  isTurnstileAllProvidersFailed,
 };

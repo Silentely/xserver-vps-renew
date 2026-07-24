@@ -16,10 +16,13 @@ const {
 
 const makeConfig = (overrides = {}) => ({
   CAPSOLVER_API_KEY: '',
+  ANTICAPTCHA_API_KEY: '',
+  ANTICAPTCHA_SOFT_ID: '',
   YESCAPTCHA_API_KEY: '',
   YESCAPTCHA_API_BASE: '',
   YESCAPTCHA_TASK_TYPE: '',
   TWOCAPTCHA_API_KEY: '',
+  TURNSTILE_PROVIDER_ORDER: '',
   PROXY_TYPE: '',
   PROXY_ADDRESS: '',
   PROXY_PORT: '',
@@ -303,6 +306,57 @@ describe('solveTurnstileViaAPI', () => {
     expect(body.task.proxyType).toBe('socks5');
     expect(body.task.proxyAddress).toBe('1.2.3.4');
     expect(body.task.proxyPort).toBe(1080);
+  });
+
+  it('AntiCaptcha 成功求解并按官方字段构建 createTask', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errorId: 0, taskId: 7654321 }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({
+        errorId: 0,
+        status: 'ready',
+        solution: {
+          token: 'token-anti-xyz',
+          userAgent: 'Mozilla/5.0 Anti-UA',
+        },
+      }),
+    });
+
+    const config = makeConfig({
+      ANTICAPTCHA_API_KEY: 'anti-key',
+      ANTICAPTCHA_SOFT_ID: '1187',
+    });
+    const result = await solveTurnstileViaAPI(
+      'https://example.com/page',
+      { sitekey: '0x4ANTI', action: 'login', cData: 'cd', chlPageData: 'chl' },
+      config,
+      mockLogger,
+    );
+
+    expect(result.token).toBe('token-anti-xyz');
+    expect(result.userAgent).toBe('Mozilla/5.0 Anti-UA');
+    expect(result.providerName).toBe('AntiCaptcha');
+
+    const createCall = mockFetch.mock.calls[0];
+    expect(createCall[0]).toBe('https://api.anti-captcha.com/createTask');
+    const body = JSON.parse(createCall[1].body);
+    expect(body.clientKey).toBe('anti-key');
+    expect(body.softId).toBe(1187);
+    expect(body.task.type).toBe('TurnstileTaskProxyless');
+    expect(body.task.websiteKey).toBe('0x4ANTI');
+    expect(body.task.websiteURL).toBe('https://example.com/page');
+    expect(body.task.action).toBe('login');
+    expect(body.task.cData).toBe('cd');
+    expect(body.task.chlPageData).toBe('chl');
+    // 官方：不要提交自定义 userAgent
+    expect(body.task.userAgent).toBeUndefined();
+
+    expect(mockFetch.mock.calls[1][0]).toBe('https://api.anti-captcha.com/getTaskResult');
   });
 });
 
