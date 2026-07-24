@@ -4,7 +4,7 @@
 
 ### 功能（2026-07-24）
 - **Turnstile 多平台 failover + Anti-Captcha**
-  - 新增 `ANTICAPTCHA_API_KEY`：按 [Anti-Captcha 官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) 调用 `TurnstileTaskProxyless` / `TurnstileTask`（字段 `cData`/`chlPageData`，createTask 可选 `softId`，不提交自定义 UA）
+  - 新增 `ANTICAPTCHA_API_KEY`：按 [Anti-Captcha 官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) 调用 `TurnstileTaskProxyless` / `TurnstileTask`（字段 `cData`/`chlPageData`，createTask 可选 `softId`，不提交自定义 UA）；注册邀请链接：https://getcaptchasolution.com/4isxcbvw0n
   - 多 key 时按顺序串行降级：默认 `CapSolver → AntiCaptcha → YesCaptcha → 2Captcha`（可用 `TURNSTILE_PROVIDER_ORDER` 覆盖）
   - 单平台连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换下一家；全部熔断抛出 `TURNSTILE_ALL_PROVIDERS_FAILED`
   - Telegram 多平台全挂时推送【最高级告警·删机风险】，明确要求当日手动续期

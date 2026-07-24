@@ -16,7 +16,7 @@
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证（**多平台 failover**）：
   - **CapSolver**（推荐主平台）：`CAPSOLVER_API_KEY`，`AntiTurnstileTaskProxyLess`；[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)
-  - **Anti-Captcha**（推荐异构备份）：`ANTICAPTCHA_API_KEY`，`TurnstileTaskProxyless` / `TurnstileTask`；[官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless)
+  - **Anti-Captcha**（推荐异构备份）：`ANTICAPTCHA_API_KEY`，`TurnstileTaskProxyless` / `TurnstileTask`；[注册邀请链接](https://getcaptchasolution.com/4isxcbvw0n) · [官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless)
   - **YesCaptcha** / **2Captcha**：备选；多 key 时**全部参与**串行降级（非「只启用一家」）
   - 单平台连续失败 N 次（默认 3）自动切换下一家；全部熔断 → Telegram **最高级删机风险告警**
   - **无密钥降级**：等待自然通过（Docker / 无头几乎不可用，**不建议**）
@@ -109,7 +109,7 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 | 顺序（默认） | 环境变量 | 任务类型 | 说明 |
 |--------------|----------|----------|------|
 | 1 | `CAPSOLVER_API_KEY` | `AntiTurnstileTaskProxyLess` | AI 求解，速度快；[注册](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG) |
-| 2 | `ANTICAPTCHA_API_KEY` | `TurnstileTaskProxyless`（有代理则为 `TurnstileTask`） | 真人/混合异构备份；[文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) |
+| 2 | `ANTICAPTCHA_API_KEY` | `TurnstileTaskProxyless`（有代理则为 `TurnstileTask`） | 真人/混合异构备份；[注册](https://getcaptchasolution.com/4isxcbvw0n) · [文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) |
 | 3 | `YESCAPTCHA_API_KEY` | `TurnstileTaskProxyless` / `M1` | 国内友好；自动 `softID: 97020` |
 | 4 | `TWOCAPTCHA_API_KEY` | `TurnstileTask` / `Proxyless` | 备选 |
 
@@ -137,7 +137,7 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 
 | 变量 | 说明 |
 |------|------|
-| `ANTICAPTCHA_API_KEY` | Anti-Captcha API 密钥（推荐异构备份；注册：[anti-captcha.com](https://anti-captcha.com/)，`TurnstileTaskProxyless`） |
+| `ANTICAPTCHA_API_KEY` | Anti-Captcha API 密钥（推荐异构备份；注册：[邀请链接](https://getcaptchasolution.com/4isxcbvw0n)，`TurnstileTaskProxyless`） |
 | `ANTICAPTCHA_SOFT_ID` | Anti-Captcha 开发者 softId（可选） |
 | `YESCAPTCHA_API_KEY` | YesCaptcha API 密钥（注册：[yescaptcha.com](https://yescaptcha.com/)，`TurnstileTaskProxyless`；内置 `softID: 97020`） |
 | `YESCAPTCHA_API_BASE` | YesCaptcha API 节点（可选，默认 `https://api.yescaptcha.com`；国内可用 `https://cn.yescaptcha.com`） |
@@ -325,7 +325,7 @@ npm run test:watch
 
 **解决方法**：
 1. **至少配置 1 家** Turnstile key（推荐 `CAPSOLVER_API_KEY`，[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)）并重启容器
-2. **强烈建议再配** `ANTICAPTCHA_API_KEY`（[Anti-Captcha](https://anti-captcha.com/)）实现 failover
+2. **强烈建议再配** `ANTICAPTCHA_API_KEY`（[Anti-Captcha 邀请链接](https://getcaptchasolution.com/4isxcbvw0n)）实现 failover
 3. 检查各打码平台余额是否充足
 4. 可选：配置住宅代理；也可改用/加配 `YESCAPTCHA_API_KEY` / `TWOCAPTCHA_API_KEY`
 5. 若收到【最高级告警·删机风险】：请**当日手动登录官网续期**，勿只等脚本
