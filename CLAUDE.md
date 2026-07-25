@@ -244,7 +244,7 @@ npm run test:watch
 
 - **多平台串行 failover**（默认顺序）：CapSolver → AntiCaptcha → YesCaptcha → 2Captcha
 - **CapSolver**：`CAPSOLVER_API_KEY`（`AntiTurnstileTaskProxyLess`，不支持代理）
-- **Anti-Captcha**：`ANTICAPTCHA_API_KEY`（`TurnstileTaskProxyless` / 有代理时 `TurnstileTask`；官方字段 `cData`/`chlPageData`；不提交自定义 UA）
+- **Anti-Captcha**：`ANTICAPTCHA_API_KEY`（`TurnstileTaskProxyless`；仅当 `PROXY_ADDRESS` 为 IP 时用 `TurnstileTask`；域名为代理时自动 Proxyless；官方字段 `cData`/`chlPageData`；不提交自定义 UA）
 - **YesCaptcha**：`YESCAPTCHA_API_KEY`（`TurnstileTaskProxyless` / `M1`；`softID: 97020`）
 - **2Captcha**：`TWOCAPTCHA_API_KEY`（支持代理）
 - 单平台连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换；全部熔断 → `TURNSTILE_ALL_PROVIDERS_FAILED` + 最高级 Telegram 告警

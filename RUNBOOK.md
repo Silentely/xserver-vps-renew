@@ -58,6 +58,7 @@ docker compose restart
 | `Keras 模型 API 响应 503` / `请求超时` | Cloud Run 冷启动或网络 | 等待后重试；检查 `CAPTCHA_API`（默认或自建）可达性 |
 | `Turnstile 等待超时` / `未配置 Turnstile 求解 API` | 未配打码平台或 Cloudflare 拦截 | **配置至少 1 家 API key** 并确认余额；可选住宅代理 |
 | CapSolver / Anti-Captcha 求解失败 / 余额错误 | 密钥无效或欠费 | 检查对应平台 Key 与余额；有第二家 key 时会自动 failover |
+| `Proxy address 'xxx' is invalid. Only IP addresses are supported` | AntiCaptcha 收到了域名代理（旧版行为） | 升级到含「域名自动 Proxyless」的版本；或把 `PROXY_ADDRESS` 改为 IP；浏览器域名代理可保留 |
 | 长期 `无需续期` 后 VPS 被回收 | 调度过稀，错过 12h 窗口 | 4GB 最长 24h、剩余 ≤12h 才可续；将 `CRON_SCHEDULE` 设为至少 `0 */6 * * *` |
 
 ## 配置检查清单

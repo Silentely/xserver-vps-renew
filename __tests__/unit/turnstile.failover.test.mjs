@@ -7,6 +7,8 @@ import {
   solveTurnstileWithFailover,
   truncateErrorSummary,
   isTurnstileOutageError,
+  isIpProxyAddress,
+  resolveAntiCaptchaProxyMode,
   DEFAULT_TURNSTILE_PROVIDER_ORDER,
   DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
   TURNSTILE_ALL_PROVIDERS_FAILED,
@@ -106,7 +108,7 @@ describe('listTurnstileProviders', () => {
     expect(getTurnstileProvider(config).name).toBe('AntiCaptcha');
   });
 
-  it('AntiCaptcha 有代理时使用 TurnstileTask', () => {
+  it('AntiCaptcha 有 IP 代理时使用 TurnstileTask', () => {
     const list = listTurnstileProviders(makeConfig({
       ANTICAPTCHA_API_KEY: 'a',
       PROXY_TYPE: 'http',
@@ -117,12 +119,26 @@ describe('listTurnstileProviders', () => {
     expect(list[0].apiBase).toBe(ANTICAPTCHA_API_BASE);
     expect(list[0].taskType).toBe('TurnstileTask');
     expect(list[0].supportsProxy).toBe(true);
+    expect(list[0].proxyMode).toBe('ip');
+  });
+
+  it('AntiCaptcha 域名代理时自动改走 TurnstileTaskProxyless', () => {
+    const list = listTurnstileProviders(makeConfig({
+      ANTICAPTCHA_API_KEY: 'a',
+      PROXY_TYPE: 'http',
+      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_PORT: '80',
+    }));
+    expect(list[0].taskType).toBe('TurnstileTaskProxyless');
+    expect(list[0].supportsProxy).toBe(false);
+    expect(list[0].proxyMode).toBe('hostname_skipped');
   });
 
   it('AntiCaptcha 无代理时使用 TurnstileTaskProxyless', () => {
     const list = listTurnstileProviders(makeConfig({ ANTICAPTCHA_API_KEY: 'a' }));
     expect(list[0].taskType).toBe('TurnstileTaskProxyless');
     expect(list[0].supportsProxy).toBe(false);
+    expect(list[0].proxyMode).toBe('none');
   });
 
   it('AntiCaptcha softId 透传', () => {
@@ -294,5 +310,58 @@ describe('truncateErrorSummary / isTurnstileOutageError', () => {
     expect(isTurnstileOutageError(e)).toBe(true);
     expect(isTurnstileOutageError(new Error('timeout'))).toBe(false);
     expect(isTurnstileOutageError(null)).toBe(false);
+  });
+});
+
+describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
+  it('识别 IPv4 / 拒绝域名', () => {
+    expect(isIpProxyAddress('1.2.3.4')).toBe(true);
+    expect(isIpProxyAddress('8.8.8.8')).toBe(true);
+    expect(isIpProxyAddress('256.1.1.1')).toBe(false);
+    expect(isIpProxyAddress('p.webshare.io')).toBe(false);
+    expect(isIpProxyAddress('proxy.example.com')).toBe(false);
+    expect(isIpProxyAddress('')).toBe(false);
+    expect(isIpProxyAddress(null)).toBe(false);
+  });
+
+  it('识别 IPv6', () => {
+    expect(isIpProxyAddress('2001:db8::1')).toBe(true);
+    expect(isIpProxyAddress('[2001:db8::1]')).toBe(true);
+  });
+
+  it('resolveAntiCaptchaProxyMode 三种模式', () => {
+    expect(resolveAntiCaptchaProxyMode({})).toEqual({ useProxy: false, reason: 'none' });
+    expect(resolveAntiCaptchaProxyMode({
+      PROXY_TYPE: 'http',
+      PROXY_ADDRESS: '1.2.3.4',
+      PROXY_PORT: '80',
+    })).toEqual({ useProxy: true, reason: 'ip' });
+    expect(resolveAntiCaptchaProxyMode({
+      PROXY_TYPE: 'http',
+      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_PORT: '80',
+    })).toEqual({ useProxy: false, reason: 'hostname_skipped' });
+  });
+
+  it('域名代理时 solve 日志提示且任务无 proxy 字段', async () => {
+    const logger = vi.fn();
+    // 通过 list + build 验证 task 不带 proxy（集成在 solve 前）
+    const config = makeConfig({
+      ANTICAPTCHA_API_KEY: 'a',
+      PROXY_TYPE: 'http',
+      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_PORT: '80',
+    });
+    const p = listTurnstileProviders(config)[0];
+    expect(p.supportsProxy).toBe(false);
+    expect(p.taskType).toBe('TurnstileTaskProxyless');
+    // 触发 failover 内的启动日志
+    const solveFn = vi.fn().mockResolvedValue({ token: 't', userAgent: null });
+    await solveTurnstileWithFailover(
+      'https://ex.com', { sitekey: '0x4' }, config, logger,
+      { maxFailuresPerProvider: 1, solveFn },
+    );
+    const joined = logger.mock.calls.map((c) => c[0]).join('\n');
+    expect(joined).toMatch(/域名代理|Proxyless/);
   });
 });

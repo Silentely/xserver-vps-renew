@@ -19,6 +19,7 @@ import {
   buildSkipNotifyMessage,
   buildFailureNotifyMessage,
   buildProxyHint,
+  formatTurnstileNotifyLine,
   formatRemainingHours,
   formatProcessSteps,
   parseNotifyDetail,
@@ -500,6 +501,35 @@ describe('buildSuccessNotifyMessage', () => {
     expect(msg).not.toContain('VPS 规格');
     expect(msg).not.toContain('原到期日');
   });
+
+  it('成功通知含 Turnstile 平台与 failover 摘要', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      newExpireDate: '2026-07-26',
+      executedAt: 't',
+      nextRunAt: 'n',
+      turnstileProvider: 'CapSolver',
+      turnstileAttempts: [
+        { provider: 'AntiCaptcha', success: false, failures: 3 },
+        { provider: 'CapSolver', success: true, failures: 0 },
+      ],
+      detail: 'full',
+    });
+    expect(msg).toContain('Turnstile: CapSolver');
+    expect(msg).toContain('AntiCaptcha');
+    expect(msg).toContain('熔断后切换');
+  });
+});
+
+describe('formatTurnstileNotifyLine', () => {
+  it('无平台返回空', () => {
+    expect(formatTurnstileNotifyLine({})).toBe('');
+  });
+
+  it('仅成功平台', () => {
+    expect(formatTurnstileNotifyLine({ providerName: 'CapSolver' }))
+      .toBe('🔐 Turnstile: CapSolver');
+  });
 });
 
 describe('buildSkipNotifyMessage', () => {
@@ -685,16 +715,32 @@ describe('buildFailureNotifyMessage', () => {
 });
 
 describe('buildProxyHint', () => {
-  it('有代理时显示脱敏信息', () => {
-    expect(buildProxyHint({
+  it('有代理时显示浏览器代理脱敏信息', () => {
+    const msg = buildProxyHint({
       hasProxy: true,
       proxyType: 'socks5',
       maskedAddress: '****.100',
       proxyPort: 1080,
-    })).toContain('socks5://****.100:1080');
+    });
+    expect(msg).toContain('浏览器代理');
+    expect(msg).toContain('socks5://****.100:1080');
+  });
+
+  it('域名代理跳过 AntiCaptcha 时附加说明', () => {
+    const msg = buildProxyHint({
+      hasProxy: true,
+      proxyType: 'http',
+      maskedAddress: '***e.io',
+      proxyPort: 80,
+      antiCaptchaHostnameSkipped: true,
+    });
+    expect(msg).toContain('仅支持 IP');
+    expect(msg).toContain('Proxyless');
   });
 
   it('无代理时给出优化建议', () => {
-    expect(buildProxyHint({ hasProxy: false })).toContain('优化建议');
+    const msg = buildProxyHint({ hasProxy: false });
+    expect(msg).toContain('优化建议');
+    expect(msg).toContain('仅接受 IP');
   });
 });

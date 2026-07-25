@@ -133,6 +133,57 @@ export function parseTurnstileProviderOrder(orderStr) {
 }
 
 /**
+ * 判断代理地址是否为 IP（IPv4 / IPv6）
+ * Anti-Captcha 官方 TurnstileTask 仅支持 IP，不支持域名（如 p.webshare.io）
+ * 文档：https://anti-captcha.com/apidoc/task-types/TurnstileTask
+ * @param {string|undefined|null} address
+ * @returns {boolean}
+ */
+export function isIpProxyAddress(address) {
+  if (!address || typeof address !== 'string') return false;
+  // 去掉可能的方括号（IPv6 URL 形式）与空白
+  const host = address.trim().replace(/^\[|\]$/g, '');
+  if (!host) return false;
+
+  // IPv4：四段 0-255
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    return v4.slice(1).every((part) => {
+      const n = Number(part);
+      return Number.isInteger(n) && n >= 0 && n <= 255 && String(n) === part;
+    });
+  }
+
+  // IPv6：至少含一个冒号，且仅十六进制与冒号
+  if (host.includes(':') && /^[0-9a-fA-F:]+$/.test(host)) {
+    // 粗校验：压缩形式 :: 允许；至少 2 段语义
+    return host.split(':').filter(Boolean).length >= 1;
+  }
+
+  return false;
+}
+
+/**
+ * 解析 Anti-Captcha 是否应使用带代理任务
+ * - 无完整 PROXY_* → Proxyless
+ * - 有代理且地址为 IP → TurnstileTask + 代理字段
+ * - 有代理但地址为域名 → 强制 Proxyless（官方拒绝域名代理）
+ * @param {object} config
+ * @returns {{ useProxy: boolean, reason: 'none'|'ip'|'hostname_skipped' }}
+ */
+export function resolveAntiCaptchaProxyMode(config) {
+  if (!config || typeof config !== 'object') {
+    return { useProxy: false, reason: 'none' };
+  }
+  const hasProxy = !!(config.PROXY_TYPE && config.PROXY_ADDRESS && config.PROXY_PORT);
+  if (!hasProxy) return { useProxy: false, reason: 'none' };
+  if (isIpProxyAddress(config.PROXY_ADDRESS)) {
+    return { useProxy: true, reason: 'ip' };
+  }
+  return { useProxy: false, reason: 'hostname_skipped' };
+}
+
+/**
  * 根据 config 构建单个提供商对象（未配置 key 时返回 null）
  * @param {string} name - CapSolver | AntiCaptcha | YesCaptcha | 2Captcha
  * @param {object} config
@@ -154,18 +205,22 @@ export function buildProviderByName(name, config) {
       };
     case 'AntiCaptcha': {
       if (!config.ANTICAPTCHA_API_KEY) return null;
-      // 官方：优先 TurnstileTaskProxyless；仅当 proxyless 失败时才用带代理的 TurnstileTask
+      // 官方：优先 TurnstileTaskProxyless；带代理仅支持 IP 地址
       // 文档：https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless
+      //      https://anti-captcha.com/apidoc/task-types/TurnstileTask
       const softIdRaw = config.ANTICAPTCHA_SOFT_ID;
       const softIdNum = softIdRaw === '' || softIdRaw == null
         ? NaN
         : Number(softIdRaw);
+      const proxyMode = resolveAntiCaptchaProxyMode(config);
       return {
         name: 'AntiCaptcha',
         apiBase: ANTICAPTCHA_API_BASE,
         clientKey: config.ANTICAPTCHA_API_KEY,
-        taskType: hasProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
-        supportsProxy: hasProxy,
+        taskType: proxyMode.useProxy ? 'TurnstileTask' : 'TurnstileTaskProxyless',
+        supportsProxy: proxyMode.useProxy,
+        // 域名代理被跳过时供日志/通知展示
+        proxyMode: proxyMode.reason,
         // 官方 createTask 顶层 softId（camelCase）；非法/未配置时不传
         softId: Number.isFinite(softIdNum) ? softIdNum : undefined,
       };
@@ -412,6 +467,15 @@ export async function solveTurnstileViaAPI(
     : params.sitekey;
   logger(`使用 ${provider.name} 求解 Turnstile (sitekey=${sitekeyPreview})`);
 
+  // Anti-Captcha：域名代理无法提交，已自动改走 Proxyless
+  if (provider.name === 'AntiCaptcha' && provider.proxyMode === 'hostname_skipped') {
+    const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
+    logger(
+      `ℹ️ AntiCaptcha 代理地址为域名（${masked || '***'}），官方仅支持 IP；`
+      + '本次自动改用 TurnstileTaskProxyless（浏览器侧 PROXY_* 仍生效）',
+    );
+  }
+
   const taskConfig = {
     proxyType: config.PROXY_TYPE,
     proxyAddress: config.PROXY_ADDRESS,
@@ -561,6 +625,16 @@ export async function solveTurnstileWithFailover(
 
   const chain = providers.map((p) => p.name).join(' → ');
   logger(`Turnstile 多平台链路: ${chain}（每平台最多连续失败 ${maxFailuresPerProvider} 次后切换）`);
+
+  // 启动时提示 AntiCaptcha 域名代理自动 Proxyless（避免用户误以为带代理任务）
+  for (const p of providers) {
+    if (p.name === 'AntiCaptcha' && p.proxyMode === 'hostname_skipped') {
+      const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
+      logger(
+        `ℹ️ AntiCaptcha 检测到域名代理 ${masked || ''}，将使用 Proxyless（官方 TurnstileTask 仅支持 IP）`,
+      );
+    }
+  }
 
   /** @type {{ provider: string, success: boolean, failures: number, lastError?: string }[]} */
   const attempts = [];

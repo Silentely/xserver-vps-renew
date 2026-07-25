@@ -115,7 +115,8 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 
 - **Failover**：对每个已配置平台，连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换下一家  
 - **顺序可配**：`TURNSTILE_PROVIDER_ORDER=CapSolver,AntiCaptcha,YesCaptcha,2Captcha`  
-- **全挂告警**：全部熔断时 Telegram 推送【最高级告警·删机风险】，请**当日手动上官网续期**
+- **全挂告警**：全部熔断时 Telegram 推送【最高级告警·删机风险】，请**当日手动上官网续期**  
+- **Anti-Captcha 与代理**：官方 `TurnstileTask` **仅支持 IP 代理**。若 `PROXY_ADDRESS` 为域名（如 Webshare `p.xxx.io`），脚本自动改用 `TurnstileTaskProxyless`，**不会**把域名塞进打码 API（浏览器侧 PROXY_* 仍可正常使用）
 
 ## ⚙️ 环境变量
 

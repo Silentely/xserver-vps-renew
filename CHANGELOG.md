@@ -10,6 +10,8 @@
   - Telegram 多平台全挂时推送【最高级告警·删机风险】，明确要求当日手动续期
   - 全挂时跳过图形验证码重试，立即上抛；错误摘要截断，避免日志/Telegram 过长
   - 不再「只启用一家」：预埋的备选 key 会在主平台挂掉时真正被使用
+  - **AntiCaptcha 域名代理自动 Proxyless**：`PROXY_ADDRESS` 非 IP（如 `p.webshare.io`）时不提交 `TurnstileTask`，避免官方「Only IP addresses are supported」连失败 3 次
+  - Telegram 成功/失败通知补充 Turnstile 平台与 failover 摘要；失败代理提示区分浏览器代理与 AntiCaptcha IP 限制
 
 ### 修复（2026-07-23）
 - **误判「明天到期」为可续期并进入验证码页**（[#5](https://github.com/Silentely/xserver-vps-renew/issues/5)）

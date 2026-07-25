@@ -42,6 +42,7 @@ import {
   solveTurnstileWithFailover as _solveTurnstileWithFailover,
   injectTurnstileToken as _injectTurnstileToken,
   isTurnstileOutageError,
+  resolveAntiCaptchaProxyMode,
   DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
 } from './src/turnstile.mjs';
 import {
@@ -682,13 +683,17 @@ async function getTurnstileToken(page) {
   }
 }
 
+/**
+ * 处理 Cloudflare Turnstile
+ * @returns {Promise<{ ok: boolean, providerName?: string|null, attempts?: object[] }>}
+ */
 async function waitForTurnstile(page) {
   log('正在处理 Cloudflare Turnstile...');
 
   const cfContainer = await page.$('.cf-turnstile');
   if (!cfContainer) {
     log('页面无 Turnstile 组件，跳过。');
-    return true;
+    return { ok: true, providerName: null, attempts: [] };
   }
 
   // 🆕 调试：输出 Turnstile 配置信息
@@ -712,7 +717,7 @@ async function waitForTurnstile(page) {
 
   if (existingToken) {
     log('Turnstile 令牌已就绪。');
-    return true;
+    return { ok: true, providerName: 'prefilled', attempts: [] };
   }
 
   // 🆕 调试：输出字段数量
@@ -748,7 +753,7 @@ async function waitForTurnstile(page) {
     const params = await extractTurnstileParams(page);
     if (!params) {
       err('无法提取 Turnstile 参数');
-      return false;
+      return { ok: false };
     }
 
     try {
@@ -814,7 +819,11 @@ async function waitForTurnstile(page) {
         log(`截图失败: ${e.message}`);
       }
 
-      return true;
+      return {
+        ok: true,
+        providerName: result.providerName || null,
+        attempts: Array.isArray(result.attempts) ? result.attempts : [],
+      };
     } catch (e) {
       // 多平台全挂：向上抛出，触发最高级 Telegram 告警（勿吞为 false）
       if (isTurnstileOutageError(e)) {
@@ -822,12 +831,13 @@ async function waitForTurnstile(page) {
         throw e;
       }
       err(`API 求解失败: ${e.message}`);
-      return false;
+      return { ok: false, attempts: Array.isArray(e?.attempts) ? e.attempts : [] };
     }
   } else {
     // 无 API 密钥，继续等待点击生效
     log('未配置 API 密钥，继续等待 Turnstile 自行通过...');
-    return waitForTurnstileToken(page);
+    const naturalOk = await waitForTurnstileToken(page);
+    return { ok: naturalOk, providerName: naturalOk ? 'natural' : null, attempts: [] };
   }
 }
 
@@ -866,12 +876,18 @@ async function waitForTurnstileToken(page) {
 // 步骤 6：验证码页面完整流程（识别 + Turnstile + 提交）
 // ============================================================
 
+/**
+ * 验证码页面完整流程
+ * @returns {Promise<{ turnstileProvider: string|null, turnstileAttempts: object[] }>}
+ */
 async function handleCaptchaPage(page) {
   log('正在处理验证码页面...');
 
   // 最多重试 3 次（验证码识别错误时刷新重试）
   const maxRetries = CONFIG.CAPTCHA_MAX_RETRY || 3;
   let lastError = null;
+  /** @type {{ turnstileProvider: string|null, turnstileAttempts: object[] }} */
+  let lastTurnstileMeta = { turnstileProvider: null, turnstileAttempts: [] };
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -913,12 +929,16 @@ async function handleCaptchaPage(page) {
       await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
       log('验证码已填入输入框。');
 
-      // 等待 Turnstile（如果已提前通过，waitForTurnstile 会立即返回 true）
-      const turnstilePassed = await waitForTurnstile(page);
+      // 等待 Turnstile（返回 { ok, providerName, attempts }）
+      const turnstileResult = await waitForTurnstile(page);
+      lastTurnstileMeta = {
+        turnstileProvider: turnstileResult?.providerName || (turnstileAlreadyPassed ? 'prefilled' : null),
+        turnstileAttempts: Array.isArray(turnstileResult?.attempts) ? turnstileResult.attempts : [],
+      };
 
       // 提交表单
       log('正在提交表单...');
-      if (!turnstilePassed) {
+      if (!turnstileResult?.ok) {
         await page.evaluate(() => {
           const btn = document.querySelector('input[type="submit"], button[type="submit"]');
           if (btn) {
@@ -947,7 +967,7 @@ async function handleCaptchaPage(page) {
 
       if (evaluation.status === 'success') {
         log(`✅ 页面确认续期成功！检测到: "${evaluation.matched}"`);
-        return;
+        return lastTurnstileMeta;
       }
 
       if (evaluation.status === 'retry') {
@@ -1040,6 +1060,16 @@ async function main() {
       }
       if (tsProviders.length === 1) {
         log('💡 仅配置 1 家打码平台：CF 大更新时无 failover。建议再配 ANTICAPTCHA_API_KEY 或另一家 key 提升容错');
+      }
+      // 启动时说明 AntiCaptcha + 域名代理策略，避免误读日志
+      const anti = tsProviders.find((p) => p.name === 'AntiCaptcha');
+      if (anti?.proxyMode === 'hostname_skipped') {
+        log(
+          `ℹ️ AntiCaptcha：PROXY_ADDRESS 为域名，官方 TurnstileTask 仅支持 IP；`
+          + '打码任务将自动使用 TurnstileTaskProxyless（浏览器代理仍生效）',
+        );
+      } else if (anti?.proxyMode === 'ip') {
+        log('ℹ️ AntiCaptcha：已配置 IP 代理，将使用 TurnstileTask 带代理求解');
       }
     }
   }
@@ -1234,7 +1264,24 @@ async function main() {
 
     // 步骤 4-6：验证码 + Turnstile + 提交
     pushStep('识别验证码并求解 Turnstile，提交续期');
-    await handleCaptchaPage(page);
+    const captchaMeta = await handleCaptchaPage(page) || {
+      turnstileProvider: null,
+      turnstileAttempts: [],
+    };
+    if (captchaMeta.turnstileProvider) {
+      const failedBefore = (captchaMeta.turnstileAttempts || [])
+        .filter((a) => a && a.success === false)
+        .map((a) => a.provider)
+        .filter(Boolean);
+      if (failedBefore.length > 0) {
+        pushStep(
+          `Turnstile 由 ${captchaMeta.turnstileProvider} 求解成功`
+          + `（${failedBefore.join(' → ')} 熔断后切换）`,
+        );
+      } else {
+        pushStep(`Turnstile 由 ${captchaMeta.turnstileProvider} 求解成功`);
+      }
+    }
     pushStep('续期表单提交完成');
 
     // 提取续期后的到期时间
@@ -1287,6 +1334,8 @@ async function main() {
       nextRunAt: nextRunStr,
       processSteps,
       detail: CONFIG.TG_NOTIFY_DETAIL,
+      turnstileProvider: captchaMeta.turnstileProvider,
+      turnstileAttempts: captchaMeta.turnstileAttempts,
     }));
     await page.close();
   } catch (e) {
@@ -1302,11 +1351,13 @@ async function main() {
     const { consecutiveFailures } = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES);
     const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
 
+    const antiProxyMode = resolveAntiCaptchaProxyMode(CONFIG);
     const proxyHint = buildProxyHint({
       hasProxy: HAS_PROXY,
       proxyType: CONFIG.PROXY_TYPE,
       maskedAddress: maskProxyAddress(CONFIG.PROXY_ADDRESS),
       proxyPort: CONFIG.PROXY_PORT,
+      antiCaptchaHostnameSkipped: antiProxyMode.reason === 'hostname_skipped',
     });
 
     const failureSteps = [...processSteps, `异常终止: ${e.message}`];
@@ -1333,6 +1384,7 @@ async function main() {
       turnstileAllProvidersFailed,
       failedProviders,
       errorCode: e?.code || '',
+      turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
     }));
     process.exitCode = 1;
   } finally {

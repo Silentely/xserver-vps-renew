@@ -535,10 +535,32 @@ export function formatProcessSteps(processSteps, detail = TG_NOTIFY_DETAIL_FULL)
 }
 
 /**
+ * 格式化 Turnstile 求解摘要（通知用）
+ * @param {object} [opts]
+ * @param {string|null} [opts.providerName] - 最终成功的平台
+ * @param {{ provider: string, success: boolean, failures?: number, lastError?: string }[]} [opts.attempts]
+ * @returns {string} 空字符串或一行摘要（已 HTML 转义）
+ */
+export function formatTurnstileNotifyLine({ providerName, attempts } = {}) {
+  if (!providerName) return '';
+  const name = escapeHtml(String(providerName));
+  const failed = Array.isArray(attempts)
+    ? attempts.filter((a) => a && a.success === false).map((a) => a.provider).filter(Boolean)
+    : [];
+  if (failed.length === 0) {
+    return `🔐 Turnstile: ${name}`;
+  }
+  const failedText = escapeHtml(failed.join(' → '));
+  return `🔐 Turnstile: ${name}（${failedText} 熔断后切换）`;
+}
+
+/**
  * 构建续期成功 Telegram 消息
  * @param {object} params
  * @param {string[]} [params.processSteps] - 执行过程（仅 detail=full 时展示）
  * @param {'full'|'compact'|string} [params.detail='full'] - 通知详细程度
+ * @param {string|null} [params.turnstileProvider] - 最终成功的打码平台
+ * @param {object[]} [params.turnstileAttempts] - failover 尝试记录
  * @returns {string}
  */
 export function buildSuccessNotifyMessage({
@@ -550,11 +572,17 @@ export function buildSuccessNotifyMessage({
   nextRunAt,
   processSteps,
   detail = DEFAULT_TG_NOTIFY_DETAIL,
+  turnstileProvider = null,
+  turnstileAttempts = [],
 }) {
   const mode = parseNotifyDetail(detail);
   const time = escapeHtml(executedAt || formatTokyoDateTime());
   const name = escapeHtml(serverName || '未知');
   const next = escapeHtml(nextRunAt || '');
+  const turnstileLine = formatTurnstileNotifyLine({
+    providerName: turnstileProvider,
+    attempts: turnstileAttempts,
+  });
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     return (
@@ -562,6 +590,7 @@ export function buildSuccessNotifyMessage({
       `⏰ 执行时间: ${time}\n` +
       `🖥️ 服务器名: ${name}\n` +
       `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+      `${turnstileLine ? `${turnstileLine}\n` : ''}` +
       `⏭️ 下次执行: ${next}`
     );
   }
@@ -573,6 +602,7 @@ export function buildSuccessNotifyMessage({
     `📦 VPS 规格: ${escapeHtml(plan || '未知')}\n` +
     `📅 原到期日: ${escapeHtml(oldExpireDate || '未知')}\n` +
     `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+    `${turnstileLine ? `${turnstileLine}\n` : ''}` +
     `⏭️ 下次执行: ${next}` +
     formatProcessSteps(processSteps, mode)
   );
@@ -700,6 +730,8 @@ export function buildFailureNotifyMessage({
   turnstileAllProvidersFailed = false,
   failedProviders = [],
   errorCode = '',
+  turnstileProvider = null,
+  turnstileAttempts = [],
 }) {
   const mode = parseNotifyDetail(detail);
   const multiProviderOutage = isTurnstileAllProvidersFailed({
@@ -715,10 +747,20 @@ export function buildFailureNotifyMessage({
     titlePrefix = '🚨🚨 <b>【最高级告警·删机风险】</b>';
   }
 
+  const turnstileLine = formatTurnstileNotifyLine({
+    providerName: turnstileProvider,
+    attempts: turnstileAttempts,
+  });
+  // 失败且未成功求解时，用熔断列表补充 Turnstile 行
+  const turnstileFailLine = !turnstileLine && failedProviders?.length
+    ? `🔐 Turnstile: 已熔断 ${escapeHtml(failedProviders.join(' → '))}`
+    : turnstileLine;
+
   const head =
     `${titlePrefix} <b>Xserver VPS 续期失败</b>\n\n` +
     `⏰ 执行时间: ${escapeHtml(executedAt || formatTokyoDateTime())}\n` +
     `💥 错误信息: <code>${escapeHtml(errorMessage || '未知错误')}</code>\n` +
+    `${turnstileFailLine ? `${turnstileFailLine}\n` : ''}` +
     `${multiProviderOutage
       ? `🛑 <b>Turnstile 打码平台已全部失败</b>${failedProviders?.length
         ? `（${escapeHtml(failedProviders.join(' → '))}）`
@@ -747,10 +789,11 @@ export function buildFailureNotifyMessage({
       `- 验证码识别已自动重试 ${captchaMaxRetry} 次`,
       `- Turnstile 已使用 API 求解（支持多平台自动降级）`,
       `- 如持续失败，可尝试:`,
-      `  1. 配置住宅 IP 代理（PROXY_* 环境变量）`,
-      `  2. 检查打码平台 API 余额是否充足`,
-      `  3. 配置第二家打码平台 key（如 ANTICAPTCHA_API_KEY）实现 failover`,
-      `  4. 人工登录确认账号状态`,
+      `  1. 检查打码平台 API 余额是否充足`,
+      `  2. 配置第二家打码平台 key 实现 failover`,
+      `  3. Anti-Captcha 带代理任务仅支持 IP 地址（域名代理会自动 Proxyless）`,
+      `  4. 浏览器侧可继续使用域名住宅代理（PROXY_*）`,
+      `  5. 人工登录确认账号状态`,
     ].join('\n');
 
   return (
@@ -768,15 +811,30 @@ export function buildFailureNotifyMessage({
  * @param {string} [opts.proxyType]
  * @param {string} [opts.maskedAddress]
  * @param {string|number} [opts.proxyPort]
+ * @param {boolean} [opts.antiCaptchaHostnameSkipped] - AntiCaptcha 因域名代理改走 Proxyless
  * @returns {string}
  */
-export function buildProxyHint({ hasProxy, proxyType, maskedAddress, proxyPort }) {
+export function buildProxyHint({
+  hasProxy,
+  proxyType,
+  maskedAddress,
+  proxyPort,
+  antiCaptchaHostnameSkipped = false,
+}) {
   if (hasProxy) {
-    return `📡 当前使用代理: ${proxyType}://${maskedAddress}:${proxyPort}`;
+    const base = `📡 浏览器代理: ${proxyType}://${maskedAddress}:${proxyPort}`;
+    if (antiCaptchaHostnameSkipped) {
+      return (
+        `${base}\n` +
+        `ℹ️ Anti-Captcha 官方仅支持 IP 代理，当前为域名地址，打码任务已自动改用 Proxyless`
+      );
+    }
+    return base;
   }
   return (
     `💡 <b>优化建议</b>:\n` +
     `如果多次续期失败，建议配置纯净家宽 IP 代理后重试。\n` +
-    `代理可提高 Cloudflare Turnstile 通过率。`
+    `代理可提高 Cloudflare Turnstile 通过率。\n` +
+    `注意：Anti-Captcha 的 TurnstileTask 仅接受 IP 形式代理，域名代理会自动走 Proxyless。`
   );
 }
