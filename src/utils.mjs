@@ -71,6 +71,81 @@ export function parsePositiveInt(value, fallback, opts = {}) {
   return n;
 }
 
+/** 日志级别（由低到高） */
+export const LOG_LEVEL_DEBUG = 'debug';
+export const LOG_LEVEL_INFO = 'info';
+export const LOG_LEVEL_WARN = 'warn';
+export const LOG_LEVEL_ERROR = 'error';
+
+/** 默认日志级别 */
+export const DEFAULT_LOG_LEVEL = LOG_LEVEL_INFO;
+
+/** 级别权重（数值越大越“吵”侧越少输出） */
+const LOG_LEVEL_RANK = {
+  [LOG_LEVEL_DEBUG]: 10,
+  [LOG_LEVEL_INFO]: 20,
+  [LOG_LEVEL_WARN]: 30,
+  [LOG_LEVEL_ERROR]: 40,
+};
+
+/**
+ * 解析 LOG_LEVEL 环境变量
+ * 支持 debug/verbose/trace → debug；info/log/normal → info；warn；error/quiet → error
+ * @param {string|undefined|null} value
+ * @param {string} [fallback=DEFAULT_LOG_LEVEL]
+ * @returns {'debug'|'info'|'warn'|'error'}
+ */
+export function parseLogLevel(value, fallback = DEFAULT_LOG_LEVEL) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === LOG_LEVEL_DEBUG || v === 'verbose' || v === 'trace') return LOG_LEVEL_DEBUG;
+  if (v === LOG_LEVEL_INFO || v === 'log' || v === 'normal' || v === 'default') {
+    return LOG_LEVEL_INFO;
+  }
+  if (v === LOG_LEVEL_WARN || v === 'warning') return LOG_LEVEL_WARN;
+  if (v === LOG_LEVEL_ERROR || v === 'err' || v === 'quiet' || v === 'silent') {
+    return LOG_LEVEL_ERROR;
+  }
+  const fb = String(fallback ?? '').trim().toLowerCase();
+  if (fb === LOG_LEVEL_DEBUG || fb === LOG_LEVEL_WARN || fb === LOG_LEVEL_ERROR) {
+    return fb;
+  }
+  return DEFAULT_LOG_LEVEL;
+}
+
+/**
+ * 当前配置级别是否应输出该条日志
+ * @param {string} configuredLevel - 用户配置的最低输出级别
+ * @param {string} messageLevel - 本条日志级别
+ * @returns {boolean}
+ */
+export function shouldLog(configuredLevel, messageLevel) {
+  const cfg = LOG_LEVEL_RANK[parseLogLevel(configuredLevel)] ?? LOG_LEVEL_RANK[LOG_LEVEL_INFO];
+  const msg = LOG_LEVEL_RANK[parseLogLevel(messageLevel, LOG_LEVEL_INFO)]
+    ?? LOG_LEVEL_RANK[LOG_LEVEL_INFO];
+  return msg >= cfg;
+}
+
+/**
+ * 模块日志是否应降为 debug（轮询/原始响应/任务参数等噪音）
+ * @param {unknown} message
+ * @returns {boolean}
+ */
+export function isNoisyModuleLog(message) {
+  const s = String(message ?? '');
+  if (!s) return false;
+  return (
+    s.includes('任务参数:')
+    || s.includes('轮询中')
+    || s.includes('getTaskResult 网络异常')
+    || s.includes('getTaskResult HTTP')
+    || s.includes('瞬态 init')
+    || s.includes('原始结果')
+    || s.includes('响应状态')
+    || s.includes('使用住宅代理:')
+    || /sitekey=[0-9a-f]{8,}/i.test(s)
+  );
+}
+
 /**
  * 校验续期脚本必填配置
  * @param {object} config - 配置对象

@@ -6,14 +6,15 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-25 | 日志与 Telegram：耗时/截断、LOG_LEVEL、失败分类与按类建议、cron 环境白名单 |
 | 2026-07-24 | Turnstile 多平台 failover + Anti-Captcha；全挂时最高级删机风险 Telegram 告警 |
 | 2026-07-23 | 修复 #5：纯日期误判「明天到期」可续；识别官方「12時間前」拦截页并软跳过，避免误等验证码图 |
 | 2026-07-22 | Telegram：每次执行均推送（含无需续期）；`TG_NOTIFY_DETAIL=full\|compact` 控制完整/简洁摘要（#4） |
 | 2026-07-20 | 新增 YesCaptcha 作为 Turnstile 可选备选（CapSolver > YesCaptcha > 2Captcha） |
 | 2026-07-16 | 文档强调：必须配置 CapSolver API（Turnstile），否则成功率极低 |
 | 2026-07-14 | 适配官方 4GB 规则：最长 24h / 剩余≤12h 可续；CAPTCHA_API 默认公共端点；cron 默认每 6h |
-| 2026-07-11 | 第二轮打磨：renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
-| 2026-07-11 | 第一轮打磨：修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验 |
+| 2026-07-11 | renewal-logic 纯函数、超时可配置、Docker /data 持久化、15 文件 / 209 用例 |
+| 2026-07-11 | 修复状态文件路径/DEFAULT_UA、utils 纯函数模块、配置校验 |
 | 2026-07-11 | 文档同步：测试清单、supercronic、覆盖率阈值、Docker 非 root 运行说明 |
 | 2026-06-30 | 初始化架构文档，扫描全仓生成根级 CLAUDE.md |
 
@@ -119,7 +120,7 @@ graph TD
 | `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `classifyRenewalFailure()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -205,6 +206,7 @@ npm run test:watch
 | `TG_BOT_TOKEN` | Telegram Bot Token | 无 |
 | `TG_CHAT_ID` | Telegram Chat ID | 无 |
 | `TG_NOTIFY_DETAIL` | 通知详细程度：`full`（完整摘要含过程）/ `compact`（简洁） | `full` |
+| `LOG_LEVEL` | 日志级别：`debug` / `info` / `warn` / `error` | `info` |
 | `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
 | `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |
 | `TZ` | 时区 | `Asia/Tokyo` |

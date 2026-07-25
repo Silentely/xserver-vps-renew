@@ -5,7 +5,15 @@ import {
   fetchWithTimeout,
   validateRequiredConfig,
   parsePositiveInt,
+  parseLogLevel,
+  shouldLog,
+  isNoisyModuleLog,
   TOKYO_OFFSET_MS,
+  DEFAULT_LOG_LEVEL,
+  LOG_LEVEL_DEBUG,
+  LOG_LEVEL_INFO,
+  LOG_LEVEL_WARN,
+  LOG_LEVEL_ERROR,
 } from '../../src/utils.mjs';
 
 describe('maskProxyAddress', () => {
@@ -60,6 +68,33 @@ describe('parsePositiveInt', () => {
     expect(parsePositiveInt('2', 10, { min: 5, max: 100 })).toBe(10);
     expect(parsePositiveInt('200', 10, { min: 5, max: 100 })).toBe(10);
     expect(parsePositiveInt('50', 10, { min: 5, max: 100 })).toBe(50);
+  });
+});
+
+describe('parseLogLevel / shouldLog / isNoisyModuleLog', () => {
+  it('解析级别与别名', () => {
+    expect(parseLogLevel('debug')).toBe(LOG_LEVEL_DEBUG);
+    expect(parseLogLevel('VERBOSE')).toBe(LOG_LEVEL_DEBUG);
+    expect(parseLogLevel('info')).toBe(LOG_LEVEL_INFO);
+    expect(parseLogLevel('warn')).toBe(LOG_LEVEL_WARN);
+    expect(parseLogLevel('quiet')).toBe(LOG_LEVEL_ERROR);
+    expect(parseLogLevel('nope')).toBe(DEFAULT_LOG_LEVEL);
+  });
+
+  it('shouldLog 按级别过滤', () => {
+    expect(shouldLog('info', 'debug')).toBe(false);
+    expect(shouldLog('info', 'info')).toBe(true);
+    expect(shouldLog('info', 'warn')).toBe(true);
+    expect(shouldLog('error', 'warn')).toBe(false);
+    expect(shouldLog('error', 'error')).toBe(true);
+    expect(shouldLog('debug', 'debug')).toBe(true);
+  });
+
+  it('识别模块噪音日志', () => {
+    expect(isNoisyModuleLog('CapSolver 轮询中 (1/60)... 状态: processing')).toBe(true);
+    expect(isNoisyModuleLog('Keras 模型 API 返回原始结果: "123" (长度: 3)')).toBe(true);
+    expect(isNoisyModuleLog('CapSolver 任务参数: {"type":"x"}')).toBe(true);
+    expect(isNoisyModuleLog('Turnstile 由 CapSolver 求解成功')).toBe(false);
   });
 });
 

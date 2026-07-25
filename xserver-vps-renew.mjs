@@ -21,6 +21,7 @@
  *   TG_BOT_TOKEN          - Telegram Bot Token（可选，启用通知）
  *   TG_CHAT_ID            - Telegram Chat ID（可选，启用通知）
  *   TG_NOTIFY_DETAIL      - 通知详细程度：full（完整摘要，默认）/ compact（简洁摘要）
+ *   LOG_LEVEL             - 日志级别：debug / info（默认）/ warn / error
  */
 
 import { addExtra } from 'puppeteer-extra';
@@ -58,6 +59,14 @@ import {
   fetchWithTimeout,
   validateRequiredConfig,
   parsePositiveInt,
+  parseLogLevel,
+  shouldLog,
+  isNoisyModuleLog,
+  DEFAULT_LOG_LEVEL,
+  LOG_LEVEL_DEBUG,
+  LOG_LEVEL_INFO,
+  LOG_LEVEL_WARN,
+  LOG_LEVEL_ERROR,
 } from './src/utils.mjs';
 import {
   isRenewalDue,
@@ -69,6 +78,7 @@ import {
   normalizeCellText,
   escapeHtml as _escapeHtml,
   formatTokyoDateTime,
+  formatDurationMs,
   buildSuccessNotifyMessage,
   buildSkipNotifyMessage,
   buildFailureNotifyMessage,
@@ -76,6 +86,9 @@ import {
   getRemainingHours,
   parseNotifyDetail,
   isTurnstileAllProvidersFailed,
+  clampTelegramMessage,
+  resolveTurnstileProviderLabel,
+  classifyRenewalFailure,
   RENEWAL_WINDOW_HOURS,
   FREE_VPS_MAX_HOURS,
   resolveNextRunAt,
@@ -90,9 +103,18 @@ const DEFAULT_CAPTCHA_API = 'https://captcha-120546510085.asia-northeast1.run.ap
 // 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
 // ============================================================
 
+/** 模块内日志桥接：轮询/原始响应等噪音仅在 debug 输出 */
+function moduleLog(msg) {
+  if (isNoisyModuleLog(msg)) {
+    logDebug(msg);
+    return;
+  }
+  log(msg);
+}
+
 /** 验证码识别包装（注入 CONFIG 和 log） */
 async function recognizeCaptcha(imgSrc) {
-  return _recognizeCaptcha(imgSrc, CONFIG.CAPTCHA_API, log);
+  return _recognizeCaptcha(imgSrc, CONFIG.CAPTCHA_API, moduleLog);
 }
 
 /** 已配置的 Turnstile 提供商列表（按 failover 顺序） */
@@ -102,12 +124,12 @@ function listTurnstileProviders() {
 
 /** Turnstile 参数提取包装（注入 log） */
 async function extractTurnstileParams(page) {
-  return _extractTurnstileParams(page, log);
+  return _extractTurnstileParams(page, moduleLog);
 }
 
 /** Turnstile 多平台 failover 求解（主路径） */
 async function solveTurnstileWithFailover(websiteURL, params) {
-  return _solveTurnstileWithFailover(websiteURL, params, CONFIG, log, {
+  return _solveTurnstileWithFailover(websiteURL, params, CONFIG, moduleLog, {
     timeout: CONFIG.TURNSTILE_API_TIMEOUT,
     maxFailuresPerProvider: CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES,
   });
@@ -115,7 +137,7 @@ async function solveTurnstileWithFailover(websiteURL, params) {
 
 /** Turnstile token 注入包装（注入 log） */
 async function injectTurnstileToken(page, token) {
-  return _injectTurnstileToken(page, token, log);
+  return _injectTurnstileToken(page, token, moduleLog);
 }
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
@@ -194,6 +216,9 @@ const CONFIG = {
     DEFAULT_TG_NOTIFY_DETAIL,
   ),
 
+  // 日志级别：debug / info（默认）/ warn / error
+  LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
+
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
   // 成功通知中「下次执行」估算间隔（小时）；默认 6，适配剩余≤12h 窗口
@@ -254,8 +279,25 @@ const ts = () => {
   }).replace(/\//g, '-');
 };
 
-const log = (msg) => console.log(`${ts()} ${msg}`);
-const err = (msg) => console.error(`${ts()} ❌ ${msg}`);
+/** 按 LOG_LEVEL 输出；error 始终带 ❌ 前缀写 stderr */
+function emitLog(level, msg) {
+  if (!shouldLog(CONFIG.LOG_LEVEL, level)) return;
+  const line = `${ts()} ${msg}`;
+  if (level === LOG_LEVEL_ERROR) {
+    console.error(line.startsWith(`${ts()} ❌`) ? line : `${ts()} ❌ ${msg}`);
+    return;
+  }
+  if (level === LOG_LEVEL_WARN) {
+    console.warn(line);
+    return;
+  }
+  console.log(line);
+}
+
+const logDebug = (msg) => emitLog(LOG_LEVEL_DEBUG, msg);
+const log = (msg) => emitLog(LOG_LEVEL_INFO, msg);
+const logWarn = (msg) => emitLog(LOG_LEVEL_WARN, msg);
+const err = (msg) => emitLog(LOG_LEVEL_ERROR, msg);
 
 /** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
 function escapeHtml(str) {
@@ -267,7 +309,15 @@ function escapeHtml(str) {
 // ============================================================
 
 async function notify(message) {
-  if (!CONFIG.TG_BOT_TOKEN || !CONFIG.TG_CHAT_ID) return;
+  if (!CONFIG.TG_BOT_TOKEN || !CONFIG.TG_CHAT_ID) {
+    log('Telegram 未配置（TG_BOT_TOKEN / TG_CHAT_ID），跳过通知');
+    return;
+  }
+
+  const text = clampTelegramMessage(message);
+  if (text.length < String(message ?? '').length) {
+    log(`Telegram 消息超长已截断: ${String(message).length} → ${text.length} 字`);
+  }
 
   const url = `https://api.telegram.org/bot${CONFIG.TG_BOT_TOKEN}/sendMessage`;
   try {
@@ -276,7 +326,7 @@ async function notify(message) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: CONFIG.TG_CHAT_ID,
-        text: message,
+        text,
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       }),
@@ -284,11 +334,12 @@ async function notify(message) {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      err(`Telegram 通知发送失败: ${res.status} ${body}`);
+      const bodyBrief = body.length > 200 ? `${body.slice(0, 200)}…` : body;
+      err(`Telegram 通知发送失败: HTTP ${res.status}${bodyBrief ? ` ${bodyBrief}` : ''}`);
       return;
     }
 
-    log('Telegram 通知已发送。');
+    log(`Telegram 通知已发送（${text.length} 字，模式 ${CONFIG.TG_NOTIFY_DETAIL}）`);
   } catch (e) {
     const reason = e.name === 'AbortError' ? '请求超时' : e.message;
     err(`Telegram 通知异常: ${reason}`);
@@ -343,6 +394,10 @@ function cleanChromeLocks(userDataDir) {
 // 步骤 1：登录
 // ============================================================
 
+/**
+ * 登录 Xserver 面板
+ * @returns {Promise<{ viaCookie: boolean }>}
+ */
 async function handleLogin(page) {
   log('正在导航到登录页面...');
   await page.goto(`${CONFIG.BASE_URL}${CONFIG.LOGIN_PATH}`, {
@@ -353,7 +408,7 @@ async function handleLogin(page) {
   // 若已登录（被重定向到面板），直接返回
   if (page.url().includes('/xvps/index')) {
     log('Cookie 有效，已处于登录状态。');
-    return;
+    return { viaCookie: true };
   }
 
   // 检查页面是否有登录错误
@@ -384,6 +439,7 @@ async function handleLogin(page) {
   }
 
   log('登录成功！');
+  return { viaCookie: false };
 }
 
 // ============================================================
@@ -410,8 +466,7 @@ async function checkRenewalNeeded(page) {
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
   const today = getTokyoDateString();
   const tomorrow = getTokyoDateString(Date.now(), 1);
-  log(`今天日期（东京时区）: ${today}`);
-  log(`明天日期（东京时区）: ${tomorrow}`);
+  logDebug(`参考日期（东京）: 今天 ${today} / 明天 ${tomorrow}`);
 
   const result = await page.evaluate(() => {
     const row = document.querySelector('tr:has(.freeServerIco)');
@@ -472,12 +527,12 @@ async function checkRenewalNeeded(page) {
   const cleanPlan = normalizeCellText(result.plan);
   const remainingHours = getRemainingHours(result.expireDate);
 
-  log(`VPS 到期日期: ${result.expireDate ?? '未找到'}`);
-  log(`VPS 服务器名: ${cleanServerName ?? '未找到'}`);
-  log(`VPS 规格: ${cleanPlan ?? '未找到'}`);
-  if (remainingHours != null) {
-    log(`VPS 剩余时间: 约 ${remainingHours.toFixed(1)} 小时`);
-  }
+  log(
+    `VPS: ${cleanServerName ?? '未找到'}`
+    + ` | 规格 ${cleanPlan ?? '未找到'}`
+    + ` | 到期 ${result.expireDate ?? '未找到'}`
+    + (remainingHours != null ? ` | 剩余约 ${remainingHours.toFixed(1)}h` : ''),
+  );
 
   // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
   // 纯日期按东京日末估算剩余小时，不再把「明天到期」一律判为可续（#5）
@@ -696,7 +751,6 @@ async function waitForTurnstile(page) {
     return { ok: true, providerName: null, attempts: [] };
   }
 
-  // 🆕 调试：输出 Turnstile 配置信息
   const turnstileConfig = await page.evaluate(() => {
     const div = document.querySelector('.cf-turnstile');
     if (!div) return null;
@@ -709,47 +763,41 @@ async function waitForTurnstile(page) {
   }).catch(() => null);
 
   if (turnstileConfig) {
-    log(`📊 Turnstile 配置: sitekey=${turnstileConfig.sitekey}, callback=${turnstileConfig.callback}`);
+    logDebug(
+      `Turnstile 配置: sitekey=${turnstileConfig.sitekey}, callback=${turnstileConfig.callback}`,
+    );
+  } else {
+    logWarn('无法获取 Turnstile 配置（继续尝试提取参数）');
   }
 
-  // 令牌是否已经存在
   const existingToken = await getTurnstileToken(page);
-
   if (existingToken) {
     log('Turnstile 令牌已就绪。');
     return { ok: true, providerName: 'prefilled', attempts: [] };
   }
 
-  // 🆕 调试：输出字段数量
-  const fieldCount = await page.evaluate(() => {
-    return document.querySelectorAll('[name="cf-turnstile-response"]').length;
-  }).catch(() => 0);
-  log(`📊 检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
+  const fieldCount = await page.evaluate(() => (
+    document.querySelectorAll('[name="cf-turnstile-response"]').length
+  )).catch(() => 0);
+  logDebug(`检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
 
-  // 等待 Turnstile widget 渲染
-  log('等待 Turnstile 渲染...');
+  logDebug('等待 Turnstile 渲染...');
   await sleep(3000);
 
-  // 截图诊断：确认 Turnstile 的视觉状态
   try {
     await page.screenshot({ path: '/tmp/turnstile-before-solve.png', fullPage: false });
-    log('已保存求解前截图: /tmp/turnstile-before-solve.png');
+    logDebug('已保存求解前截图: /tmp/turnstile-before-solve.png');
   } catch (e) {
-    log(`截图失败: ${e.message}`);
+    logDebug(`截图失败: ${e.message}`);
   }
 
-  // ========== Turnstile 验证：多平台 API failover 求解 ==========
-  // - 策略 1（点击 checkbox 自然通过）在 Docker 环境成功率极低（<5%）
-  // - 直接使用 API 求解；多 key 时主平台连续失败后自动切换副平台
-  log('Turnstile 验证: 跳过自然通过方式（Docker 环境成功率低），使用多平台 API failover 求解');
-
+  // Docker 环境自然通过成功率极低；有 key 时直接走多平台 API failover
   const providers = listTurnstileProviders();
 
   if (providers.length > 0) {
-    const chain = providers.map((p) => p.name).join(' → ');
-    log(`已配置 Turnstile 平台: ${chain}`);
+    log('Turnstile: 使用多平台 API failover 求解');
+    logDebug(`已配置平台: ${providers.map((p) => p.name).join(' → ')}`);
 
-    // 提取 sitekey 及参数
     const params = await extractTurnstileParams(page);
     if (!params) {
       err('无法提取 Turnstile 参数');
@@ -757,24 +805,23 @@ async function waitForTurnstile(page) {
     }
 
     try {
-      const currentURL = page.url();
-      const result = await solveTurnstileWithFailover(currentURL, params);
-      log(`Turnstile 由 ${result.providerName} 求解成功`);
+      const result = await solveTurnstileWithFailover(page.url(), params);
+      const providerLabel = resolveTurnstileProviderLabel(result.providerName) || result.providerName;
+      log(`Turnstile 由 ${providerLabel} 求解成功`);
 
-      // 如果 API 返回的 UA 与当前不同，更新浏览器 UA 以匹配 token 绑定
-      // Anti-Captcha 官方也会返回 worker 的 userAgent，提交时建议对齐
       if (result.userAgent) {
         const currentUA = await page.evaluate(() => navigator.userAgent);
         if (currentUA !== result.userAgent) {
-          log(`UA 不匹配！当前: ${currentUA.substring(0, 40)}... → API: ${result.userAgent.substring(0, 40)}...`);
-          log('更新浏览器 UA 以匹配 API 返回值');
+          logWarn(
+            `UA 不匹配，更新浏览器 UA 以匹配 API`
+            + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
+          );
           await page.setUserAgent(result.userAgent);
         } else {
-          log('浏览器 UA 与 API 返回值一致，无需更新');
+          logDebug('浏览器 UA 与 API 返回值一致');
         }
       }
 
-      // 通过 data-callback 属性名查找全局回调函数，传递 token
       const callbackResult = await page.evaluate((tkn) => {
         const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
         if (cfDiv) {
@@ -791,32 +838,26 @@ async function waitForTurnstile(page) {
       }, result.token);
 
       if (callbackResult) {
-        log(`Turnstile token 已通过 callback 传递: ${callbackResult}`);
+        logDebug(`Turnstile token 已通过 callback 传递: ${callbackResult}`);
       } else {
-        log('未找到 Turnstile callback，注入 input 元素...');
+        logDebug('未找到 Turnstile callback，注入 input 元素...');
       }
 
-      // 注入 token 到 input 元素
       await injectTurnstileToken(page, result.token);
-
-      // 等待页面处理 token
       await sleep(2000);
 
-      // 验证 token 是否生效
       const verifyToken = await getTurnstileToken(page);
-
       if (verifyToken) {
-        log(`Turnstile token 验证成功！token 长度: ${verifyToken.length}`);
+        logDebug(`Turnstile token 已就绪，长度: ${verifyToken.length}`);
       } else {
-        log('cf-turnstile-response 元素无值，但 callback 可能已处理 token');
+        logDebug('cf-turnstile-response 无值，callback 可能已处理 token');
       }
 
-      // 截图诊断
       try {
         await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
-        log('已保存求解后截图: /tmp/turnstile-after-solve.png');
+        logDebug('已保存求解后截图: /tmp/turnstile-after-solve.png');
       } catch (e) {
-        log(`截图失败: ${e.message}`);
+        logDebug(`截图失败: ${e.message}`);
       }
 
       return {
@@ -825,7 +866,6 @@ async function waitForTurnstile(page) {
         attempts: Array.isArray(result.attempts) ? result.attempts : [],
       };
     } catch (e) {
-      // 多平台全挂：向上抛出，触发最高级 Telegram 告警（勿吞为 false）
       if (isTurnstileOutageError(e)) {
         err(`Turnstile 多平台均失败，触发最高级告警: ${e.message}`);
         throw e;
@@ -833,12 +873,11 @@ async function waitForTurnstile(page) {
       err(`API 求解失败: ${e.message}`);
       return { ok: false, attempts: Array.isArray(e?.attempts) ? e.attempts : [] };
     }
-  } else {
-    // 无 API 密钥，继续等待点击生效
-    log('未配置 API 密钥，继续等待 Turnstile 自行通过...');
-    const naturalOk = await waitForTurnstileToken(page);
-    return { ok: naturalOk, providerName: naturalOk ? 'natural' : null, attempts: [] };
   }
+
+  logWarn('未配置 Turnstile API 密钥，继续等待自然通过（成功率极低）...');
+  const naturalOk = await waitForTurnstileToken(page);
+  return { ok: naturalOk, providerName: naturalOk ? 'natural' : null, attempts: [] };
 }
 
 /**
@@ -1041,7 +1080,13 @@ async function handleCaptchaPage(page) {
 // ============================================================
 
 async function main() {
+  const startedAtMs = Date.now();
   log('========== Xserver VPS 自动续期开始 ==========');
+  log(
+    `日志级别: ${CONFIG.LOG_LEVEL}`
+    + ` | 通知模式: ${CONFIG.TG_NOTIFY_DETAIL}`
+    + `${CONFIG.TG_BOT_TOKEN && CONFIG.TG_CHAT_ID ? ' | Telegram 已配置' : ' | Telegram 未配置'}`,
+  );
 
   const configErrors = validateRequiredConfig(CONFIG);
   if (configErrors.length > 0) {
@@ -1081,6 +1126,15 @@ async function main() {
     processSteps.push(step);
     log(step);
   };
+  /** 本轮已知的 VPS 上下文（失败通知复用） */
+  let knownVps = {
+    serverName: null,
+    plan: null,
+    expireDate: null,
+    remainingHours: null,
+  };
+  const elapsedMs = () => Date.now() - startedAtMs;
+  const durationText = () => formatDurationMs(elapsedMs());
 
   try {
     // 清理锁文件
@@ -1137,10 +1191,9 @@ async function main() {
 
     const page = await browser.newPage();
 
-    // 🆕 注入浏览器指纹补丁（基于真实浏览器调试数据）
     log('注入浏览器指纹补丁...');
     await injectBrowserFingerprint(page);
-    log('✅ 浏览器指纹补丁已注入！');
+    logDebug('浏览器指纹补丁已注入');
 
     // 代理需要认证时，通过 page.authenticate 传递凭据
     if (HAS_PROXY && CONFIG.PROXY_LOGIN) {
@@ -1151,15 +1204,12 @@ async function main() {
       log('浏览器代理认证已设置');
     }
 
-    // 🔧 优化：使用真实浏览器调试的 UA (Chrome 149)
     await page.setUserAgent(DEFAULT_UA);
-    log(`浏览器 UA 已设置: ${DEFAULT_UA.substring(0, 60)}...`);
+    logDebug(`浏览器 UA: ${DEFAULT_UA.substring(0, 60)}...`);
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
-    // Turnstile 处理策略：不拦截渲染，让 widget 正常显示
-    // Xserver 使用 Standalone Turnstile（隐式渲染），Object.defineProperty 会破坏其初始化
-    // API 求解只需 sitekey（从 data-sitekey 属性提取），无需拦截 render 调用
-    log('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
+    // Standalone Turnstile：正常渲染 + API 求解（不拦截 render）
+    logDebug('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
 
     // 下次执行：优先从 CRON_SCHEDULE（如 32 */6 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
     const resolveNextRun = () => resolveNextRunAt(Date.now(), {
@@ -1169,28 +1219,37 @@ async function main() {
 
     // 步骤 1：登录
     pushStep('登录 Xserver 面板');
-    await handleLogin(page);
-    pushStep('登录成功');
+    const loginResult = await handleLogin(page);
+    pushStep(loginResult?.viaCookie ? '登录成功（Cookie 复用）' : '登录成功');
 
-    // 🆕 验证浏览器指纹是否正确应用（在第一次导航后）
-    const fingerprint = await page.evaluate(() => {
-      return {
-        deviceMemory: navigator.deviceMemory || 'N/A',
-        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
-        platform: navigator.platform,
-        language: navigator.language,
-        webdriver: navigator.webdriver || false,
-      };
-    });
-    log(`📊 浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB, hardwareConcurrency=${fingerprint.hardwareConcurrency}, platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`);
+    const fingerprint = await page.evaluate(() => ({
+      deviceMemory: navigator.deviceMemory || 'N/A',
+      hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+      platform: navigator.platform,
+      language: navigator.language,
+      webdriver: navigator.webdriver || false,
+    }));
+    logDebug(
+      `浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB,`
+      + ` hardwareConcurrency=${fingerprint.hardwareConcurrency},`
+      + ` platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`,
+    );
 
     // 步骤 2：检查续期
     pushStep('检查免费 VPS 到期状态');
     const renewalData = await checkRenewalNeeded(page);
+    if (renewalData.vpsInfo) {
+      knownVps = {
+        serverName: renewalData.vpsInfo.serverName || null,
+        plan: renewalData.vpsInfo.plan || null,
+        expireDate: renewalData.vpsInfo.expireDate || null,
+        remainingHours: renewalData.remainingHours ?? null,
+      };
+    }
     if (!renewalData.needed) {
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
       pushStep(`判定结果: ${skipLabel}`);
-      log('无需续期，流程结束。');
+      log(`无需续期，流程结束（耗时 ${durationText()}）`);
       // 记录跳过，避免「长期无写入」被误判为监控静默
       persistRenewalRecord(buildRenewalRecord({
         success: true,
@@ -1216,6 +1275,7 @@ async function main() {
         windowHours: RENEWAL_WINDOW_HOURS,
         processSteps,
         detail: CONFIG.TG_NOTIFY_DETAIL,
+        durationMs: elapsedMs(),
       }));
       await page.close();
       return;
@@ -1224,7 +1284,6 @@ async function main() {
     pushStep(
       `需要续期: ${renewalData.vpsInfo.serverName || '未知'}（到期 ${renewalData.vpsInfo.expireDate || '未知'}）`,
     );
-    log(`📊 VPS 信息: 服务器名=${renewalData.vpsInfo.serverName}, 规格=${renewalData.vpsInfo.plan}, 原到期日=${renewalData.vpsInfo.expireDate}`);
 
     // 步骤 3：续期确认（可能被官方「12時間前」拦截页软跳过，见 #5）
     pushStep('打开续期确认页');
@@ -1232,7 +1291,7 @@ async function main() {
     if (confirmResult.status === 'window_blocked') {
       const skipLabel = confirmResult.reason || '未进入官方 12 小时续期窗口';
       pushStep(`判定结果: ${skipLabel}`);
-      log(`无需续期（官方窗口未开）: ${skipLabel}`);
+      log(`无需续期（官方窗口未开）: ${skipLabel}（耗时 ${durationText()}）`);
       persistRenewalRecord(buildRenewalRecord({
         success: true,
         skipped: true,
@@ -1257,6 +1316,7 @@ async function main() {
         windowHours: RENEWAL_WINDOW_HOURS,
         processSteps,
         detail: CONFIG.TG_NOTIFY_DETAIL,
+        durationMs: elapsedMs(),
       }));
       await page.close();
       return;
@@ -1269,24 +1329,25 @@ async function main() {
       turnstileAttempts: [],
     };
     if (captchaMeta.turnstileProvider) {
+      const providerLabel = resolveTurnstileProviderLabel(captchaMeta.turnstileProvider)
+        || captchaMeta.turnstileProvider;
       const failedBefore = (captchaMeta.turnstileAttempts || [])
         .filter((a) => a && a.success === false)
-        .map((a) => a.provider)
+        .map((a) => resolveTurnstileProviderLabel(a.provider) || a.provider)
         .filter(Boolean);
       if (failedBefore.length > 0) {
         pushStep(
-          `Turnstile 由 ${captchaMeta.turnstileProvider} 求解成功`
+          `Turnstile 由 ${providerLabel} 求解成功`
           + `（${failedBefore.join(' → ')} 熔断后切换）`,
         );
       } else {
-        pushStep(`Turnstile 由 ${captchaMeta.turnstileProvider} 求解成功`);
+        pushStep(`Turnstile 由 ${providerLabel} 求解成功`);
       }
     }
     pushStep('续期表单提交完成');
 
-    // 提取续期后的到期时间
     log('正在提取续期后的新到期日...');
-    log(`📄 当前页面 URL: ${page.url()}`);
+    logDebug(`续期后页面 URL: ${page.url()}`);
 
     // 页面内优先读「更新後の利用期限」单元格；失败则回退纯文本日期解析
     const pageDateSource = await page.evaluate(() => {
@@ -1309,7 +1370,7 @@ async function main() {
       pushStep('未能自动提取新到期日');
     }
 
-    log('🎉 续期流程全部完成！');
+    log(`🎉 续期流程全部完成！（耗时 ${durationText()}）`);
     pushStep('续期流程全部完成');
 
     // 外部平台定时启停容器时通常无 CRON_SCHEDULE，依赖默认 6h 或自行配置 NOTIFY_NEXT_RUN_HOURS
@@ -1336,14 +1397,25 @@ async function main() {
       detail: CONFIG.TG_NOTIFY_DETAIL,
       turnstileProvider: captchaMeta.turnstileProvider,
       turnstileAttempts: captchaMeta.turnstileAttempts,
+      durationMs: elapsedMs(),
+      remainingHours: renewalData.remainingHours,
     }));
     await page.close();
   } catch (e) {
-    err(`流程异常终止: ${e.message}`);
+    const failureClass = classifyRenewalFailure({
+      errorMessage: e.message,
+      errorCode: e?.code,
+    });
+    err(
+      `流程异常终止 [${failureClass.label}]: ${e.message}（耗时 ${durationText()}）`,
+    );
 
     // 持久化续期失败记录
     persistRenewalRecord(buildRenewalRecord({
       success: false,
+      serverName: knownVps.serverName,
+      plan: knownVps.plan,
+      oldExpireDate: knownVps.expireDate,
       errorMessage: e.message,
     }));
 
@@ -1385,6 +1457,12 @@ async function main() {
       failedProviders,
       errorCode: e?.code || '',
       turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
+      serverName: knownVps.serverName,
+      plan: knownVps.plan,
+      expireDate: knownVps.expireDate,
+      remainingHours: knownVps.remainingHours,
+      durationMs: elapsedMs(),
+      failureCategory: failureClass.category,
     }));
     process.exitCode = 1;
   } finally {
@@ -1393,7 +1471,7 @@ async function main() {
         await browser.close();
       } catch { /* 忽略 */ }
     }
-    log('========== 流程结束 ==========');
+    log(`========== 流程结束（总耗时 ${durationText()}）==========`);
   }
 }
 
@@ -1430,6 +1508,11 @@ export {
   buildProxyHint,
   parseNotifyDetail,
   formatTokyoDateTime,
+  formatDurationMs,
+  clampTelegramMessage,
+  resolveTurnstileProviderLabel,
+  classifyRenewalFailure,
+  parseLogLevel,
   listTurnstileProviders,
   isTurnstileAllProvidersFailed,
 };

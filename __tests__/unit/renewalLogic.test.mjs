@@ -21,7 +21,15 @@ import {
   buildProxyHint,
   formatTurnstileNotifyLine,
   formatRemainingHours,
+  formatDurationMs,
   formatProcessSteps,
+  clampProcessSteps,
+  normalizeProcessSteps,
+  truncateNotifyText,
+  clampTelegramMessage,
+  resolveTurnstileProviderLabel,
+  classifyRenewalFailure,
+  buildFailureHints,
   parseNotifyDetail,
   isFullNotifyDetail,
   isTurnstileAllProvidersFailed,
@@ -31,6 +39,10 @@ import {
   TG_NOTIFY_DETAIL_FULL,
   TG_NOTIFY_DETAIL_COMPACT,
   DEFAULT_TG_NOTIFY_DETAIL,
+  TG_MESSAGE_MAX_LEN,
+  TG_ERROR_MESSAGE_MAX_LEN,
+  TG_PROCESS_STEP_MAX_COUNT,
+  FAILURE_CATEGORY,
 } from '../../src/renewal-logic.mjs';
 
 describe('政策常量', () => {
@@ -442,6 +454,58 @@ describe('formatProcessSteps', () => {
   it('compact 模式不输出过程步骤', () => {
     expect(formatProcessSteps(['登录成功'], 'compact')).toBe('');
   });
+
+  it('步骤过多时保留最近步骤并提示省略', () => {
+    const many = Array.from({ length: TG_PROCESS_STEP_MAX_COUNT + 5 }, (_, i) => `步骤${i + 1}`);
+    const out = formatProcessSteps(many, 'full');
+    expect(out).toContain('此前另有');
+    expect(out).toContain(`步骤${many.length}`);
+    expect(out).not.toContain('步骤1\n');
+  });
+
+  it('连续重复步骤合并后再编号', () => {
+    const out = formatProcessSteps(['登录成功', '登录成功', '提交完成'], 'full');
+    expect(out).toContain('1. 登录成功');
+    expect(out).toContain('2. 提交完成');
+    expect(out).not.toContain('3.');
+  });
+});
+
+describe('formatDurationMs / truncateNotifyText / clampTelegramMessage', () => {
+  it('formatDurationMs 秒/分/小时', () => {
+    expect(formatDurationMs(0)).toBe('0 秒');
+    expect(formatDurationMs(4500)).toBe('5 秒');
+    expect(formatDurationMs(65_000)).toBe('1 分 5 秒');
+    expect(formatDurationMs(120_000)).toBe('2 分');
+    expect(formatDurationMs(3_600_000)).toBe('1 小时');
+    expect(formatDurationMs(3_660_000)).toBe('1 小时 1 分');
+    expect(formatDurationMs(null)).toBe('未知');
+  });
+
+  it('truncateNotifyText 超长截断并标注总字数', () => {
+    const long = 'a'.repeat(TG_ERROR_MESSAGE_MAX_LEN + 50);
+    const out = truncateNotifyText(long);
+    expect(out.length).toBeLessThanOrEqual(TG_ERROR_MESSAGE_MAX_LEN);
+    expect(out).toContain('已截断');
+    expect(out).toContain(String(long.length));
+  });
+
+  it('clampTelegramMessage 不超过上限', () => {
+    const long = 'x'.repeat(TG_MESSAGE_MAX_LEN + 200);
+    const out = clampTelegramMessage(long);
+    expect(out.length).toBeLessThanOrEqual(TG_MESSAGE_MAX_LEN);
+    expect(out).toContain('消息过长已截断');
+  });
+
+  it('clampProcessSteps 限制条数与单行长度', () => {
+    const steps = clampProcessSteps(
+      ['  a  ', '', 'b'.repeat(300), ...Array.from({ length: 20 }, (_, i) => `s${i}`)],
+      { maxCount: 5, maxLen: 20 },
+    );
+    expect(steps.length).toBeLessThanOrEqual(5);
+    expect(steps.some((s) => s.includes('省略'))).toBe(true);
+    expect(steps.every((s) => s.length <= 20 || s.includes('省略'))).toBe(true);
+  });
 });
 
 describe('buildSuccessNotifyMessage', () => {
@@ -519,9 +583,33 @@ describe('buildSuccessNotifyMessage', () => {
     expect(msg).toContain('AntiCaptcha');
     expect(msg).toContain('熔断后切换');
   });
+
+  it('成功通知含耗时', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      executedAt: 't',
+      nextRunAt: 'n',
+      durationMs: 95_000,
+      detail: 'compact',
+    });
+    expect(msg).toContain('耗时');
+    expect(msg).toContain('1 分 35 秒');
+  });
+
+  it('full 成功通知可附带续期前剩余时间', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      executedAt: 't',
+      nextRunAt: 'n',
+      remainingHours: 8.5,
+      detail: 'full',
+    });
+    expect(msg).toContain('续期前剩余');
+    expect(msg).toContain('约 8.5 小时');
+  });
 });
 
-describe('formatTurnstileNotifyLine', () => {
+describe('formatTurnstileNotifyLine / resolveTurnstileProviderLabel', () => {
   it('无平台返回空', () => {
     expect(formatTurnstileNotifyLine({})).toBe('');
   });
@@ -529,6 +617,20 @@ describe('formatTurnstileNotifyLine', () => {
   it('仅成功平台', () => {
     expect(formatTurnstileNotifyLine({ providerName: 'CapSolver' }))
       .toBe('🔐 Turnstile: CapSolver');
+  });
+
+  it('prefilled / natural 使用中文标签', () => {
+    expect(resolveTurnstileProviderLabel('prefilled')).toBe('页面预填');
+    expect(resolveTurnstileProviderLabel('natural')).toBe('自然通过');
+    expect(formatTurnstileNotifyLine({ providerName: 'prefilled' }))
+      .toBe('🔐 Turnstile: 页面预填');
+  });
+});
+
+describe('normalizeProcessSteps', () => {
+  it('合并连续重复并去空', () => {
+    expect(normalizeProcessSteps(['登录', '登录', '', ' 检查 ', '检查', '提交']))
+      .toEqual(['登录', '检查', '提交']);
   });
 });
 
@@ -630,6 +732,53 @@ describe('isTurnstileAllProvidersFailed', () => {
   });
 });
 
+describe('classifyRenewalFailure / buildFailureHints', () => {
+  it('按错误文案/错误码分类', () => {
+    expect(classifyRenewalFailure({
+      errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
+    }).category).toBe(FAILURE_CATEGORY.TURNSTILE_OUTAGE);
+
+    expect(classifyRenewalFailure({
+      errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',
+    }).category).toBe(FAILURE_CATEGORY.LOGIN);
+
+    expect(classifyRenewalFailure({
+      errorMessage: '配置校验失败: XSERVER_MEMBER_ID',
+    }).category).toBe(FAILURE_CATEGORY.CONFIG);
+
+    expect(classifyRenewalFailure({
+      errorMessage: 'Keras 模型 API 返回无效结果: "ab"',
+    }).category).toBe(FAILURE_CATEGORY.CAPTCHA);
+
+    expect(classifyRenewalFailure({
+      errorMessage: 'Turnstile 等待超时，将尝试强制提交',
+    }).category).toBe(FAILURE_CATEGORY.TURNSTILE);
+
+    expect(classifyRenewalFailure({
+      errorMessage: '需要绑定信用卡才能续期',
+    }).category).toBe(FAILURE_CATEGORY.BUSINESS);
+
+    expect(classifyRenewalFailure({
+      errorMessage: 'Navigation timeout of 30000 ms exceeded',
+    }).category).toBe(FAILURE_CATEGORY.TIMEOUT);
+
+    expect(classifyRenewalFailure({
+      errorMessage: 'something weird',
+    }).category).toBe(FAILURE_CATEGORY.UNKNOWN);
+  });
+
+  it('按分类输出差异化处置建议', () => {
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.LOGIN }))
+      .toContain('XSERVER_MEMBER_ID');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.CAPTCHA, captchaMaxRetry: 5 }))
+      .toContain('5 次');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.TURNSTILE_OUTAGE }))
+      .toContain('立即人工登录');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.CONFIG }))
+      .toContain('配置校验');
+  });
+});
+
 describe('buildFailureNotifyMessage', () => {
   it('普通失败不含告警升级', () => {
     const msg = buildFailureNotifyMessage({
@@ -711,6 +860,57 @@ describe('buildFailureNotifyMessage', () => {
       detail: 'compact',
     });
     expect(msg).toContain('最高级告警');
+  });
+
+  it('失败通知附带 VPS 上下文、耗时，并截断超长错误', () => {
+    const longErr = `fail-${'x'.repeat(800)}`;
+    const msg = buildFailureNotifyMessage({
+      errorMessage: longErr,
+      executedAt: 't',
+      serverName: 'host-a',
+      plan: '4GB',
+      expireDate: '2026-07-26',
+      remainingHours: 3.2,
+      durationMs: 12_000,
+      detail: 'full',
+      proxyHint: 'hint',
+    });
+    expect(msg).toContain('host-a');
+    expect(msg).toContain('4GB');
+    expect(msg).toContain('2026-07-26');
+    expect(msg).toContain('约 3.2 小时');
+    expect(msg).toContain('失败类型');
+    expect(msg).toContain('耗时');
+    expect(msg).toContain('已截断');
+    expect(msg).not.toContain(longErr);
+    expect(msg.length).toBeLessThanOrEqual(TG_MESSAGE_MAX_LEN);
+  });
+
+  it('compact 失败通知仍可含服务器名与失败类型，不含规格与失败说明', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',
+      executedAt: 't',
+      serverName: 'host-b',
+      plan: '4GB',
+      detail: 'compact',
+    });
+    expect(msg).toContain('host-b');
+    expect(msg).toContain('失败类型');
+    expect(msg).toContain('登录失败');
+    expect(msg).not.toContain('4GB');
+    expect(msg).not.toContain('失败说明');
+  });
+
+  it('登录类失败使用登录处置建议', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',
+      executedAt: 't',
+      detail: 'full',
+      proxyHint: 'hint',
+    });
+    expect(msg).toContain('登录失败');
+    expect(msg).toContain('XSERVER_MEMBER_ID');
+    expect(msg).not.toContain('验证码识别已自动重试');
   });
 });
 

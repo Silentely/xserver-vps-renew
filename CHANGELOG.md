@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 优化（2026-07-25）
+- **日志与 Telegram 通知**
+  - 成功 / 跳过 / 失败通知统一附带 **耗时**；失败通知在已知时附带 **服务器名 / 规格 / 到期日 / 剩余时间**
+  - 失败自动分类（登录 / 配置 / 图形验证码 / Turnstile / 全平台熔断 / 超时 / 业务限制 / 其他），通知含 `🏷️ 失败类型`，full 模式按类给出处置建议
+  - 错误信息与执行过程步骤自动截断（错误默认 ≤500 字；过程最多 15 步、单步 ≤180 字），发送前再兜底 ≤4096 字，避免 Bot API 拒收
+  - 新增 `LOG_LEVEL`（debug/info/warn/error）：默认 info；截图、字段数、API 轮询/原始响应等降为 debug
+  - VPS 状态合并为一行日志；Turnstile 求解路径 info 摘要更短；`prefilled`/`natural` 在 TG 中显示为中文
+  - 执行过程步骤合并连续重复；失败标题去掉双重 `<b>` 嵌套；登录过程区分 Cookie 复用
+  - 启动日志标明日志级别、通知模式与 Telegram 是否已配置；发送成功日志带字数与模式；未配置 TG 时明确跳过
+  - 失败持久化记录复用已解析的 VPS 上下文；流程结束日志输出总耗时
+  - **entrypoint cron 环境白名单**：补齐 `ANTICAPTCHA_*` / `YESCAPTCHA_*` / `TURNSTILE_*` / `TG_NOTIFY_DETAIL` / `LOG_LEVEL` 等，避免定时模式丢配置
+
 ### 功能（2026-07-24）
 - **Turnstile 多平台 failover + Anti-Captcha**
   - 新增 `ANTICAPTCHA_API_KEY`：按 [Anti-Captcha 官方文档](https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless) 调用 `TurnstileTaskProxyless` / `TurnstileTask`（字段 `cData`/`chlPageData`，createTask 可选 `softId`，不提交自定义 UA）；注册邀请链接：https://getcaptchasolution.com/4isxcbvw0n
@@ -61,14 +73,14 @@
 - `docker-compose.yml` 默认 `CRON_SCHEDULE` 改为每 6 小时（`0 */6 * * *`），避免 12h 续期窗口被错过
 - 文档同步：README / CLAUDE / RUNBOOK / `.env.example`
 
-### 第二轮打磨（2026-07-11）
+### 优化（2026-07-11）
 - 新增 `src/renewal-logic.mjs`：到期判定、续期 URL、提交结果解析、到期日提取、通知文案纯函数化
 - 超时/重试环境变量：`NAVIGATION_TIMEOUT_MS` / `TURNSTILE_TIMEOUT_MS` / `TURNSTILE_API_TIMEOUT_MS` / `CAPTCHA_MAX_RETRY`
 - `CAPTCHA_API` URL 合法性校验；`parsePositiveInt` 统一环境变量解析
 - Docker：默认状态文件改为 `/data/chrome-profile/renewal-status.json`（与 Chrome 配置同卷持久化）；健康检查兼容 supercronic / 执行中进程
 - 单元测试增至 15 文件 / 209+ 用例（含 `renewalLogic` / `injectTurnstileToken`）
 
-### 修复（2026-07-11 第一轮）
+### 修复（2026-07-11）
 - **关键**：`writeRenewalStatus` / `getRenewalStatus` 未传入 `RENEWAL_STATUS_FILE`，自定义路径实际不生效
 - **关键**：`CONFIG.DEFAULT_UA` 未注入 Turnstile 求解，API 任务始终空 UA
 - **关键**：`writeRenewalStatus` 目录权限检查 mock 不全导致测试误报「目录不可写」；不可写时现在明确抛错
