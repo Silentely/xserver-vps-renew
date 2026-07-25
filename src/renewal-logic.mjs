@@ -531,6 +531,40 @@ export function formatRemainingHours(hours) {
 }
 
 /**
+ * 距官方可续期窗口（剩余 ≤ windowHours）还有多少小时
+ * @param {number|null|undefined} remainingHours - 当前剩余小时
+ * @param {number} [windowHours=RENEWAL_WINDOW_HOURS]
+ * @returns {number|null} 已进入窗口为 0；无法计算为 null；否则为正数
+ */
+export function getHoursUntilRenewalWindow(
+  remainingHours,
+  windowHours = RENEWAL_WINDOW_HOURS,
+) {
+  if (remainingHours == null || !Number.isFinite(Number(remainingHours))) return null;
+  const rem = Number(remainingHours);
+  const win = Number(windowHours);
+  if (!Number.isFinite(win) || win < 0) return null;
+  if (rem <= win) return 0;
+  return rem - win;
+}
+
+/**
+ * 格式化「距可续窗口」文案（通知用，未转义）
+ * @param {number|null|undefined} remainingHours
+ * @param {number} [windowHours=RENEWAL_WINDOW_HOURS]
+ * @returns {string} 空字符串表示不展示
+ */
+export function formatHoursUntilWindow(
+  remainingHours,
+  windowHours = RENEWAL_WINDOW_HOURS,
+) {
+  const until = getHoursUntilRenewalWindow(remainingHours, windowHours);
+  if (until == null) return '';
+  if (until <= 0) return '已进入可续期窗口';
+  return `约 ${until.toFixed(1)} 小时后可续`;
+}
+
+/**
  * 格式化耗时（毫秒 → 可读中文）
  * @param {number|null|undefined} ms
  * @returns {string}
@@ -810,6 +844,13 @@ export function buildSkipNotifyMessage({
   const remaining = escapeHtml(formatRemainingHours(remainingHours));
   const next = escapeHtml(nextRunAt || '');
   const durationLine = formatDurationNotifyLine(durationMs, durationText);
+  // 未找到 VPS 时不展示「距可续窗口」；其余跳过路径在可计算时展示
+  const untilWindowText = !isNoVps
+    ? formatHoursUntilWindow(remainingHours, windowHours)
+    : '';
+  const untilWindowLine = untilWindowText
+    ? `🔓 距可续窗口: ${escapeHtml(untilWindowText)}`
+    : '';
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     return clampTelegramMessage([
@@ -819,6 +860,7 @@ export function buildSkipNotifyMessage({
       `🖥️ 服务器名: ${name}`,
       `📅 当前到期: ${expire}`,
       `⏳ 剩余时间: ${remaining}`,
+      ...(untilWindowLine ? [untilWindowLine] : []),
       ...(durationLine ? [durationLine] : []),
       `⏭️ 下次执行: ${next}`,
     ].join('\n'));
@@ -832,6 +874,7 @@ export function buildSkipNotifyMessage({
     `📦 VPS 规格: ${escapeHtml(plan || (isNoVps ? '—' : '未知'))}`,
     `📅 当前到期: ${expire}`,
     `⏳ 剩余时间: ${remaining}`,
+    ...(untilWindowLine ? [untilWindowLine] : []),
     `📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`,
     ...(durationLine ? [durationLine] : []),
     `⏭️ 下次执行: ${next}`,

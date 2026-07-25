@@ -6,13 +6,14 @@
 - **日志与 Telegram 通知**
   - 成功 / 跳过 / 失败通知统一附带 **耗时**；失败通知在已知时附带 **服务器名 / 规格 / 到期日 / 剩余时间**
   - 失败自动分类（登录 / 配置 / 图形验证码 / Turnstile / 全平台熔断 / 超时 / 业务限制 / 其他），通知含 `🏷️ 失败类型`，full 模式按类给出处置建议
+  - 跳过通知增加 **距可续窗口**（剩余 − 12h）；`TG_NOTIFY_SKIP=false` 可关闭跳过类推送（仅成功/失败）
   - 错误信息与执行过程步骤自动截断（错误默认 ≤500 字；过程最多 15 步、单步 ≤180 字），发送前再兜底 ≤4096 字，避免 Bot API 拒收
-  - 新增 `LOG_LEVEL`（debug/info/warn/error）：默认 info；截图、字段数、API 轮询/原始响应等降为 debug
+  - 新增 `LOG_LEVEL`（debug/info/warn/error）：默认 info；截图、字段数、API 轮询/原始响应、Turnstile 点击轨迹等降为 debug
   - VPS 状态合并为一行日志；Turnstile 求解路径 info 摘要更短；`prefilled`/`natural` 在 TG 中显示为中文
   - 执行过程步骤合并连续重复；失败标题去掉双重 `<b>` 嵌套；登录过程区分 Cookie 复用
-  - 启动日志标明日志级别、通知模式与 Telegram 是否已配置；发送成功日志带字数与模式；未配置 TG 时明确跳过
-  - 失败持久化记录复用已解析的 VPS 上下文；流程结束日志输出总耗时
-  - **entrypoint cron 环境白名单**：补齐 `ANTICAPTCHA_*` / `YESCAPTCHA_*` / `TURNSTILE_*` / `TG_NOTIFY_DETAIL` / `LOG_LEVEL` 等，避免定时模式丢配置
+  - 启动日志标明日志级别、通知模式与 Telegram 是否已配置；结束日志带结果摘要（成功/跳过/失败）与总耗时
+  - 失败持久化记录复用已解析的 VPS 上下文
+  - **entrypoint cron 环境白名单**：补齐 `ANTICAPTCHA_*` / `YESCAPTCHA_*` / `TURNSTILE_*` / `TG_NOTIFY_DETAIL` / `TG_NOTIFY_SKIP` / `LOG_LEVEL` 等
 
 ### 功能（2026-07-24）
 - **Turnstile 多平台 failover + Anti-Captcha**

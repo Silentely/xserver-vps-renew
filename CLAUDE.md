@@ -6,7 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
-| 2026-07-25 | 日志与 Telegram：耗时/截断、LOG_LEVEL、失败分类与按类建议、cron 环境白名单 |
+| 2026-07-25 | 日志与 Telegram：耗时/截断、LOG_LEVEL、失败分类、距可续窗口、TG_NOTIFY_SKIP、cron 白名单 |
 | 2026-07-24 | Turnstile 多平台 failover + Anti-Captcha；全挂时最高级删机风险 Telegram 告警 |
 | 2026-07-23 | 修复 #5：纯日期误判「明天到期」可续；识别官方「12時間前」拦截页并软跳过，避免误等验证码图 |
 | 2026-07-22 | Telegram：每次执行均推送（含无需续期）；`TG_NOTIFY_DETAIL=full\|compact` 控制完整/简洁摘要（#4） |
@@ -206,6 +206,7 @@ npm run test:watch
 | `TG_BOT_TOKEN` | Telegram Bot Token | 无 |
 | `TG_CHAT_ID` | Telegram Chat ID | 无 |
 | `TG_NOTIFY_DETAIL` | 通知详细程度：`full`（完整摘要含过程）/ `compact`（简洁） | `full` |
+| `TG_NOTIFY_SKIP` | 是否推送「无需续期/跳过」通知 | `true` |
 | `LOG_LEVEL` | 日志级别：`debug` / `info` / `warn` / `error` | `info` |
 | `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
 | `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |

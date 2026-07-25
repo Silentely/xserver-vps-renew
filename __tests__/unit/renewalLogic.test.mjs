@@ -23,6 +23,8 @@ import {
   formatRemainingHours,
   formatDurationMs,
   formatProcessSteps,
+  getHoursUntilRenewalWindow,
+  formatHoursUntilWindow,
   clampProcessSteps,
   normalizeProcessSteps,
   truncateNotifyText,
@@ -634,6 +636,20 @@ describe('normalizeProcessSteps', () => {
   });
 });
 
+describe('getHoursUntilRenewalWindow / formatHoursUntilWindow', () => {
+  it('计算距可续窗口小时数', () => {
+    expect(getHoursUntilRenewalWindow(20, 12)).toBe(8);
+    expect(getHoursUntilRenewalWindow(10, 12)).toBe(0);
+    expect(getHoursUntilRenewalWindow(null, 12)).toBeNull();
+  });
+
+  it('格式化文案', () => {
+    expect(formatHoursUntilWindow(20, 12)).toBe('约 8.0 小时后可续');
+    expect(formatHoursUntilWindow(8, 12)).toBe('已进入可续期窗口');
+    expect(formatHoursUntilWindow(null)).toBe('');
+  });
+});
+
 describe('buildSkipNotifyMessage', () => {
   it('无需续期时包含 VPS 状态与判定说明', () => {
     const msg = buildSkipNotifyMessage({
@@ -652,12 +668,14 @@ describe('buildSkipNotifyMessage', () => {
     expect(msg).toContain('4GB');
     expect(msg).toContain('2026-07-22 20:00:00');
     expect(msg).toContain('约 15.5 小时');
+    expect(msg).toContain('距可续窗口');
+    expect(msg).toContain('约 3.5 小时后可续');
     expect(msg).toContain('剩余≤12h 可续');
     expect(msg).toContain('执行过程');
     expect(msg).toContain('1. 登录成功');
   });
 
-  it('compact 保留关键状态，省略规格、判定详情与过程', () => {
+  it('compact 保留关键状态与距窗口，省略规格、判定详情与过程', () => {
     const msg = buildSkipNotifyMessage({
       reasonCode: 'not_due',
       serverName: 'vps-host-1',
@@ -674,6 +692,7 @@ describe('buildSkipNotifyMessage', () => {
     expect(msg).toContain('vps-host-1');
     expect(msg).toContain('2026-07-22 20:00:00');
     expect(msg).toContain('约 15.5 小时');
+    expect(msg).toContain('距可续窗口');
     expect(msg).not.toContain('4GB');
     expect(msg).not.toContain('很长的判定说明');
     expect(msg).not.toContain('执行过程');

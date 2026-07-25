@@ -21,6 +21,7 @@
  *   TG_BOT_TOKEN          - Telegram Bot Token（可选，启用通知）
  *   TG_CHAT_ID            - Telegram Chat ID（可选，启用通知）
  *   TG_NOTIFY_DETAIL      - 通知详细程度：full（完整摘要，默认）/ compact（简洁摘要）
+ *   TG_NOTIFY_SKIP        - 是否推送「无需续期/跳过」通知（默认 true；false 仅成功/失败推送）
  *   LOG_LEVEL             - 日志级别：debug / info（默认）/ warn / error
  */
 
@@ -60,6 +61,7 @@ import {
   validateRequiredConfig,
   parsePositiveInt,
   parseLogLevel,
+  parseEnvBool,
   shouldLog,
   isNoisyModuleLog,
   DEFAULT_LOG_LEVEL,
@@ -215,6 +217,8 @@ const CONFIG = {
     process.env.TG_NOTIFY_DETAIL,
     DEFAULT_TG_NOTIFY_DETAIL,
   ),
+  // 是否推送「无需续期 / 跳过」类通知（默认 true）
+  TG_NOTIFY_SKIP: parseEnvBool(process.env.TG_NOTIFY_SKIP, true),
 
   // 日志级别：debug / info（默认）/ warn / error
   LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
@@ -308,7 +312,18 @@ function escapeHtml(str) {
 // Telegram 通知
 // ============================================================
 
-async function notify(message) {
+/**
+ * 发送 Telegram 通知
+ * @param {string} message
+ * @param {{ kind?: 'success'|'skip'|'failure'|'other' }} [opts]
+ */
+async function notify(message, opts = {}) {
+  const kind = opts.kind || 'other';
+  if (kind === 'skip' && !CONFIG.TG_NOTIFY_SKIP) {
+    log('Telegram：跳过类通知已关闭（TG_NOTIFY_SKIP=false）');
+    return;
+  }
+
   if (!CONFIG.TG_BOT_TOKEN || !CONFIG.TG_CHAT_ID) {
     log('Telegram 未配置（TG_BOT_TOKEN / TG_CHAT_ID），跳过通知');
     return;
@@ -669,7 +684,7 @@ async function humanMouseMove(page, fromX, fromY, toX, toY) {
  */
 async function clickTurnstileFallback(page) {
   try {
-    log('尝试点击 Turnstile checkbox...');
+    logDebug('尝试点击 Turnstile checkbox...');
     const frames = page.frames();
     const turnstileFrame = frames.find((f) =>
       f.url().includes('challenges.cloudflare.com'),
@@ -688,32 +703,30 @@ async function clickTurnstileFallback(page) {
           const startX = 200 + Math.random() * 400;
           const startY = 300 + Math.random() * 200;
 
-          log(`Turnstile iframe: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
-            `${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
-          log(`鼠标轨迹: (${startX.toFixed(0)},${startY.toFixed(0)}) → (${clickX.toFixed(0)},${clickY.toFixed(0)})`);
+          logDebug(
+            `Turnstile iframe: (${box.x.toFixed(0)},${box.y.toFixed(0)}) `
+            + `${box.width.toFixed(0)}x${box.height.toFixed(0)}`,
+          );
+          logDebug(
+            `鼠标轨迹: (${startX.toFixed(0)},${startY.toFixed(0)})`
+            + ` → (${clickX.toFixed(0)},${clickY.toFixed(0)})`,
+          );
 
-          // 移动鼠标到起始位置
           await page.mouse.move(startX, startY);
           await sleep(200 + Math.random() * 300);
-
-          // 模拟人类鼠标移动轨迹
           await humanMouseMove(page, startX, startY, clickX, clickY);
-
-          // 短暂停留（人类反应时间）
           await sleep(50 + Math.random() * 150);
-
-          // 点击
           await page.mouse.click(clickX, clickY);
-          log('Turnstile checkbox 已点击');
+          logDebug('Turnstile checkbox 已点击');
           return true;
         }
       }
     }
 
-    log('未找到 Turnstile iframe，点击失败');
+    logDebug('未找到 Turnstile iframe，点击失败');
     return false;
   } catch (e) {
-    err(`点击异常: ${e.message}`);
+    logWarn(`Turnstile 点击异常: ${e.message}`);
     return false;
   }
 }
@@ -1084,7 +1097,8 @@ async function main() {
   log('========== Xserver VPS 自动续期开始 ==========');
   log(
     `日志级别: ${CONFIG.LOG_LEVEL}`
-    + ` | 通知模式: ${CONFIG.TG_NOTIFY_DETAIL}`
+    + ` | 通知: ${CONFIG.TG_NOTIFY_DETAIL}`
+    + `${CONFIG.TG_NOTIFY_SKIP ? '' : '（跳过类不推送）'}`
     + `${CONFIG.TG_BOT_TOKEN && CONFIG.TG_CHAT_ID ? ' | Telegram 已配置' : ' | Telegram 未配置'}`,
   );
 
@@ -1133,6 +1147,9 @@ async function main() {
     expireDate: null,
     remainingHours: null,
   };
+  /** 结束摘要：success | skip | failure | aborted */
+  let runOutcome = 'aborted';
+  let runOutcomeLabel = '未完成';
   const elapsedMs = () => Date.now() - startedAtMs;
   const durationText = () => formatDurationMs(elapsedMs());
 
@@ -1248,8 +1265,10 @@ async function main() {
     }
     if (!renewalData.needed) {
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
+      runOutcome = 'skip';
+      runOutcomeLabel = skipLabel;
       pushStep(`判定结果: ${skipLabel}`);
-      log(`无需续期，流程结束（耗时 ${durationText()}）`);
+      log(`${skipLabel}，流程结束（耗时 ${durationText()}）`);
       // 记录跳过，避免「长期无写入」被误判为监控静默
       persistRenewalRecord(buildRenewalRecord({
         success: true,
@@ -1276,7 +1295,7 @@ async function main() {
         processSteps,
         detail: CONFIG.TG_NOTIFY_DETAIL,
         durationMs: elapsedMs(),
-      }));
+      }), { kind: 'skip' });
       await page.close();
       return;
     }
@@ -1290,6 +1309,8 @@ async function main() {
     const confirmResult = await handleRenewalConfirm(page, renewalData.renewUrl);
     if (confirmResult.status === 'window_blocked') {
       const skipLabel = confirmResult.reason || '未进入官方 12 小时续期窗口';
+      runOutcome = 'skip';
+      runOutcomeLabel = '未进入 12h 续期窗口';
       pushStep(`判定结果: ${skipLabel}`);
       log(`无需续期（官方窗口未开）: ${skipLabel}（耗时 ${durationText()}）`);
       persistRenewalRecord(buildRenewalRecord({
@@ -1317,7 +1338,7 @@ async function main() {
         processSteps,
         detail: CONFIG.TG_NOTIFY_DETAIL,
         durationMs: elapsedMs(),
-      }));
+      }), { kind: 'skip' });
       await page.close();
       return;
     }
@@ -1370,6 +1391,10 @@ async function main() {
       pushStep('未能自动提取新到期日');
     }
 
+    runOutcome = 'success';
+    runOutcomeLabel = newExpireDate
+      ? `续期成功 → ${newExpireDate}`
+      : '续期成功（未提取新到期日）';
     log(`🎉 续期流程全部完成！（耗时 ${durationText()}）`);
     pushStep('续期流程全部完成');
 
@@ -1399,13 +1424,15 @@ async function main() {
       turnstileAttempts: captchaMeta.turnstileAttempts,
       durationMs: elapsedMs(),
       remainingHours: renewalData.remainingHours,
-    }));
+    }), { kind: 'success' });
     await page.close();
   } catch (e) {
     const failureClass = classifyRenewalFailure({
       errorMessage: e.message,
       errorCode: e?.code,
     });
+    runOutcome = 'failure';
+    runOutcomeLabel = failureClass.label;
     err(
       `流程异常终止 [${failureClass.label}]: ${e.message}（耗时 ${durationText()}）`,
     );
@@ -1463,7 +1490,7 @@ async function main() {
       remainingHours: knownVps.remainingHours,
       durationMs: elapsedMs(),
       failureCategory: failureClass.category,
-    }));
+    }), { kind: 'failure' });
     process.exitCode = 1;
   } finally {
     if (browser) {
@@ -1471,7 +1498,17 @@ async function main() {
         await browser.close();
       } catch { /* 忽略 */ }
     }
-    log(`========== 流程结束（总耗时 ${durationText()}）==========`);
+    const outcomeIcon = runOutcome === 'success'
+      ? '✅'
+      : runOutcome === 'skip'
+        ? 'ℹ️'
+        : runOutcome === 'failure'
+          ? '❌'
+          : '⚠️';
+    log(
+      `========== 流程结束 · ${outcomeIcon} ${runOutcomeLabel}`
+      + `（总耗时 ${durationText()}）==========`,
+    );
   }
 }
 
@@ -1513,6 +1550,7 @@ export {
   resolveTurnstileProviderLabel,
   classifyRenewalFailure,
   parseLogLevel,
+  parseEnvBool,
   listTurnstileProviders,
   isTurnstileAllProvidersFailed,
 };

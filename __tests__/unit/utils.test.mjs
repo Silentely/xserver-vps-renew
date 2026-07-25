@@ -6,6 +6,7 @@ import {
   validateRequiredConfig,
   parsePositiveInt,
   parseLogLevel,
+  parseEnvBool,
   shouldLog,
   isNoisyModuleLog,
   TOKYO_OFFSET_MS,
@@ -68,6 +69,19 @@ describe('parsePositiveInt', () => {
     expect(parsePositiveInt('2', 10, { min: 5, max: 100 })).toBe(10);
     expect(parsePositiveInt('200', 10, { min: 5, max: 100 })).toBe(10);
     expect(parsePositiveInt('50', 10, { min: 5, max: 100 })).toBe(50);
+  });
+});
+
+describe('parseEnvBool', () => {
+  it('解析常见真/假与回退', () => {
+    expect(parseEnvBool('true', false)).toBe(true);
+    expect(parseEnvBool('1', false)).toBe(true);
+    expect(parseEnvBool('yes', false)).toBe(true);
+    expect(parseEnvBool('false', true)).toBe(false);
+    expect(parseEnvBool('0', true)).toBe(false);
+    expect(parseEnvBool('', true)).toBe(true);
+    expect(parseEnvBool(undefined, false)).toBe(false);
+    expect(parseEnvBool('maybe', true)).toBe(true);
   });
 });
 

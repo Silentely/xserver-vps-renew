@@ -154,6 +154,7 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 | `TG_BOT_TOKEN` | 无 | Telegram Bot Token（从 @BotFather 获取） |
 | `TG_CHAT_ID` | 无 | Telegram Chat ID（从 @userinfobot 获取） |
 | `TG_NOTIFY_DETAIL` | `full` | 通知详细程度：`full`（完整摘要）/ `compact`（简洁摘要） |
+| `TG_NOTIFY_SKIP` | `true` | 是否推送「无需续期/跳过」通知；`false` 时仅成功/失败推送 |
 | `LOG_LEVEL` | `info` | 日志级别：`debug` / `info` / `warn` / `error`（排查时可设 `debug`） |
 
 配置后**每次脚本执行结束都会推送**一条摘要（不限成功）。用 `TG_NOTIFY_DETAIL` 控制篇幅：
@@ -166,7 +167,7 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 | 场景 | full | compact |
 |------|------|---------|
 | 续期成功 | 规格、原/新到期日、Turnstile、耗时、下次执行、过程步骤 | 服务器、新到期日、Turnstile、耗时、下次执行 |
-| 无需续期 | 规格、剩余时间、判定原因、耗时、过程步骤 | 服务器、到期、剩余时间、耗时、下次执行 |
+| 无需续期 | 规格、剩余时间、距可续窗口、判定原因、耗时、过程步骤 | 服务器、到期、剩余时间、距可续窗口、耗时、下次执行 |
 | 续期失败 | 失败类型、服务器/规格/到期/剩余、错误（截断）、Turnstile、耗时、代理提示、**按类处置建议**、过程步骤 | 失败类型、服务器、错误、告警升级、耗时 |
 
 ### 可选 - 代理配置

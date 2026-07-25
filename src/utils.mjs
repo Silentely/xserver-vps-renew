@@ -71,6 +71,21 @@ export function parsePositiveInt(value, fallback, opts = {}) {
   return n;
 }
 
+/**
+ * 解析布尔环境变量
+ * 支持 true/false、1/0、yes/no、on/off（大小写不敏感）；空值回退默认
+ * @param {string|undefined|null} value
+ * @param {boolean} [fallback=false]
+ * @returns {boolean}
+ */
+export function parseEnvBool(value, fallback = false) {
+  if (value == null || String(value).trim() === '') return Boolean(fallback);
+  const v = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'y', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(v)) return false;
+  return Boolean(fallback);
+}
+
 /** 日志级别（由低到高） */
 export const LOG_LEVEL_DEBUG = 'debug';
 export const LOG_LEVEL_INFO = 'info';
