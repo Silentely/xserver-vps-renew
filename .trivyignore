@@ -35,6 +35,14 @@ CVE-2026-56002
 CVE-2026-56003
 
 # ============================================================
+# brace-expansion DoS 漏洞 — puppeteer-extra 传递依赖
+# minimatch@3.x 依赖 brace-expansion@^1.1.7，无法升级到 5.0.8
+# 该漏洞为 DoS 类型，容器内 glob 匹配场景不可利用
+# 等待 puppeteer-extra 生态升级后移除
+# ============================================================
+CVE-2026-14257
+
+# ============================================================
 # Node 基础镜像自带 npm 内嵌依赖（非业务 node_modules）
 # 路径：/usr/local/lib/node_modules/npm/node_modules/{picomatch,sigstore}
 # 运行时业务脚本不调用这些模块；npm 升级后若仍残留则忽略
