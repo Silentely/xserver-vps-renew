@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-26 | Turnstile：先注入 token 再对齐 UA；未通过禁止提交；重试回 index?id_vps；文档提醒 AntiCaptcha 域名代理 Proxyless IP 不一致 |
 | 2026-07-25 | 日志与 Telegram：耗时/截断、LOG_LEVEL、失败分类、距可续窗口、TG_NOTIFY_SKIP、cron 白名单 |
 | 2026-07-24 | Turnstile 多平台 failover + Anti-Captcha；全挂时最高级删机风险 Telegram 告警 |
 | 2026-07-23 | 修复 #5：纯日期误判「明天到期」可续；识别官方「12時間前」拦截页并软跳过，避免误等验证码图 |
@@ -120,7 +121,7 @@ graph TD
 | `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `classifyRenewalFailure()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `classifyRenewalFailure()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -241,18 +242,20 @@ npm run test:watch
 3. 验证码标准化（支持平假名转数字、全角转半角、混合内容提取）
 4. 模拟人类输入（带延迟）
 5. Turnstile 多平台 failover 求解（CapSolver → AntiCaptcha → YesCaptcha → 2Captcha）
-6. 提交表单并验证结果
+6. **仅当 Turnstile `ok`（或页面已预填 token）时提交**；未通过则抛错重试，禁止强解 disabled 硬提交
+7. 失败重试：优先 `handleRenewalConfirm(renewUrl)` 回 `index?id_vps=` 再进 conf（勿裸 goto `/conf`）
 
 ### Turnstile 求解策略
 
 - **多平台串行 failover**（默认顺序）：CapSolver → AntiCaptcha → YesCaptcha → 2Captcha
 - **CapSolver**：`CAPSOLVER_API_KEY`（`AntiTurnstileTaskProxyLess`，不支持代理）
 - **Anti-Captcha**：`ANTICAPTCHA_API_KEY`（`TurnstileTaskProxyless`；仅当 `PROXY_ADDRESS` 为 IP 时用 `TurnstileTask`；域名为代理时自动 Proxyless；官方字段 `cData`/`chlPageData`；不提交自定义 UA）
+  - **风险**：域名代理 → Proxyless 时工人 IP ≠ 浏览器代理出口，易 `認証に失敗`；宜作备份而非「仅 AntiCaptcha + 域名代理」主路径（详见 README / RUNBOOK）
 - **YesCaptcha**：`YESCAPTCHA_API_KEY`（`TurnstileTaskProxyless` / `M1`；`softID: 97020`）
 - **2Captcha**：`TWOCAPTCHA_API_KEY`（支持代理）
 - 单平台连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换；全部熔断 → `TURNSTILE_ALL_PROVIDERS_FAILED` + 最高级 Telegram 告警
 - **降级（不推荐）**：无 API 密钥时等待自然通过——生产环境请勿依赖
-- 求解成功后注入 token 到页面并触发回调
+- 求解成功后：**先**注入 token / 触发 callback，**再**尽力对齐 API 返回的 UA（`setUserAgent` 失败不阻断）
 
 ### 浏览器反检测措施
 

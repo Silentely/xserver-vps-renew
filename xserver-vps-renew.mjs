@@ -74,6 +74,9 @@ import {
   isRenewalDue,
   buildRenewUrl,
   resolveCaptchaRetryUrl,
+  resolveCaptchaRetryNavigation,
+  needsUserAgentAlignment,
+  shouldSubmitAfterTurnstile,
   evaluateSubmissionResult,
   detectRenewalWindowBlocked,
   extractExpireDateFromText,
@@ -822,19 +825,7 @@ async function waitForTurnstile(page) {
       const providerLabel = resolveTurnstileProviderLabel(result.providerName) || result.providerName;
       log(`Turnstile 由 ${providerLabel} 求解成功`);
 
-      if (result.userAgent) {
-        const currentUA = await page.evaluate(() => navigator.userAgent);
-        if (currentUA !== result.userAgent) {
-          logWarn(
-            `UA 不匹配，更新浏览器 UA 以匹配 API`
-            + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
-          );
-          await page.setUserAgent(result.userAgent);
-        } else {
-          logDebug('浏览器 UA 与 API 返回值一致');
-        }
-      }
-
+      // 先注入 token：setUserAgent 在 rebrowser 下可能 Target closed，绝不能挡住已拿到的 token
       const callbackResult = await page.evaluate((tkn) => {
         const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
         if (cfDiv) {
@@ -864,6 +855,27 @@ async function waitForTurnstile(page) {
         logDebug(`Turnstile token 已就绪，长度: ${verifyToken.length}`);
       } else {
         logDebug('cf-turnstile-response 无值，callback 可能已处理 token');
+      }
+
+      // UA 对齐尽力而为：失败只记 warn，不回滚已注入 token、不判求解失败
+      if (result.userAgent) {
+        try {
+          const currentUA = await page.evaluate(() => navigator.userAgent);
+          if (needsUserAgentAlignment(currentUA, result.userAgent)) {
+            logWarn(
+              `UA 不匹配，更新浏览器 UA 以匹配 API`
+              + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
+            );
+            await page.setUserAgent(result.userAgent);
+            logDebug('浏览器 UA 已对齐到打码平台返回值');
+          } else {
+            logDebug('浏览器 UA 与 API 返回值一致或无需对齐');
+          }
+        } catch (uaError) {
+          logWarn(
+            `对齐 UA 失败（已保留已注入 token，继续提交）: ${uaError.message}`,
+          );
+        }
       }
 
       try {
@@ -929,11 +941,49 @@ async function waitForTurnstileToken(page) {
 // ============================================================
 
 /**
+ * 验证码/提交失败后回到可识别验证码的页面
+ * 优先经带 id_vps 的 index 再点确认进 conf；裸 /conf 常无验证码图。
+ * @param {import('puppeteer').Page} page
+ * @param {string} currentUrl
+ * @param {string|null|undefined} renewUrl
+ */
+async function navigateForCaptchaRetry(page, currentUrl, renewUrl) {
+  const nav = resolveCaptchaRetryNavigation(currentUrl, { renewUrl });
+
+  if (nav.mode === 'renew_index') {
+    log(`⏭️ 重试：回到续期申请页再进入验证码（${nav.url}）`);
+    const confirmResult = await handleRenewalConfirm(page, nav.url);
+    if (confirmResult?.status === 'window_blocked') {
+      throw new Error(confirmResult.reason || '未进入官方 12 小时续期窗口');
+    }
+    // handleRenewalConfirm 已落到 conf；再等图渲染
+    await sleep(2000);
+    return;
+  }
+
+  if (nav.mode === 'reload_conf') {
+    log('⏭️ 重试：刷新当前验证码确认页');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+  } else {
+    if (!nav.url) {
+      throw new Error('无法推导验证码重试 URL（缺少 renewUrl 且当前页无法映射到 conf）');
+    }
+    logWarn(`⏭️ 重试：降级直接打开 conf（可能无验证码图）: ${nav.url}`);
+    await page.goto(nav.url, { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
+  }
+  // Base64 内嵌图渲染需要时间
+  await sleep(3000);
+}
+
+/**
  * 验证码页面完整流程
+ * @param {import('puppeteer').Page} page
+ * @param {{ renewUrl?: string|null }} [options] - renewUrl 用于失败后回到 index?id_vps=
  * @returns {Promise<{ turnstileProvider: string|null, turnstileAttempts: object[] }>}
  */
-async function handleCaptchaPage(page) {
+async function handleCaptchaPage(page, options = {}) {
   log('正在处理验证码页面...');
+  const renewUrl = typeof options?.renewUrl === 'string' ? options.renewUrl : null;
 
   // 最多重试 3 次（验证码识别错误时刷新重试）
   const maxRetries = CONFIG.CAPTCHA_MAX_RETRY || 3;
@@ -988,17 +1038,13 @@ async function handleCaptchaPage(page) {
         turnstileAttempts: Array.isArray(turnstileResult?.attempts) ? turnstileResult.attempts : [],
       };
 
+      // 无有效 Turnstile 时禁止强制提交（否则必然 認証に失敗，且 /do 重试常无验证码图）
+      if (!shouldSubmitAfterTurnstile(turnstileResult) && !turnstileAlreadyPassed) {
+        throw new Error('Turnstile 未通过，跳过提交以免认证失败');
+      }
+
       // 提交表单
       log('正在提交表单...');
-      if (!turnstileResult?.ok) {
-        await page.evaluate(() => {
-          const btn = document.querySelector('input[type="submit"], button[type="submit"]');
-          if (btn) {
-            btn.disabled = false;
-            btn.removeAttribute('disabled');
-          }
-        });
-      }
 
       const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
       if (!submitBtn) throw new Error('未找到提交按钮。');
@@ -1026,13 +1072,7 @@ async function handleCaptchaPage(page) {
         if (attempt < maxRetries) {
           log(`❌ 第 ${attempt} 次尝试失败: ${evaluation.reason}`);
           log(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
-          if (currentUrl.includes('/conf')) {
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
-          } else {
-            const retryUrl = resolveCaptchaRetryUrl(currentUrl);
-            await page.goto(retryUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
-          }
-          await sleep(1000);
+          await navigateForCaptchaRetry(page, currentUrl, renewUrl);
           continue;
         }
         throw new Error(`续期提交失败（${evaluation.reason}），已尝试 ${maxRetries} 次`);
@@ -1060,18 +1100,13 @@ async function handleCaptchaPage(page) {
         log(`⏭️ 准备第 ${attempt + 1} 次尝试...`);
 
         try {
-          // 尝试刷新/回到验证码确认页
-          const currentUrl = page.url();
-          if (currentUrl.includes('/conf')) {
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
-          } else {
-            const retryUrl = resolveCaptchaRetryUrl(currentUrl);
-            await page.goto(retryUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.NAVIGATION_TIMEOUT });
-          }
-          // 等待足够时间让验证码图片渲染完成（Base64 内嵌图片加载需要时间）
-          await sleep(3000);
+          await navigateForCaptchaRetry(page, page.url(), renewUrl);
         } catch (reloadError) {
           log(`⚠️ 页面刷新失败: ${reloadError.message}`);
+          // 官方窗口关闭等业务错误优先于「原验证码错误」
+          if (String(reloadError?.message || '').includes('未进入官方')) {
+            throw reloadError;
+          }
           throw error; // 无法刷新，抛出原始错误
         }
       } else {
@@ -1343,9 +1378,9 @@ async function main() {
       return;
     }
 
-    // 步骤 4-6：验证码 + Turnstile + 提交
+    // 步骤 4-6：验证码 + Turnstile + 提交（传入 renewUrl 供失败重试回到 index?id_vps）
     pushStep('识别验证码并求解 Turnstile，提交续期');
-    const captchaMeta = await handleCaptchaPage(page) || {
+    const captchaMeta = await handleCaptchaPage(page, { renewUrl: renewalData.renewUrl }) || {
       turnstileProvider: null,
       turnstileAttempts: [],
     };
@@ -1539,6 +1574,9 @@ export {
   detectRenewalWindowBlocked,
   extractExpireDateFromText,
   resolveCaptchaRetryUrl,
+  resolveCaptchaRetryNavigation,
+  needsUserAgentAlignment,
+  shouldSubmitAfterTurnstile,
   buildSuccessNotifyMessage,
   buildSkipNotifyMessage,
   buildFailureNotifyMessage,

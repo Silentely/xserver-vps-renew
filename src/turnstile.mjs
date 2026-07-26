@@ -134,7 +134,7 @@ export function parseTurnstileProviderOrder(orderStr) {
 
 /**
  * 判断代理地址是否为 IP（IPv4 / IPv6）
- * Anti-Captcha 官方 TurnstileTask 仅支持 IP，不支持域名（如 p.webshare.io）
+ * Anti-Captcha 官方 TurnstileTask 仅支持 IP，不支持域名（如 proxy.example.com）
  * 文档：https://anti-captcha.com/apidoc/task-types/TurnstileTask
  * @param {string|undefined|null} address
  * @returns {boolean}

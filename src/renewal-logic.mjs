@@ -303,6 +303,53 @@ export function resolveCaptchaRetryUrl(currentUrl) {
 }
 
 /**
+ * 验证码/提交失败后的重试导航决策（纯函数）
+ *
+ * 实机：`/extend/do` 与裸 `/extend/conf` 常无 `id_vps`，直接 goto conf 往往拿不到
+ * Base64 验证码图。优先回到带 `id_vps` 的 index，再由编排层点确认进入 conf。
+ *
+ * @param {string} currentUrl
+ * @param {{ renewUrl?: string|null }} [options]
+ * @returns {{ mode: 'renew_index'|'reload_conf'|'goto_conf', url: string }}
+ */
+export function resolveCaptchaRetryNavigation(currentUrl, options = {}) {
+  const renewUrl = typeof options?.renewUrl === 'string' ? options.renewUrl.trim() : '';
+  if (renewUrl) {
+    return { mode: 'renew_index', url: renewUrl };
+  }
+
+  const url = typeof currentUrl === 'string' ? currentUrl : '';
+  if (url.includes('/conf')) {
+    return { mode: 'reload_conf', url };
+  }
+
+  return { mode: 'goto_conf', url: resolveCaptchaRetryUrl(url) };
+}
+
+/**
+ * 是否需要将浏览器 UA 对齐到打码平台返回的 UA（纯函数）
+ * @param {string} currentUA
+ * @param {string|null|undefined} apiUserAgent
+ * @returns {boolean}
+ */
+export function needsUserAgentAlignment(currentUA, apiUserAgent) {
+  const current = typeof currentUA === 'string' ? currentUA : '';
+  const api = typeof apiUserAgent === 'string' ? apiUserAgent : '';
+  if (!current || !api) return false;
+  return current !== api;
+}
+
+/**
+ * Turnstile 求解结果是否允许继续提交续期表单（纯函数）
+ * 无有效 token 时禁止强行提交，避免必然「認証に失敗」并污染重试页。
+ * @param {{ ok?: boolean }|null|undefined} turnstileResult
+ * @returns {boolean}
+ */
+export function shouldSubmitAfterTurnstile(turnstileResult) {
+  return turnstileResult?.ok === true;
+}
+
+/**
  * 解析续期提交后的页面结果（纯函数）
  * @param {string} pageText - document.body.innerText
  * @param {string} currentUrl - 当前 URL

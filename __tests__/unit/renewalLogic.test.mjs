@@ -5,6 +5,9 @@ import {
   getRemainingHours,
   buildRenewUrl,
   resolveCaptchaRetryUrl,
+  resolveCaptchaRetryNavigation,
+  needsUserAgentAlignment,
+  shouldSubmitAfterTurnstile,
   evaluateSubmissionResult,
   detectRenewalWindowBlocked,
   extractRetryAfterFromText,
@@ -262,6 +265,70 @@ describe('resolveCaptchaRetryUrl', () => {
   it('空值返回空字符串', () => {
     expect(resolveCaptchaRetryUrl('')).toBe('');
     expect(resolveCaptchaRetryUrl(null)).toBe('');
+  });
+});
+
+describe('resolveCaptchaRetryNavigation', () => {
+  const renewUrl =
+    'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511';
+
+  it('有 renewUrl 时优先回到带 id_vps 的 index（避免裸 /conf 无验证码图）', () => {
+    const r = resolveCaptchaRetryNavigation(
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do',
+      { renewUrl },
+    );
+    expect(r).toEqual({ mode: 'renew_index', url: renewUrl });
+  });
+
+  it('仍在 conf 且无 renewUrl 时 reload', () => {
+    const conf = 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf';
+    expect(resolveCaptchaRetryNavigation(conf)).toEqual({
+      mode: 'reload_conf',
+      url: conf,
+    });
+  });
+
+  it('/do 无 renewUrl 时降级为 goto conf', () => {
+    expect(resolveCaptchaRetryNavigation('https://example.com/extend/do')).toEqual({
+      mode: 'goto_conf',
+      url: 'https://example.com/extend/conf',
+    });
+  });
+
+  it('空 URL 且无 renewUrl 返回空 goto_conf', () => {
+    expect(resolveCaptchaRetryNavigation('')).toEqual({ mode: 'goto_conf', url: '' });
+    expect(resolveCaptchaRetryNavigation(null)).toEqual({ mode: 'goto_conf', url: '' });
+  });
+
+  it('renewUrl 仅空白时忽略，按 currentUrl 推导', () => {
+    const conf = 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf';
+    expect(resolveCaptchaRetryNavigation(conf, { renewUrl: '  ' })).toEqual({
+      mode: 'reload_conf',
+      url: conf,
+    });
+  });
+});
+
+describe('needsUserAgentAlignment', () => {
+  it('API 返回不同 UA 时需要对齐', () => {
+    expect(needsUserAgentAlignment('Mozilla/5.0 Mac', 'Mozilla/5.0 Win')).toBe(true);
+  });
+
+  it('一致或缺失时不需要对齐', () => {
+    expect(needsUserAgentAlignment('UA', 'UA')).toBe(false);
+    expect(needsUserAgentAlignment('UA', null)).toBe(false);
+    expect(needsUserAgentAlignment('UA', '')).toBe(false);
+    expect(needsUserAgentAlignment('', 'API-UA')).toBe(false);
+  });
+});
+
+describe('shouldSubmitAfterTurnstile', () => {
+  it('仅在 ok===true 时允许提交', () => {
+    expect(shouldSubmitAfterTurnstile({ ok: true })).toBe(true);
+    expect(shouldSubmitAfterTurnstile({ ok: false })).toBe(false);
+    expect(shouldSubmitAfterTurnstile(null)).toBe(false);
+    expect(shouldSubmitAfterTurnstile(undefined)).toBe(false);
+    expect(shouldSubmitAfterTurnstile({})).toBe(false);
   });
 });
 

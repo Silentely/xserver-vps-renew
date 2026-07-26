@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-26）
+- **Turnstile 求解成功后 UA 对齐导致 token 未注入**
+  - 先 `injectTurnstileToken` / callback，再尽力 `setUserAgent`；UA 失败只 warn，不判求解失败（避免 `Network.setUserAgentOverride: Target closed` 吞掉已解 token）
+  - Turnstile 未通过时**禁止强制提交**，避免必然 `認証に失敗` 并污染重试页
+  - 验证码失败重试优先回到 `extend/index?id_vps=…` 再点确认进 conf（裸 `/conf` 常无 Base64 验证码图）
+  - 文档 / RUNBOOK / `.env.example` 补充 **Anti-Captcha + 域名代理 → Proxyless 与浏览器出口 IP 不一致** 的风险与处置
+
 ### 优化（2026-07-25）
 - **日志与 Telegram 通知**
   - 成功 / 跳过 / 失败通知统一附带 **耗时**；失败通知在已知时附带 **服务器名 / 规格 / 到期日 / 剩余时间**
@@ -23,7 +30,7 @@
   - Telegram 多平台全挂时推送【最高级告警·删机风险】，明确要求当日手动续期
   - 全挂时跳过图形验证码重试，立即上抛；错误摘要截断，避免日志/Telegram 过长
   - 不再「只启用一家」：预埋的备选 key 会在主平台挂掉时真正被使用
-  - **AntiCaptcha 域名代理自动 Proxyless**：`PROXY_ADDRESS` 非 IP（如 `p.webshare.io`）时不提交 `TurnstileTask`，避免官方「Only IP addresses are supported」连失败 3 次
+  - **AntiCaptcha 域名代理自动 Proxyless**：`PROXY_ADDRESS` 非 IP（如 `proxy.example.com`）时不提交 `TurnstileTask`，避免官方「Only IP addresses are supported」连失败 3 次
   - Telegram 成功/失败通知补充 Turnstile 平台与 failover 摘要；失败代理提示区分浏览器代理与 AntiCaptcha IP 限制
 
 ### 修复（2026-07-23）

@@ -126,7 +126,7 @@ describe('listTurnstileProviders', () => {
     const list = listTurnstileProviders(makeConfig({
       ANTICAPTCHA_API_KEY: 'a',
       PROXY_TYPE: 'http',
-      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_ADDRESS: 'proxy.example.com',
       PROXY_PORT: '80',
     }));
     expect(list[0].taskType).toBe('TurnstileTaskProxyless');
@@ -318,7 +318,7 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
     expect(isIpProxyAddress('1.2.3.4')).toBe(true);
     expect(isIpProxyAddress('8.8.8.8')).toBe(true);
     expect(isIpProxyAddress('256.1.1.1')).toBe(false);
-    expect(isIpProxyAddress('p.webshare.io')).toBe(false);
+    expect(isIpProxyAddress('proxy.example.com')).toBe(false);
     expect(isIpProxyAddress('proxy.example.com')).toBe(false);
     expect(isIpProxyAddress('')).toBe(false);
     expect(isIpProxyAddress(null)).toBe(false);
@@ -338,7 +338,7 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
     })).toEqual({ useProxy: true, reason: 'ip' });
     expect(resolveAntiCaptchaProxyMode({
       PROXY_TYPE: 'http',
-      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_ADDRESS: 'proxy.example.com',
       PROXY_PORT: '80',
     })).toEqual({ useProxy: false, reason: 'hostname_skipped' });
   });
@@ -349,7 +349,7 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
     const config = makeConfig({
       ANTICAPTCHA_API_KEY: 'a',
       PROXY_TYPE: 'http',
-      PROXY_ADDRESS: 'p.webshare.io',
+      PROXY_ADDRESS: 'proxy.example.com',
       PROXY_PORT: '80',
     });
     const p = listTurnstileProviders(config)[0];

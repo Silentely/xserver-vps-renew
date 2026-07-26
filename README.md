@@ -116,7 +116,21 @@ Docker / 生产环境使用 **API 串行 failover**（跳过自然通过）：
 - **Failover**：对每个已配置平台，连续失败 `TURNSTILE_PROVIDER_MAX_FAILURES`（默认 3）次后切换下一家  
 - **顺序可配**：`TURNSTILE_PROVIDER_ORDER=CapSolver,AntiCaptcha,YesCaptcha,2Captcha`  
 - **全挂告警**：全部熔断时 Telegram 推送【最高级告警·删机风险】，请**当日手动上官网续期**  
-- **Anti-Captcha 与代理**：官方 `TurnstileTask` **仅支持 IP 代理**。若 `PROXY_ADDRESS` 为域名（如 Webshare `p.xxx.io`），脚本自动改用 `TurnstileTaskProxyless`，**不会**把域名塞进打码 API（浏览器侧 PROXY_* 仍可正常使用）
+- **Anti-Captcha 与代理**：官方 `TurnstileTask` **仅支持 IP 代理**。若 `PROXY_ADDRESS` 为域名（如 `proxy.example.com`），脚本自动改用 `TurnstileTaskProxyless`，**不会**把域名塞进打码 API（浏览器侧 PROXY_* 仍可正常使用）
+
+#### ⚠️ Anti-Captcha 使用注意（必读）
+
+Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主平台且浏览器走住宅代理时，容易出现「token 已解出但仍 `認証に失敗`」：
+
+| 点 | 说明 | 建议 |
+|----|------|------|
+| **域名代理 → 强制 Proxyless** | `PROXY_ADDRESS` 为域名（如 `proxy.example.com`）时，官方 `TurnstileTask` 不接受域名，脚本会自动改为 `TurnstileTaskProxyless` | 打码工人出口 IP **≠** 浏览器代理出口 IP；Turnstile 常绑定求解侧 IP，提交易失败 |
+| **IP 代理才可同 IP** | 仅当 `PROXY_ADDRESS` 为 **纯 IP** 时才提交 `TurnstileTask` 并带代理 | 若必须用 AntiCaptcha + 代理，请把代理解析成 IP 再写入 `PROXY_ADDRESS` |
+| **不提交自定义 UA** | 官方文档：自定义 User-Agent 无效且不应提交；工人可能返回与本机不同的 UA（如 Windows） | 脚本会**先注入 token**，再尽力对齐 UA；`setUserAgent` 失败只告警，不再导致整次求解作废 |
+| **轮询可能偏慢/超时** | 偶发 `processing` 至 `TURNSTILE_API_TIMEOUT_MS`（默认 120s）或网络 abort | 请配置 **第二家**（推荐 CapSolver 在前），由 failover 切换 |
+| **推荐角色** | 异构备份，而不是唯一主平台 | 默认顺序保持 `CapSolver → AntiCaptcha → …`；若你把 AntiCaptcha 放第一且用域名代理，成功率通常低于 CapSolver |
+
+日志中若出现 `AntiCaptcha 代理地址为域名…自动改用 TurnstileTaskProxyless`，说明本轮**未**与浏览器同代理求解，出现认证失败时应优先检查此项，而不是只怀疑图形验证码。
 
 ## ⚙️ 环境变量
 
