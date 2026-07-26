@@ -6,6 +6,8 @@ npm-debug.log*
 .omc/
 .omx/
 .claude/
+memory/
+.evolver/
 
 # 内部文档和开发笔记（不适合公开）
 .docs/

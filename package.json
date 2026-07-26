@@ -19,6 +19,7 @@
     "rebrowser-puppeteer-core": "^24.8.1"
   },
   "devDependencies": {
+    "@evomap/evolver": "^1.92.1",
     "@vitest/coverage-v8": "^4.1.9",
     "vitest": "^4.1.9"
   },
