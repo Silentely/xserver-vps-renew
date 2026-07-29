@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const ENTRYPOINT_SRC = join(REPO_ROOT, 'entrypoint.sh');
+const DOCKERFILE_SRC = join(REPO_ROOT, 'Dockerfile');
 
 /** 创建带 mock 二进制的临时环境，避免真实 Xvfb / node 续期 / supercronic */
 function setupHarness() {
@@ -168,5 +169,20 @@ describe('entrypoint.sh --once 优先于 CRON_SCHEDULE（#7）', () => {
       clearsOnInvoke,
       'cron-run.sh 调用 entrypoint --once 时应 CRON_SCHEDULE=""（或 env -u），切断嵌套定时模式',
     ).toBe(true);
+  });
+});
+
+describe('Supercronic PID 1 启动兼容性（#8）', () => {
+  it('使用已修复的 Supercronic 版本，并通过绝对路径启动', () => {
+    const dockerfile = readFileSync(DOCKERFILE_SRC, 'utf8');
+    const entrypoint = readFileSync(ENTRYPOINT_SRC, 'utf8');
+
+    const versionMatch = dockerfile.match(/^ARG SUPERCRONIC_VERSION=v0\.(\d+)\.(\d+)$/m);
+    expect(versionMatch, 'Dockerfile 应固定 Supercronic 版本').toBeTruthy();
+
+    const [, minor, patch] = versionMatch;
+    const includesReaperFix = Number(minor) > 2 || (Number(minor) === 2 && Number(patch) >= 36);
+    expect(includesReaperFix, 'Supercronic v0.2.33-v0.2.35 存在 PID 1 ForkExec 缺陷').toBe(true);
+    expect(entrypoint).toMatch(/exec \/usr\/local\/bin\/supercronic \/app\/crontab/);
   });
 });

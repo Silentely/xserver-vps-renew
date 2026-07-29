@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### 修复（2026-07-29）
+- **容器首次检查后反复重启并持续发送 Telegram 通知**（[#8](https://github.com/Silentely/xserver-vps-renew/issues/8)）
+  - 根因：Supercronic v0.2.34 作为 PID 1 时，reaper 使用裸命令名自启动且不搜索 `PATH`，触发 `Failed to fork exec: no such file or directory`
+  - 修复：升级至已修复的 v0.2.36，并通过 `/usr/local/bin/supercronic` 绝对路径启动，形成双层保护
+  - 回归：单测固定最低安全版本与绝对启动路径；镜像发布后以真实 PID 1 运行 Supercronic smoke
 - **Docker 定时任务死锁：cron 触发后永远「上一次执行仍在运行，跳过」**（[#7](https://github.com/Silentely/xserver-vps-renew/issues/7)）
   - 根因：`cron-run.sh` 调用 `./entrypoint.sh --once` 时继承 `CRON_SCHEDULE`，entrypoint 先判断环境变量再判断 `--once`，误入定时模式并再次 `exec supercronic`，`flock` 永不释放
   - 修复：`--once` **优先于** `CRON_SCHEDULE` 模式判断；`cron-run` 调用时 `CRON_SCHEDULE="" ./entrypoint.sh --once` 双保险

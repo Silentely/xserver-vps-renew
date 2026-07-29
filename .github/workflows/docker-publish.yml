@@ -70,6 +70,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -78,6 +79,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test Supercronic PID 1 startup
+        run: |
+          docker run --rm \
+            --entrypoint /usr/local/bin/supercronic \
+            "${{ env.REGISTRY }}/${{ steps.prep.outputs.image_name }}@${{ steps.build.outputs.digest }}" \
+            -test /dev/null
 
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0

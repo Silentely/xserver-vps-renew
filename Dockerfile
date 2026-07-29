@@ -64,7 +64,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
     && chown -R appuser:appuser /data /app /var/log
 
 # 安装 supercronic（支持非 root 的 cron 替代品）
-ARG SUPERCRONIC_VERSION=v0.2.34
+ARG SUPERCRONIC_VERSION=v0.2.36
 RUN set -e \
     && arch=$(uname -m) \
     && case "$arch" in \

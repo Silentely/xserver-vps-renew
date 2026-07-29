@@ -202,9 +202,10 @@ CRONSCRIPT
         fi
     done
 
-    # 启动 supercronic 并保持前台（exec 替换当前进程，后续代码不可达）
+    # 使用绝对路径规避旧版 reaper 不搜索 PATH 导致 PID 1 ForkExec 失败（#8）
+    # exec 替换当前进程并保持前台，后续代码不可达
     echo "$LOG_PREFIX 🚀 supercronic 已启动，定时任务: $SCHEDULE_INFO"
-    exec supercronic /app/crontab
+    exec /usr/local/bin/supercronic /app/crontab
 else
     # 单次模式：执行完毕后退出
     echo "$LOG_PREFIX 单次执行模式"
