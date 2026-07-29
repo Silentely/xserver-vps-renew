@@ -9,8 +9,18 @@ docker logs --tail 50 xserver-vps-renew | grep -E "(✅|❌)"
 ## 手动触发续期
 
 ```bash
+# 推荐：清空 CRON_SCHEDULE，避免旧镜像误入定时模式
 docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
+
+# 或在已运行容器内（≥ 含 #7 修复的镜像）：--once 优先，即使环境里有 CRON_SCHEDULE 也只跑一次
+docker exec xserver-vps-renew ./entrypoint.sh --once
 ```
+
+## 定时任务一直「上一次执行仍在运行，跳过」
+
+| 现象 | 原因 | 处置 |
+|------|------|------|
+| 首次检查后 cron 全跳过，从不真正续期 | #7：`CRON_SCHEDULE` 继承导致嵌套 supercronic，`flock` 占死 | 升级到含 #7 修复的镜像后 `docker compose up -d`；临时可 `docker compose restart` 仅释放当前锁，**不修根因** |
 
 ## 回滚到上一个镜像版本
 

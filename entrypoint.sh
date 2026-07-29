@@ -88,8 +88,17 @@ trap cleanup SIGTERM SIGINT
 
 # ============================================================
 # 运行模式判断
+#
+# ⚠️ --once 必须优先于 CRON_SCHEDULE 判断（#7）：
+# cron-run.sh 在容器环境继承 CRON_SCHEDULE 时调用本脚本 --once。
+# 若先判断 CRON_SCHEDULE，会再次进入定时模式并 exec supercronic，
+# flock 永不释放，后续 cron 全部「上一次执行仍在运行，跳过」。
 # ============================================================
-if [ -n "$CRON_SCHEDULE" ]; then
+if [ "${1:-}" = "--once" ]; then
+    # 单次执行（cron 触发 / docker exec / compose run --once）
+    # 不进入定时模式；CRON_SCHEDULE 仅用于日志「下次检查」提示（可为空）
+    run_renew
+elif [ -n "${CRON_SCHEDULE:-}" ]; then
     # 定时模式：先立即执行一次，然后定时调度
     echo "$LOG_PREFIX 🕐 定时模式: $CRON_SCHEDULE"
 
@@ -136,7 +145,7 @@ export PROXY_PASSWORD="${PROXY_PASSWORD:-}"
 export CHROME_PATH="${CHROME_PATH:-}"
 export CHROME_USER_DATA="${CHROME_USER_DATA:-}"
 export TZ="${TZ:-Asia/Tokyo}"
-export CRON_SCHEDULE="${CRON_SCHEDULE:-}"
+# 不向 --once 子进程导出 CRON_SCHEDULE 作模式开关；调用处显式 CRON_SCHEDULE=""（#7）
 export RENEWAL_STATUS_FILE="${RENEWAL_STATUS_FILE:-}"
 export ALERT_AFTER_FAILURES="${ALERT_AFTER_FAILURES:-}"
 export ENABLE_DIAGNOSTICS="${ENABLE_DIAGNOSTICS:-}"
@@ -149,7 +158,9 @@ echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
 
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
-    if cd /app && ./entrypoint.sh --once; then
+    # 防御纵深：调用时清空 CRON_SCHEDULE，配合上方 --once 优先，杜绝嵌套 supercronic（#7）
+    # 子进程内 node 无 CRON_SCHEDULE 时，通知「下次执行」回退到 NOTIFY_NEXT_RUN_HOURS
+    if cd /app && CRON_SCHEDULE="" ./entrypoint.sh --once; then
         echo "$LOG_PREFIX ✅ 续期成功"
         exit 0
     fi
@@ -195,13 +206,8 @@ CRONSCRIPT
     echo "$LOG_PREFIX 🚀 supercronic 已启动，定时任务: $SCHEDULE_INFO"
     exec supercronic /app/crontab
 else
-    if [ "${1:-}" = "--once" ]; then
-        # 被 cron 内部调用：执行一次，失败不重试
-        run_renew
-    else
-        # 单次模式：执行完毕后退出
-        echo "$LOG_PREFIX 单次执行模式"
-        run_renew
-        cleanup
-    fi
+    # 单次模式：执行完毕后退出
+    echo "$LOG_PREFIX 单次执行模式"
+    run_renew
+    cleanup
 fi

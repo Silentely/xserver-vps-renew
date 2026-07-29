@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-29）
+- **Docker 定时任务死锁：cron 触发后永远「上一次执行仍在运行，跳过」**（[#7](https://github.com/Silentely/xserver-vps-renew/issues/7)）
+  - 根因：`cron-run.sh` 调用 `./entrypoint.sh --once` 时继承 `CRON_SCHEDULE`，entrypoint 先判断环境变量再判断 `--once`，误入定时模式并再次 `exec supercronic`，`flock` 永不释放
+  - 修复：`--once` **优先于** `CRON_SCHEDULE` 模式判断；`cron-run` 调用时 `CRON_SCHEDULE="" ./entrypoint.sh --once` 双保险
+  - 回归：`__tests__/unit/entrypoint.once-mode.test.mjs`（源码顺序 + mock 运行时）
+  - 部署后请 `docker compose pull && docker compose up -d` 换新镜像；若容器已假死可先 `docker compose restart`
+
 ### 修复（2026-07-26）
 - **Turnstile 求解成功后 UA 对齐导致 token 未注入**
   - 先 `injectTurnstileToken` / callback，再尽力 `setUserAgent`；UA 失败只 warn，不判求解失败（避免 `Network.setUserAgentOverride: Target closed` 吞掉已解 token）
