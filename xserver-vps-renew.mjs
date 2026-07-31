@@ -228,6 +228,8 @@ const CONFIG = {
 
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
+  // 仅通知展示：cron-run 按 #7 清空 CRON_SCHEDULE 后经此变量透传真实调度，不作模式开关
+  CRON_SCHEDULE_DISPLAY: process.env.CRON_SCHEDULE_DISPLAY || '',
   // 成功通知中「下次执行」估算间隔（小时）；默认 6，适配剩余≤12h 窗口
   NOTIFY_NEXT_RUN_HOURS: parsePositiveInt(
     process.env.NOTIFY_NEXT_RUN_HOURS,
@@ -1263,9 +1265,10 @@ async function main() {
     // Standalone Turnstile：正常渲染 + API 求解（不拦截 render）
     logDebug('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
 
-    // 下次执行：优先从 CRON_SCHEDULE（如 27 */4 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
+    // 下次执行：优先展示用调度（cron-run 透传的真实 cron，如 27 */4 * * *），
+    // 退回 CRON_SCHEDULE（本地/单次模式），最后退化到 NOTIFY_NEXT_RUN_HOURS（默认 6h）
     const resolveNextRun = () => resolveNextRunAt(Date.now(), {
-      cronSchedule: CONFIG.CRON_SCHEDULE,
+      cronSchedule: CONFIG.CRON_SCHEDULE_DISPLAY || CONFIG.CRON_SCHEDULE,
       intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
     });
 

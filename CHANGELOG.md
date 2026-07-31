@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 修复（2026-07-31）
+- **Docker cron 模式下 Telegram「下次执行」恒显示 +6h 的误导**（核实 [#10](https://github.com/Silentely/xserver-vps-renew/issues/10) 时的附带发现）
+  - 根因：#7 修复要求 `cron-run.sh` 对 `--once` 子进程清空 `CRON_SCHEDULE`，node 侧「下次执行」估算失去 cron 依据，回退到 `NOTIFY_NEXT_RUN_HOURS`（默认 6h）
+  - 修复：白名单新增仅展示用的 `CRON_SCHEDULE_DISPLAY` 透传真实调度；主脚本估算链变为 `CRON_SCHEDULE_DISPLAY → CRON_SCHEDULE → NOTIFY_NEXT_RUN_HOURS`，该变量不参与任何模式判断（#7 防线不回撤）
+  - 注：#10 的「成功+失败双通知」主因不是代码 bug——同一账号 / TG bot 下存在第二个独立运行的旧实例并发执行（排查指引见 issue 回复）
+
 ### 优化（2026-07-31）
 - **compose 默认调度改为 `27 */4 * * *`**（[#9](https://github.com/Silentely/xserver-vps-renew/issues/9)）
   - 原默认 `0 */6 * * *` 在任意 12h 续期窗口内仅 2 次尝试，且 12:00 整点易踩官方窗口开启边界，被「12時間前」拦截页挡掉一次机会

@@ -146,6 +146,8 @@ export CHROME_PATH="${CHROME_PATH:-}"
 export CHROME_USER_DATA="${CHROME_USER_DATA:-}"
 export TZ="${TZ:-Asia/Tokyo}"
 # 不向 --once 子进程导出 CRON_SCHEDULE 作模式开关；调用处显式 CRON_SCHEDULE=""（#7）
+# 仅展示用：透传真实调度表达式，供通知「下次执行」按 cron 间隔估算，不作模式开关（#10）
+export CRON_SCHEDULE_DISPLAY="${CRON_SCHEDULE:-}"
 export RENEWAL_STATUS_FILE="${RENEWAL_STATUS_FILE:-}"
 export ALERT_AFTER_FAILURES="${ALERT_AFTER_FAILURES:-}"
 export ENABLE_DIAGNOSTICS="${ENABLE_DIAGNOSTICS:-}"
@@ -159,7 +161,7 @@ echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
     # 防御纵深：调用时清空 CRON_SCHEDULE，配合上方 --once 优先，杜绝嵌套 supercronic（#7）
-    # 子进程内 node 无 CRON_SCHEDULE 时，通知「下次执行」回退到 NOTIFY_NEXT_RUN_HOURS
+    # 通知「下次执行」经 CRON_SCHEDULE_DISPLAY 按真实 cron 估算；外部调度场景回退 NOTIFY_NEXT_RUN_HOURS
     if cd /app && CRON_SCHEDULE="" ./entrypoint.sh --once; then
         echo "$LOG_PREFIX ✅ 续期成功"
         exit 0
