@@ -419,7 +419,8 @@ describe('formatTokyoDateTime', () => {
 });
 
 describe('parseCronIntervalHours / estimateNextRunMs', () => {
-  it('解析 */6 小时 cron', () => {
+  it('解析 */N 小时 cron（含 compose 默认 27 */4）', () => {
+    expect(parseCronIntervalHours('27 */4 * * *')).toBe(4);
     expect(parseCronIntervalHours('32 */6 * * *')).toBe(6);
     expect(parseCronIntervalHours('0 */6 * * *')).toBe(6);
     expect(parseCronIntervalHours('0 */12 * * *')).toBe(12);

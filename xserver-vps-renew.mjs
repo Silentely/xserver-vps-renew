@@ -1263,7 +1263,7 @@ async function main() {
     // Standalone Turnstile：正常渲染 + API 求解（不拦截 render）
     logDebug('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
 
-    // 下次执行：优先从 CRON_SCHEDULE（如 32 */6 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
+    // 下次执行：优先从 CRON_SCHEDULE（如 27 */4 * * *）解析间隔，否则用 NOTIFY_NEXT_RUN_HOURS（默认 6h）
     const resolveNextRun = () => resolveNextRunAt(Date.now(), {
       cronSchedule: CONFIG.CRON_SCHEDULE,
       intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,

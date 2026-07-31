@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-07-31 | 采纳 #9：compose 默认调度 `0 */6` → `27 */4`（每 4h 错峰 27 分，任意 12h 续期窗口内 ≥3 次尝试） |
 | 2026-07-29 | 修复 #7：entrypoint `--once` 优先于 `CRON_SCHEDULE`，cron-run 调用时清空调度变量，避免嵌套 supercronic 死锁 |
 | 2026-07-26 | Turnstile：先注入 token 再对齐 UA；未通过禁止提交；重试回 index?id_vps；文档提醒 AntiCaptcha 域名代理 Proxyless IP 不一致 |
 | 2026-07-25 | 日志与 Telegram：耗时/截断、LOG_LEVEL、失败分类、距可续窗口、TG_NOTIFY_SKIP、cron 白名单 |
@@ -24,7 +25,7 @@
 
 ## 项目愿景
 
-通过自动化浏览器操作，按官方 4GB 规则（最长 **24 小时**，剩余 **≤12 小时** 可续期）检查到期状态并在窗口内自动完成续期流程（登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交），避免因忘记续期导致 VPS 被回收。建议调度至少每 6 小时一次。
+通过自动化浏览器操作，按官方 4GB 规则（最长 **24 小时**，剩余 **≤12 小时** 可续期）检查到期状态并在窗口内自动完成续期流程（登录 → 检查到期 → 续期申请 → 验证码识别 → Turnstile 通过 → 提交），避免因忘记续期导致 VPS 被回收。建议调度每 4 小时一次（compose 默认错峰 27 分）。
 
 ---
 
@@ -213,7 +214,7 @@ npm run test:watch
 | `CHROME_PATH` | Chrome 可执行文件路径 | 自动检测 |
 | `CHROME_USER_DATA` | Chrome 用户数据目录 | `/data/chrome-profile` |
 | `TZ` | 时区 | `Asia/Tokyo` |
-| `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式；compose 默认每 6h，适配 12h 续期窗口） | 无（单次模式） |
+| `CRON_SCHEDULE` | Cron 定时表达式（设置后启用定时模式；compose 默认 `27 */4 * * *`，每 4h 错峰 27 分，适配 12h 续期窗口） | 无（单次模式） |
 | `ENABLE_DIAGNOSTICS` | 启用容器环境诊断（true/false） | 无 |
 | `RENEWAL_STATUS_FILE` | 续期记录持久化文件路径 | `/data/chrome-profile/renewal-status.json` |
 | `ALERT_AFTER_FAILURES` | 连续失败达到此次值时触发告警升级 | `3` |

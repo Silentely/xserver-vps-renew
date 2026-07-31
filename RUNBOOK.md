@@ -73,7 +73,7 @@ docker compose restart
 | `UA 不匹配` / `对齐 UA 失败` / 旧版 `setUserAgentOverride: Target closed` | 打码平台返回的 UA 与浏览器 DEFAULT_UA 不同；rebrowser 下改 UA 可能关掉 target | 新版本会**先注入 token 再改 UA**，UA 失败不阻断提交。若仍认证失败，优先查 Proxyless IP 不一致 |
 | `Turnstile 未通过，跳过提交` | API 求解/注入失败，脚本不再强行点提交 | 看 failover 是否切到下一家；检查 key/余额/网络；勿把「未提交」当成图形码识别错误 |
 | `Waiting for selector img[src^="data:…"]` 超时（重试中） | 直接打开裸 `/extend/conf` 或窗口拦截页，无 Base64 验证码图 | 新版本重试会回到 `index?id_vps=` 再进 conf。若仍超时：查是否未进 12h 窗口、会话是否掉线 |
-| 长期 `无需续期` 后 VPS 被回收 | 调度过稀，错过 12h 窗口 | 4GB 最长 24h、剩余 ≤12h 才可续；将 `CRON_SCHEDULE` 设为至少 `0 */6 * * *` |
+| 长期 `无需续期` 后 VPS 被回收 | 调度过稀，错过 12h 窗口 | 4GB 最长 24h、剩余 ≤12h 才可续；确认 `CRON_SCHEDULE` 间隔 ≤6h（compose 默认 `27 */4 * * *`，每 4h 错峰 27 分） |
 
 ### Anti-Captcha 专项（域名代理 / Proxyless）
 
@@ -92,4 +92,4 @@ docker compose restart
 2. **至少 1 家 Turnstile key**（推荐 `CAPSOLVER_API_KEY`）  
 3. **强烈建议第 2 家**（如 `ANTICAPTCHA_API_KEY`）实现 failover  
 4. 各打码平台账户有可用余额  
-5. `CRON_SCHEDULE` 至少每 6 小时一次（适配 12h 续期窗口）
+5. `CRON_SCHEDULE` 间隔 ≤6 小时（适配 12h 续期窗口；compose 默认每 4 小时错峰 27 分）

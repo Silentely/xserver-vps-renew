@@ -485,7 +485,7 @@ export function parseCronIntervalHours(cronSchedule) {
 /**
  * 估算下次检查时间戳（毫秒）
  * 优先级：CRON 的每 N 小时 → intervalHours → 默认 6 小时
- * （不再写死 +24h，避免与每 6 小时调度不符）
+ * （不再写死 +24h，避免与实际调度间隔不符）
  * @param {number} [nowMs=Date.now()]
  * @param {{ cronSchedule?: string, intervalHours?: number }} [opts]
  * @returns {number}

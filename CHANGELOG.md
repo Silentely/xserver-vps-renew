@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 优化（2026-07-31）
+- **compose 默认调度改为 `27 */4 * * *`**（[#9](https://github.com/Silentely/xserver-vps-renew/issues/9)）
+  - 原默认 `0 */6 * * *` 在任意 12h 续期窗口内仅 2 次尝试，且 12:00 整点易踩官方窗口开启边界，被「12時間前」拦截页挡掉一次机会
+  - 新默认每 4 小时 + 27 分错峰：窗口内 ≥3 次尝试，避开整点边界竞争；「下次执行」估算按 cron 的 `*/N` 解析自动适配
+  - 存量部署不受影响（`CRON_SCHEDULE` 本来就是环境变量）；更新 compose 文件或自行设置 `CRON_SCHEDULE=27 */4 * * *` 即可生效
+
 ### 修复（2026-07-29）
 - **Dependabot 高危告警 #4：`brace-expansion` 无界展开可导致进程内存耗尽**（[CVE-2026-14257](https://nvd.nist.gov/vuln/detail/CVE-2026-14257) / [GHSA-mh99-v99m-4gvg](https://github.com/advisories/GHSA-mh99-v99m-4gvg)）
   - 将 `package.json` override 从 1.1.16 升级至官方 1.x 兼容安全回补版 1.1.17

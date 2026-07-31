@@ -5,8 +5,9 @@ services:
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
-      # 4GB 最长 24h、剩余 ≤12h 才可续期：建议至少每 6 小时检查一次，避免错过窗口
-      - CRON_SCHEDULE=0 */6 * * *
+      # 4GB 最长 24h、剩余 ≤12h 才可续期：默认每 4 小时（错峰 27 分）检查一次，
+      # 任意 12h 续期窗口内 ≥3 次尝试，并避开整点踩官方窗口开启边界（#9）
+      - CRON_SCHEDULE=27 */4 * * *
       # 与 Chrome 用户数据同卷持久化，避免重启后丢失续期历史
       - RENEWAL_STATUS_FILE=/data/chrome-profile/renewal-status.json
     volumes:
