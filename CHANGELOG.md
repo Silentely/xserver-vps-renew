@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 优化（2026-08-04）
+- **日志：修复 error 级别跨秒双时间戳 / 重复 ❌**
+  - 原 `emitLog` error 分支最多调用 3 次 `ts()`：消息已带 `❌` 前缀且两次取时跨秒时，会输出 `时间戳 ❌ 时间戳 ❌ 消息` 的重复格式
+  - 修复：每条日志单次取时间戳；`❌` 前缀是否补充仅依据消息本身是否已带，不再依赖时间戳字符串匹配
+- **重构：skip 通知统一出口 `finishWithSkip`**
+  - `not_due / no_free_vps / window_blocked` 三个「跳过」分支原先重复约 40 行相同逻辑（结局标记 + 持久化 + skip 通知 + 关页），收敛为单一辅助函数，行为不变
+- **健壮性：`parsePositiveInt` 严格整数校验**
+  - 原实现 `parseInt` 会静默接受 `"30000ms"` 这类被意外拼接的值（取数字前缀），现仅接受纯数字，非法即回退默认；补充边界测试
+- **清理：验证码图片选择器去冗余**（`img[src^="data:image"]` 是 `img[src^="data:"]` 子集，保留后者）
+- **文档：`waitForTurnstileToken` 超时日志改准确文案**（原「将尝试强制提交」与实际跳过提交的行为不符）
+
 ### 修复（2026-07-31）
 - **Docker cron 模式下 Telegram「下次执行」恒显示 +6h 的误导**（核实 [#10](https://github.com/Silentely/xserver-vps-renew/issues/10) 时的附带发现）
   - 根因：#7 修复要求 `cron-run.sh` 对 `--once` 子进程清空 `CRON_SCHEDULE`，node 侧「下次执行」估算失去 cron 依据，回退到 `NOTIFY_NEXT_RUN_HOURS`（默认 6h）

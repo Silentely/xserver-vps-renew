@@ -70,6 +70,14 @@ describe('parsePositiveInt', () => {
     expect(parsePositiveInt('200', 10, { min: 5, max: 100 })).toBe(10);
     expect(parsePositiveInt('50', 10, { min: 5, max: 100 })).toBe(50);
   });
+
+  it('严格拒绝非纯数字（含数字前缀的拼接值）', () => {
+    expect(parsePositiveInt('12abc', 7)).toBe(7);
+    expect(parsePositiveInt('30000ms', 7)).toBe(7);
+    expect(parsePositiveInt('1e3', 7)).toBe(7);
+    expect(parsePositiveInt(' 42 ', 7)).toBe(42);
+    expect(parsePositiveInt('0x10', 7)).toBe(7);
+  });
 });
 
 describe('parseEnvBool', () => {

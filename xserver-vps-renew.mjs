@@ -288,12 +288,15 @@ const ts = () => {
   }).replace(/\//g, '-');
 };
 
-/** 按 LOG_LEVEL 输出；error 始终带 ❌ 前缀写 stderr */
+/** 按 LOG_LEVEL 输出；error 统一带 ❌ 前缀写 stderr（消息自身已带则不重复） */
 function emitLog(level, msg) {
   if (!shouldLog(CONFIG.LOG_LEVEL, level)) return;
-  const line = `${ts()} ${msg}`;
+  // 单次取时间戳：避免跨秒时同条日志出现两个不一致的时间（原实现最多调用 3 次 ts()）
+  const stamp = ts();
+  const text = String(msg ?? '');
+  const line = `${stamp} ${text}`;
   if (level === LOG_LEVEL_ERROR) {
-    console.error(line.startsWith(`${ts()} ❌`) ? line : `${ts()} ❌ ${msg}`);
+    console.error(text.startsWith('❌') ? line : `${stamp} ❌ ${text}`);
     return;
   }
   if (level === LOG_LEVEL_WARN) {
@@ -934,7 +937,7 @@ async function waitForTurnstileToken(page) {
     await sleep(1000);
   }
 
-  err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），将尝试强制提交。`);
+  err(`Turnstile 等待超时（${CONFIG.TURNSTILE_TIMEOUT}ms），本轮将跳过提交以免认证失败。`);
   return false;
 }
 
@@ -998,10 +1001,10 @@ async function handleCaptchaPage(page, options = {}) {
       log(`验证码识别第 ${attempt} 次尝试...`);
 
       // 等待验证码图片元素（验证码图片是 Base64 内嵌在 src 属性中）
-      await page.waitForSelector('img[src^="data:image"], img[src^="data:"]', { timeout: 10_000 });
+      await page.waitForSelector('img[src^="data:"]', { timeout: 10_000 });
 
       // 直接读取 img 元素的 src 属性（已经是 Base64 格式）
-      const imgDataUri = await page.$eval('img[src^="data:image"], img[src^="data:"]', (el) => el.src);
+      const imgDataUri = await page.$eval('img[src^="data:"]', (el) => el.src);
       if (!imgDataUri) throw new Error('未找到验证码图片。');
 
       // 优化：在验证码识别期间，并行检查 Turnstile 是否已提前通过
@@ -1190,6 +1193,49 @@ async function main() {
   const elapsedMs = () => Date.now() - startedAtMs;
   const durationText = () => formatDurationMs(elapsedMs());
 
+  /**
+   * 本轮判定为「跳过」的统一出口：
+   * 记录结局 → 持久化跳过记录 → 推送 skip 通知 → 关闭页面
+   * （not_due / no_free_vps / window_blocked 三个分支共用，避免重复实现）
+   */
+  const finishWithSkip = async ({
+    reasonCode,
+    skipLabel,
+    reasonDetail,
+    logText,
+    runLabel = null,
+  }) => {
+    runOutcome = 'skip';
+    runOutcomeLabel = runLabel || skipLabel;
+    pushStep(`判定结果: ${skipLabel}`);
+    log(`${logText || skipLabel}（耗时 ${durationText()}）`);
+    // 记录跳过，避免「长期无写入」被误判为监控静默
+    persistRenewalRecord(buildRenewalRecord({
+      success: true,
+      skipped: true,
+      serverName: knownVps.serverName,
+      plan: knownVps.plan,
+      oldExpireDate: knownVps.expireDate,
+      errorMessage: skipLabel,
+    }));
+    await notify(buildSkipNotifyMessage({
+      reasonCode,
+      serverName: knownVps.serverName,
+      plan: knownVps.plan,
+      expireDate: knownVps.expireDate,
+      remainingHours: knownVps.remainingHours,
+      reasonDetail,
+      executedAt: formatTokyoDateTime(),
+      nextRunAt: resolveNextRun(),
+      maxHours: FREE_VPS_MAX_HOURS,
+      windowHours: RENEWAL_WINDOW_HOURS,
+      processSteps,
+      detail: CONFIG.TG_NOTIFY_DETAIL,
+      durationMs: elapsedMs(),
+    }), { kind: 'skip' });
+    await page.close();
+  };
+
   try {
     // 清理锁文件
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
@@ -1303,38 +1349,12 @@ async function main() {
     }
     if (!renewalData.needed) {
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
-      runOutcome = 'skip';
-      runOutcomeLabel = skipLabel;
-      pushStep(`判定结果: ${skipLabel}`);
-      log(`${skipLabel}，流程结束（耗时 ${durationText()}）`);
-      // 记录跳过，避免「长期无写入」被误判为监控静默
-      persistRenewalRecord(buildRenewalRecord({
-        success: true,
-        skipped: true,
-        serverName: renewalData.vpsInfo?.serverName,
-        plan: renewalData.vpsInfo?.plan,
-        oldExpireDate: renewalData.vpsInfo?.expireDate,
-        errorMessage: skipLabel,
-      }));
-
-      const nextRunStr = resolveNextRun();
-      const executedAt = formatTokyoDateTime();
-      await notify(buildSkipNotifyMessage({
+      await finishWithSkip({
         reasonCode: renewalData.reasonCode,
-        serverName: renewalData.vpsInfo?.serverName,
-        plan: renewalData.vpsInfo?.plan,
-        expireDate: renewalData.vpsInfo?.expireDate,
-        remainingHours: renewalData.remainingHours,
+        skipLabel,
         reasonDetail: renewalData.reasonDetail,
-        executedAt,
-        nextRunAt: nextRunStr,
-        maxHours: FREE_VPS_MAX_HOURS,
-        windowHours: RENEWAL_WINDOW_HOURS,
-        processSteps,
-        detail: CONFIG.TG_NOTIFY_DETAIL,
-        durationMs: elapsedMs(),
-      }), { kind: 'skip' });
-      await page.close();
+        logText: skipLabel,
+      });
       return;
     }
 
@@ -1347,37 +1367,13 @@ async function main() {
     const confirmResult = await handleRenewalConfirm(page, renewalData.renewUrl);
     if (confirmResult.status === 'window_blocked') {
       const skipLabel = confirmResult.reason || '未进入官方 12 小时续期窗口';
-      runOutcome = 'skip';
-      runOutcomeLabel = '未进入 12h 续期窗口';
-      pushStep(`判定结果: ${skipLabel}`);
-      log(`无需续期（官方窗口未开）: ${skipLabel}（耗时 ${durationText()}）`);
-      persistRenewalRecord(buildRenewalRecord({
-        success: true,
-        skipped: true,
-        serverName: renewalData.vpsInfo?.serverName,
-        plan: renewalData.vpsInfo?.plan,
-        oldExpireDate: renewalData.vpsInfo?.expireDate,
-        errorMessage: skipLabel,
-      }));
-
-      const nextRunStr = resolveNextRun();
-      const executedAt = formatTokyoDateTime();
-      await notify(buildSkipNotifyMessage({
+      await finishWithSkip({
         reasonCode: 'window_blocked',
-        serverName: renewalData.vpsInfo?.serverName,
-        plan: renewalData.vpsInfo?.plan,
-        expireDate: renewalData.vpsInfo?.expireDate,
-        remainingHours: renewalData.remainingHours,
+        skipLabel,
+        runLabel: '未进入 12h 续期窗口',
         reasonDetail: skipLabel,
-        executedAt,
-        nextRunAt: nextRunStr,
-        maxHours: FREE_VPS_MAX_HOURS,
-        windowHours: RENEWAL_WINDOW_HOURS,
-        processSteps,
-        detail: CONFIG.TG_NOTIFY_DETAIL,
-        durationMs: elapsedMs(),
-      }), { kind: 'skip' });
-      await page.close();
+        logText: `无需续期（官方窗口未开）: ${skipLabel}`,
+      });
       return;
     }
 

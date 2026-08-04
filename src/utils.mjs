@@ -66,7 +66,11 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = 30_000) {
 export function parsePositiveInt(value, fallback, opts = {}) {
   const min = opts.min ?? 1;
   const max = opts.max ?? Number.MAX_SAFE_INTEGER;
-  const n = parseInt(String(value ?? ''), 10);
+  const raw = String(value ?? '').trim();
+  // 严格整数校验：仅接受纯数字。环境变量被意外拼接（如 "30000ms"）时回退默认，
+  // 不再静默取数字前缀，避免超时/重试参数被错误放大或缩小。
+  if (!/^\d+$/.test(raw)) return fallback;
+  const n = Number(raw);
   if (!Number.isFinite(n) || n < min || n > max) return fallback;
   return n;
 }

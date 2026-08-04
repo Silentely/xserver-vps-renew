@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-08-04 | 打磨：emitLog 单次取时间戳修复跨秒双时间戳、skip 通知统一出口、parsePositiveInt 严格校验、文档测试清单同步（19 文件 / 356 用例） |
 | 2026-07-31 | 修复 #10 附带发现：Docker cron 下通知「下次执行」恒回退 +6h；cron-run 透传仅展示用 `CRON_SCHEDULE_DISPLAY`（不作模式开关） |
 | 2026-07-31 | 采纳 #9：compose 默认调度 `0 */6` → `27 */4`（每 4h 错峰 27 分，任意 12h 续期窗口内 ≥3 次尝试） |
 | 2026-07-29 | 修复 #7：entrypoint `--once` 优先于 `CRON_SCHEDULE`，cron-run 调用时清空调度变量，避免嵌套 supercronic 死锁 |
@@ -74,11 +75,14 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（15 个文件，约 240 个用例）
+└── __tests__/unit/             # 单元测试（19 个文件，356 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
     ├── convertHiraganaToNumber.test.mjs
+    ├── cronScheduleDisplay.test.mjs
+    ├── dependency-security.test.mjs
+    ├── entrypoint.once-mode.test.mjs
     ├── escapeHtml.test.mjs
     ├── findChromePath.test.mjs
     ├── getTurnstileProvider.test.mjs
@@ -88,6 +92,7 @@ xserver-vps-renew/
     ├── renewalLogic.test.mjs
     ├── renewalStatus.test.mjs
     ├── turnstile.extract.test.mjs
+    ├── turnstile.failover.test.mjs
     ├── turnstile.solve.test.mjs
     └── utils.test.mjs
 ```
@@ -276,7 +281,7 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（15 个测试文件，约 240 个用例）：
+- **已测试模块**（19 个测试文件，356 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
