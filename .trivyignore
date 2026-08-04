@@ -44,8 +44,9 @@ CVE-2026-14257
 
 # ============================================================
 # Node 基础镜像自带 npm 内嵌依赖（非业务 node_modules）
-# 路径：/usr/local/lib/node_modules/npm/node_modules/{picomatch,sigstore}
+# 路径：/usr/local/lib/node_modules/npm/node_modules/{picomatch,sigstore,brace-expansion}
 # 运行时业务脚本不调用这些模块；npm 升级后若仍残留则忽略
 # ============================================================
 CVE-2026-33671
 CVE-2026-48815
+CVE-2026-69152
