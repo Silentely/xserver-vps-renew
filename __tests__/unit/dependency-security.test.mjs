@@ -8,7 +8,7 @@ describe('依赖安全回归', () => {
     const { version } = require('brace-expansion/package.json');
     const expand = require('brace-expansion');
 
-    expect(version).toBe('1.1.17');
+    expect(version).toBe('1.1.18');
     expect(typeof expand).toBe('function');
     expect(expand('file{1,2}.txt')).toEqual(['file1.txt', 'file2.txt']);
   });

@@ -19,6 +19,9 @@
   - 将 `package.json` override 从 1.1.16 升级至官方 1.x 兼容安全回补版 1.1.17
   - 保持 `minimatch@3` 所需的 CommonJS 函数接口，避免跨主版本覆盖引入兼容性风险
   - 新增依赖版本、直接展开与 `minimatch` brace 匹配回归测试
+- **Dependabot 高危告警：`brace-expansion` CVE-2026-69152 绕过此前回补**（[CVE-2026-69152](https://avd.aquasec.com/nvd/cve-2026-69152)）
+  - 将 `package.json` override 从 1.1.17 升级至 1.1.18（`minimatch@3.1.5` 的 `^1.1.7` 范围包含此版本，无兼容性风险）
+  - Dependabot 无法自动升级的原因：`overrides` 字面量钉住 `1.1.17`，覆盖了依赖树的自然解析
 - **容器首次检查后反复重启并持续发送 Telegram 通知**（[#8](https://github.com/Silentely/xserver-vps-renew/issues/8)）
   - 根因：Supercronic v0.2.34 作为 PID 1 时，reaper 使用裸命令名自启动且不搜索 `PATH`，触发 `Failed to fork exec: no such file or directory`
   - 修复：升级至已修复的 v0.2.36，并通过 `/usr/local/bin/supercronic` 绝对路径启动，形成双层保护
