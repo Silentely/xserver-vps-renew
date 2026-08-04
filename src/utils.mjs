@@ -1,7 +1,10 @@
 /**
  * 通用纯工具函数
- * 日志脱敏、东京时区日期、带超时的 fetch 等
+ * 日志脱敏、东京时区日期、带超时的 fetch、HTML 转义、Chrome 路径探测、锁文件清理
  */
+
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** 东京时区相对 UTC 的固定偏移（毫秒），日本无夏令时 */
 export const TOKYO_OFFSET_MS = 9 * 3600_000;
@@ -200,4 +203,56 @@ export function validateRequiredConfig(config) {
     missing.push('代理配置不完整（需同时设置 PROXY_TYPE、PROXY_ADDRESS、PROXY_PORT）');
   }
   return missing;
+}
+
+/**
+ * 转义 HTML 特殊字符（Telegram parse_mode=HTML）
+ * @param {unknown} str
+ * @returns {string}
+ */
+export function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * 按东京时区格式化日期时间（中文 locale）
+ * @param {Date|number} [when=new Date()]
+ * @returns {string}
+ */
+export function formatTokyoDateTime(when = new Date()) {
+  const d = when instanceof Date ? when : new Date(when);
+  return d.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
+}
+
+/**
+ * 探测 Chrome 可执行文件路径（Linux 容器优先，macOS 兜底）
+ * @returns {string} 找到的路径或默认命令名
+ */
+export function findChromePath() {
+  const candidates = [
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  ];
+  return candidates.find((p) => existsSync(p)) || 'google-chrome-stable';
+}
+
+/**
+ * 清理 Chrome 用户数据目录中的残留锁文件
+ * 避免异常退出后下次启动报 SingletonLock 错误
+ * @param {string} userDataDir
+ */
+export function cleanChromeLocks(userDataDir) {
+  if (!userDataDir) return;
+  for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    const lockPath = join(userDataDir, lock);
+    try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
+  }
 }

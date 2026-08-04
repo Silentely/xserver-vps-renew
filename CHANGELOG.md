@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### 优化（2026-08-04）
+- **重构：拆分 `src/notify.mjs`，收敛通用工具到 `src/utils.mjs`**
+  - `renewal-logic.mjs`（1303 行）原混合「续期判定 + 通知文案」两类职责；通知构建（消息文案 / 失败分类 / 下次执行估算 / 详情模式 / 截断）约 850 行移入新模块 `src/notify.mjs`，业务逻辑文件降至 440 行
+  - `escapeHtml` / `formatTokyoDateTime` / `findChromePath` / `cleanChromeLocks` 收归 `src/utils.mjs`，消除 `escapeHtml` 双份实现
+  - `xserver-vps-renew.mjs` 删除 37 项测试驱动死重导出、6 个模块函数薄包装与 `escapeHtml` 死代码包装（原仅为 `escapeHtml.test.mjs` 从主脚本 import 而存在），测试改从 `src/` 直接 import；`escapeHtml.test.mjs` 用例并入 `utils.test.mjs`
+  - 顺带修复 `main()` 内 `finishWithSkip` 对后定义 `resolveNextRun` 的前向引用（提升定义，消除 TDZ 隐患）
+  - 行为不变：19 测试文件 / 356 用例全绿；`src/` 整体行覆盖率 91.9%（CI 阈值 28%）
 - **日志：修复 error 级别跨秒双时间戳 / 重复 ❌**
   - 原 `emitLog` error 分支最多调用 3 次 `ts()`：消息已带 `❌` 前缀且两次取时跨秒时，会输出 `时间戳 ❌ 时间戳 ❌ 消息` 的重复格式
   - 修复：每条日志单次取时间戳；`❌` 前缀是否补充仅依据消息本身是否已带，不再依赖时间戳字符串匹配

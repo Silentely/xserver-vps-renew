@@ -8,7 +8,7 @@ vi.mock('node:fs', () => ({
   rmSync: (...args) => mockRmSync(...args),
 }));
 
-const { cleanChromeLocks } = await import('../../xserver-vps-renew.mjs');
+const { cleanChromeLocks } = await import('../../src/utils.mjs');
 
 describe('cleanChromeLocks', () => {
   beforeEach(() => {

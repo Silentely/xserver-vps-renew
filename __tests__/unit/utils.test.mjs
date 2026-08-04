@@ -9,6 +9,8 @@ import {
   parseEnvBool,
   shouldLog,
   isNoisyModuleLog,
+  escapeHtml,
+  formatTokyoDateTime,
   TOKYO_OFFSET_MS,
   DEFAULT_LOG_LEVEL,
   LOG_LEVEL_DEBUG,
@@ -222,5 +224,49 @@ describe('fetchWithTimeout', () => {
     await expect(
       fetchWithTimeout('https://example.com', {}, 20),
     ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+describe('escapeHtml', () => {
+  it('转义混合内容（原 renewalLogic 用例）', () => {
+    expect(escapeHtml('<a>&"\'')).toBe('&lt;a&gt;&amp;&quot;&#39;');
+  });
+
+  it('转义 & 符号', () => {
+    expect(escapeHtml('a&b')).toBe('a&amp;b');
+  });
+
+  it('转义尖括号', () => {
+    expect(escapeHtml('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  it('空字符串原样返回', () => {
+    expect(escapeHtml('')).toBe('');
+  });
+
+  it('转义混合特殊字符', () => {
+    expect(escapeHtml('a<b>&c')).toBe('a&lt;b&gt;&amp;c');
+  });
+
+  it('安全字符串不被修改', () => {
+    expect(escapeHtml('host123')).toBe('host123');
+  });
+
+  it('转义双引号', () => {
+    expect(escapeHtml('a"b')).toBe('a&quot;b');
+  });
+
+  it('转义单引号', () => {
+    expect(escapeHtml("a'b")).toBe('a&#39;b');
+  });
+
+  it('转义全部 HTML 特殊字符', () => {
+    expect(escapeHtml('<a href="x">\'y\'</a>'))
+      .toBe('&lt;a href=&quot;x&quot;&gt;&#39;y&#39;&lt;/a&gt;');
+  });
+});
+
+describe('formatTokyoDateTime', () => {
+  it('返回非空字符串', () => {
+    expect(formatTokyoDateTime(Date.UTC(2026, 6, 11, 0, 0, 0))).toBeTruthy();
   });
 });

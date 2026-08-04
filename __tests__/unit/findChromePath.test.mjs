@@ -8,7 +8,7 @@ vi.mock('node:fs', () => ({
 }));
 
 // 导入被测模块（需要在 mock 之后）
-const { findChromePath } = await import('../../xserver-vps-renew.mjs');
+const { findChromePath } = await import('../../src/utils.mjs');
 
 describe('findChromePath', () => {
   beforeEach(() => {

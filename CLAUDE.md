@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-08-04 | 重构：拆分 `src/notify.mjs`（Telegram 通知构建）；utils 收纳 `escapeHtml`/`findChromePath`/`cleanChromeLocks`/`formatTokyoDateTime`；主脚本去除死重导出与模块包装层 |
 | 2026-08-04 | 打磨：emitLog 单次取时间戳修复跨秒双时间戳、skip 通知统一出口、parsePositiveInt 严格校验、文档测试清单同步（19 文件 / 356 用例） |
 | 2026-07-31 | 修复 #10 附带发现：Docker cron 下通知「下次执行」恒回退 +6h；cron-run 透传仅展示用 `CRON_SCHEDULE_DISPLAY`（不作模式开关） |
 | 2026-07-31 | 采纳 #9：compose 默认调度 `0 */6` → `27 */4`（每 4h 错峰 27 分，任意 12h 续期窗口内 ≥3 次尝试） |
@@ -57,8 +58,9 @@ xserver-vps-renew/
 │   ├── captcha.mjs            # 验证码处理（标准化/识别/平假名转换）
 │   ├── turnstile.mjs          # Turnstile 求解（参数构建/API 调用/token 注入）
 │   ├── renewal-status.mjs     # 续期结果持久化与健康检查
-│   ├── renewal-logic.mjs      # 续期业务纯逻辑（到期/提交结果/通知文案）
-│   └── utils.mjs              # 通用纯函数（脱敏/东京日期/超时 fetch/配置校验）
+│   ├── renewal-logic.mjs      # 续期业务纯逻辑（到期/提交结果/URL 构建）
+│   ├── notify.mjs             # Telegram 通知构建（消息文案/失败分类/下次执行估算）
+│   └── utils.mjs              # 通用纯函数（脱敏/东京日期/超时 fetch/HTML 转义/Chrome 工具）
 ├── browser-fingerprint-patch.js  # 浏览器指纹注入补丁
 ├── xserver-renews.js           # GreasyFork 用户脚本版本（参考实现）
 ├── turnstile-patch/            # Chrome 扩展：修复 CDP MouseEvent 坐标异常
@@ -83,12 +85,12 @@ xserver-vps-renew/
     ├── cronScheduleDisplay.test.mjs
     ├── dependency-security.test.mjs
     ├── entrypoint.once-mode.test.mjs
-    ├── escapeHtml.test.mjs
     ├── findChromePath.test.mjs
     ├── getTurnstileProvider.test.mjs
     ├── injectTurnstileToken.test.mjs
     ├── normalizeCaptchaCode.test.mjs
     ├── normalizeCaptchaCode.edge.test.mjs
+    ├── notify.test.mjs
     ├── renewalLogic.test.mjs
     ├── renewalStatus.test.mjs
     ├── turnstile.extract.test.mjs
@@ -128,8 +130,9 @@ graph TD
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
 | `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
-| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()` |
-| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()`, `classifyRenewalFailure()`, `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage` |
+| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()`, `escapeHtml()`, `formatTokyoDateTime()`, `findChromePath()`, `cleanChromeLocks()` |
+| `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()` |
+| `src/notify.mjs` | Telegram 通知构建（纯函数） | `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage`, `classifyRenewalFailure()`, `buildFailureHints()`, `buildProxyHint()`, `resolveNextRunAt()`, `parseNotifyDetail()`, `clampTelegramMessage()`, `formatProcessSteps()` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -285,10 +288,10 @@ npm run test:watch
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
-  - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取、通知文案（成功/跳过/失败 + 过程摘要）
-  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`
-  - `xserver-vps-renew.mjs` — `findChromePath`、`cleanChromeLocks`、`escapeHtml`
-- **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）
+  - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取
+  - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断
+  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`findChromePath`、`cleanChromeLocks`
+- **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）；`xserver-vps-renew.mjs` 为编排入口，浏览器步骤依赖真实页面，无单元覆盖
 - **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%
 
 ---

@@ -36,13 +36,13 @@ import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 
 // 模块化拆分
 import {
-  recognizeCaptcha as _recognizeCaptcha,
+  recognizeCaptcha,
 } from './src/captcha.mjs';
 import {
-  listTurnstileProviders as _listTurnstileProviders,
-  extractTurnstileParams as _extractTurnstileParams,
-  solveTurnstileWithFailover as _solveTurnstileWithFailover,
-  injectTurnstileToken as _injectTurnstileToken,
+  listTurnstileProviders,
+  extractTurnstileParams,
+  solveTurnstileWithFailover,
+  injectTurnstileToken,
   isTurnstileOutageError,
   resolveAntiCaptchaProxyMode,
   DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES,
@@ -64,6 +64,9 @@ import {
   parseEnvBool,
   shouldLog,
   isNoisyModuleLog,
+  findChromePath,
+  cleanChromeLocks,
+  formatTokyoDateTime,
   DEFAULT_LOG_LEVEL,
   LOG_LEVEL_DEBUG,
   LOG_LEVEL_INFO,
@@ -71,9 +74,23 @@ import {
   LOG_LEVEL_ERROR,
 } from './src/utils.mjs';
 import {
+  buildSuccessNotifyMessage,
+  buildSkipNotifyMessage,
+  buildFailureNotifyMessage,
+  buildProxyHint,
+  formatDurationMs,
+  parseNotifyDetail,
+  isTurnstileAllProvidersFailed,
+  clampTelegramMessage,
+  resolveTurnstileProviderLabel,
+  classifyRenewalFailure,
+  resolveNextRunAt,
+  DEFAULT_NEXT_RUN_INTERVAL_HOURS,
+  DEFAULT_TG_NOTIFY_DETAIL,
+} from './src/notify.mjs';
+import {
   isRenewalDue,
   buildRenewUrl,
-  resolveCaptchaRetryUrl,
   resolveCaptchaRetryNavigation,
   needsUserAgentAlignment,
   shouldSubmitAfterTurnstile,
@@ -81,68 +98,21 @@ import {
   detectRenewalWindowBlocked,
   extractExpireDateFromText,
   normalizeCellText,
-  escapeHtml as _escapeHtml,
-  formatTokyoDateTime,
-  formatDurationMs,
-  buildSuccessNotifyMessage,
-  buildSkipNotifyMessage,
-  buildFailureNotifyMessage,
-  buildProxyHint,
   getRemainingHours,
-  parseNotifyDetail,
-  isTurnstileAllProvidersFailed,
-  clampTelegramMessage,
-  resolveTurnstileProviderLabel,
-  classifyRenewalFailure,
   RENEWAL_WINDOW_HOURS,
   FREE_VPS_MAX_HOURS,
-  resolveNextRunAt,
-  DEFAULT_NEXT_RUN_INTERVAL_HOURS,
-  DEFAULT_TG_NOTIFY_DETAIL,
 } from './src/renewal-logic.mjs';
 
 /** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
 const DEFAULT_CAPTCHA_API = 'https://captcha-120546510085.asia-northeast1.run.app';
 
-// ============================================================
-// 模块函数包装层（桥接模块函数与主脚本的 log/CONFIG 依赖）
-// ============================================================
-
-/** 模块内日志桥接：轮询/原始响应等噪音仅在 debug 输出 */
+/** 模块内日志桥接：轮询/原始响应等噪音仅在 debug 输出（供 src 模块 logger 参数） */
 function moduleLog(msg) {
   if (isNoisyModuleLog(msg)) {
     logDebug(msg);
     return;
   }
   log(msg);
-}
-
-/** 验证码识别包装（注入 CONFIG 和 log） */
-async function recognizeCaptcha(imgSrc) {
-  return _recognizeCaptcha(imgSrc, CONFIG.CAPTCHA_API, moduleLog);
-}
-
-/** 已配置的 Turnstile 提供商列表（按 failover 顺序） */
-function listTurnstileProviders() {
-  return _listTurnstileProviders(CONFIG);
-}
-
-/** Turnstile 参数提取包装（注入 log） */
-async function extractTurnstileParams(page) {
-  return _extractTurnstileParams(page, moduleLog);
-}
-
-/** Turnstile 多平台 failover 求解（主路径） */
-async function solveTurnstileWithFailover(websiteURL, params) {
-  return _solveTurnstileWithFailover(websiteURL, params, CONFIG, moduleLog, {
-    timeout: CONFIG.TURNSTILE_API_TIMEOUT,
-    maxFailuresPerProvider: CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES,
-  });
-}
-
-/** Turnstile token 注入包装（注入 log） */
-async function injectTurnstileToken(page, token) {
-  return _injectTurnstileToken(page, token, moduleLog);
 }
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
@@ -252,17 +222,6 @@ const HAS_PROXY = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_P
 // Chrome 路径检测
 // ============================================================
 
-function findChromePath() {
-  const candidates = [
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ];
-  return candidates.find((p) => existsSync(p)) || 'google-chrome-stable';
-}
-
 // ============================================================
 // 日志
 // 🔧 优化：使用环境变量时区（默认东京时区），统一日志时间格式
@@ -310,11 +269,6 @@ const logDebug = (msg) => emitLog(LOG_LEVEL_DEBUG, msg);
 const log = (msg) => emitLog(LOG_LEVEL_INFO, msg);
 const logWarn = (msg) => emitLog(LOG_LEVEL_WARN, msg);
 const err = (msg) => emitLog(LOG_LEVEL_ERROR, msg);
-
-/** 转义 HTML 特殊字符，避免 Telegram parse_mode=HTML 解析失败 */
-function escapeHtml(str) {
-  return _escapeHtml(str);
-}
 
 // ============================================================
 // Telegram 通知
@@ -402,15 +356,6 @@ async function getText(page, selector) {
   const el = await page.$(selector);
   if (!el) return null;
   return page.evaluate((e) => e.textContent.trim(), el);
-}
-
-/** 清理 Chrome 锁文件 */
-function cleanChromeLocks(userDataDir) {
-  if (!userDataDir) return;
-  for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-    const lockPath = join(userDataDir, lock);
-    try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
-  }
 }
 
 // ============================================================
@@ -813,20 +758,23 @@ async function waitForTurnstile(page) {
   }
 
   // Docker 环境自然通过成功率极低；有 key 时直接走多平台 API failover
-  const providers = listTurnstileProviders();
+  const providers = listTurnstileProviders(CONFIG);
 
   if (providers.length > 0) {
     log('Turnstile: 使用多平台 API failover 求解');
     logDebug(`已配置平台: ${providers.map((p) => p.name).join(' → ')}`);
 
-    const params = await extractTurnstileParams(page);
+    const params = await extractTurnstileParams(page, moduleLog);
     if (!params) {
       err('无法提取 Turnstile 参数');
       return { ok: false };
     }
 
     try {
-      const result = await solveTurnstileWithFailover(page.url(), params);
+      const result = await solveTurnstileWithFailover(page.url(), params, CONFIG, moduleLog, {
+        timeout: CONFIG.TURNSTILE_API_TIMEOUT,
+        maxFailuresPerProvider: CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES,
+      });
       const providerLabel = resolveTurnstileProviderLabel(result.providerName) || result.providerName;
       log(`Turnstile 由 ${providerLabel} 求解成功`);
 
@@ -852,7 +800,7 @@ async function waitForTurnstile(page) {
         logDebug('未找到 Turnstile callback，注入 input 元素...');
       }
 
-      await injectTurnstileToken(page, result.token);
+      await injectTurnstileToken(page, result.token, moduleLog);
       await sleep(2000);
 
       const verifyToken = await getTurnstileToken(page);
@@ -1021,7 +969,7 @@ async function handleCaptchaPage(page, options = {}) {
       }).catch(() => false);
 
       // 识别验证码（并行进行 Turnstile 检查）
-      const code = await recognizeCaptcha(imgDataUri);
+      const code = await recognizeCaptcha(imgDataUri, CONFIG.CAPTCHA_API, moduleLog);
 
       // 检查 Turnstile 结果
       turnstileAlreadyPassed = await turnstileCheckPromise;
@@ -1148,7 +1096,7 @@ async function main() {
   }
 
   {
-    const tsProviders = listTurnstileProviders();
+    const tsProviders = listTurnstileProviders(CONFIG);
     if (tsProviders.length === 0) {
       log('⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份');
     } else {
@@ -1192,6 +1140,13 @@ async function main() {
   let runOutcomeLabel = '未完成';
   const elapsedMs = () => Date.now() - startedAtMs;
   const durationText = () => formatDurationMs(elapsedMs());
+
+  // 下次执行：优先展示用调度（cron-run 透传的真实 cron，如 27 */4 * * *），
+  // 退回 CRON_SCHEDULE（本地/单次模式），最后退化到 NOTIFY_NEXT_RUN_HOURS（默认 6h）
+  const resolveNextRun = () => resolveNextRunAt(Date.now(), {
+    cronSchedule: CONFIG.CRON_SCHEDULE_DISPLAY || CONFIG.CRON_SCHEDULE,
+    intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
+  });
 
   /**
    * 本轮判定为「跳过」的统一出口：
@@ -1310,13 +1265,6 @@ async function main() {
 
     // Standalone Turnstile：正常渲染 + API 求解（不拦截 render）
     logDebug('Turnstile 策略：正常渲染 + API 求解（不拦截 render）');
-
-    // 下次执行：优先展示用调度（cron-run 透传的真实 cron，如 27 */4 * * *），
-    // 退回 CRON_SCHEDULE（本地/单次模式），最后退化到 NOTIFY_NEXT_RUN_HOURS（默认 6h）
-    const resolveNextRun = () => resolveNextRunAt(Date.now(), {
-      cronSchedule: CONFIG.CRON_SCHEDULE_DISPLAY || CONFIG.CRON_SCHEDULE,
-      intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
-    });
 
     // 步骤 1：登录
     pushStep('登录 Xserver 面板');
@@ -1546,48 +1494,10 @@ async function main() {
   }
 }
 
-// 仅在直接执行时运行 main()，支持 import 测试
+// 仅在直接执行时运行 main()
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
     console.error(`未捕获异常: ${e.message}`);
     process.exitCode = 1;
   });
 }
-
-export {
-  escapeHtml,
-  findChromePath,
-  cleanChromeLocks,
-  getTurnstileToken,
-  HAS_PROXY,
-  CONFIG,
-  DEFAULT_UA,
-  maskProxyAddress,
-  getTokyoDateString,
-  validateRequiredConfig,
-  persistRenewalRecord,
-  parsePositiveInt,
-  isRenewalDue,
-  buildRenewUrl,
-  evaluateSubmissionResult,
-  detectRenewalWindowBlocked,
-  extractExpireDateFromText,
-  resolveCaptchaRetryUrl,
-  resolveCaptchaRetryNavigation,
-  needsUserAgentAlignment,
-  shouldSubmitAfterTurnstile,
-  buildSuccessNotifyMessage,
-  buildSkipNotifyMessage,
-  buildFailureNotifyMessage,
-  buildProxyHint,
-  parseNotifyDetail,
-  formatTokyoDateTime,
-  formatDurationMs,
-  clampTelegramMessage,
-  resolveTurnstileProviderLabel,
-  classifyRenewalFailure,
-  parseLogLevel,
-  parseEnvBool,
-  listTurnstileProviders,
-  isTurnstileAllProvidersFailed,
-};
