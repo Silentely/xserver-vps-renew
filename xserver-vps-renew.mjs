@@ -1152,8 +1152,11 @@ async function main() {
    * 本轮判定为「跳过」的统一出口：
    * 记录结局 → 持久化跳过记录 → 推送 skip 通知 → 关闭页面
    * （not_due / no_free_vps / window_blocked 三个分支共用，避免重复实现）
+   * @param {object} opts
+   * @param {import('puppeteer').Page} opts.page - 当前页面（try 块内声明，必须显式传入）
    */
   const finishWithSkip = async ({
+    page,
     reasonCode,
     skipLabel,
     reasonDetail,
@@ -1298,6 +1301,7 @@ async function main() {
     if (!renewalData.needed) {
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
       await finishWithSkip({
+        page,
         reasonCode: renewalData.reasonCode,
         skipLabel,
         reasonDetail: renewalData.reasonDetail,
@@ -1316,6 +1320,7 @@ async function main() {
     if (confirmResult.status === 'window_blocked') {
       const skipLabel = confirmResult.reason || '未进入官方 12 小时续期窗口';
       await finishWithSkip({
+        page,
         reasonCode: 'window_blocked',
         skipLabel,
         runLabel: '未进入 12h 续期窗口',

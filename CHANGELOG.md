@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### 修复（2026-08-04）
+- **「无需续期」场景同一轮发出两条 Telegram 通知（skip + failure）且退出码为 1**
+  - 根因：`finishWithSkip`（skip 统一出口）定义于 `main()` 的 `try` 块之外，内部 `page.close()` 所引用的 `page` 为 `try` 块内 `const` 声明的块级变量，不在其词法作用域——skip 通知发送成功后执行 `page.close()` 抛 `ReferenceError: page is not defined`，被 catch 误判为「续期失败」，追加发送失败通知并置退出码 1
+  - 触发面：`not_due / no_free_vps / window_blocked` 三个跳过分支（真正续期路径不调用 `finishWithSkip`，故此前未被发现）
+  - 修复：`page` 改为显式参数传入 `finishWithSkip`（定义处 + 两处调用点），补充 JSDoc 说明作用域约束
+  - 回归：最小复现验证 skip 通知后不再进入 catch；`node --check` + 19 文件 / 356 用例全绿
+
 ### 优化（2026-08-04）
 - **重构：拆分 `src/notify.mjs`，收敛通用工具到 `src/utils.mjs`**
   - `renewal-logic.mjs`（1303 行）原混合「续期判定 + 通知文案」两类职责；通知构建（消息文案 / 失败分类 / 下次执行估算 / 详情模式 / 截断）约 850 行移入新模块 `src/notify.mjs`，业务逻辑文件降至 440 行
