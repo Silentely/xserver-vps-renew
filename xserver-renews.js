@@ -479,6 +479,35 @@ function t(text) {
     }
  
     /**
+     * 处理官方「個人情報の取り扱いについて」同意页（2026-08-05 上线，登录后必经）
+     * 勾选同意复选框并提交表单；若缺失关键元素则仅提示，由用户手动处理
+     */
+    function handleAgreement() {
+        console.log(`${LOG_PREFIX} 检测到「個人情報の取り扱いについて」同意页，正在自动同意...`);
+        updateStatusElement("检测到个人信息同意页，自动同意中...");
+
+        const checkbox = document.querySelector('#agree_flag_1, input[name="agree_flag"]');
+        if (!checkbox) {
+            console.log(`${LOG_PREFIX} 未找到同意复选框（agree_flag）。`);
+            updateStatusElement("未找到同意复选框，请手动同意。");
+            isRunning = false;
+            return;
+        }
+        if (!checkbox.checked) {
+            checkbox.click();
+        }
+
+        const submitBtn = document.querySelector('input[name="action_user_agreement_do"]');
+        if (submitBtn) {
+            submitBtn.click();
+        } else {
+            console.log(`${LOG_PREFIX} 未找到同意提交按钮。`);
+            updateStatusElement("未找到同意提交按钮，请手动同意。");
+            isRunning = false;
+        }
+    }
+
+    /**
      * 主流程分发
      */
     function main() {
@@ -489,6 +518,8 @@ function t(text) {
  
         if (path.startsWith('/xapanel/login/xvps')) {
             handleLogin();
+        } else if (path.includes('/xapanel/myaccount/agreement')) {
+            handleAgreement();
         } else if (path.includes('/xapanel/xvps/index')) {
             handleVPSDashboard();
         } else if (path.includes('/xapanel/xvps/server/freevps/extend/index')) {

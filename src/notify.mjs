@@ -478,6 +478,40 @@ export function buildSkipNotifyMessage({
 }
 
 /**
+ * 构建「需要人工确认」提醒通知
+ * 自动同意 / 面板处理疑似遇到官方新增或变更的确认页面时，提醒用户登录 Xserver
+ * 手动确认后重新运行容器；区别于通用失败通知，不携带续期失败分类信息
+ * @param {object} opts
+ * @param {string} [opts.executedAt] 执行时间（东京时区，已格式化）
+ * @param {string} [opts.reason] 触发原因（错误信息或页面停留说明）
+ * @param {string} [opts.nextRunAt] 下次执行时间
+ * @returns {string}
+ */
+export function buildManualConfirmNotifyMessage({
+  executedAt = '',
+  reason = '',
+  nextRunAt = '',
+} = {}) {
+  const lines = [
+    '⚠️ <b>Xserver VPS 自动续期 · 需要人工确认</b>',
+    '',
+    '自动处理疑似遇到官方新增或变更的确认页面，无法继续自动续期。',
+    '请登录 Xserver 面板检查是否存在需要确认的新页面',
+    '（如个人信息同意、安全验证等），手动完成后重新运行容器：',
+    '',
+    '<code>docker exec xserver-vps-renew ./entrypoint.sh --once</code>',
+  ];
+  if (reason) {
+    lines.push('', `原因: ${escapeHtml(reason)}`);
+  }
+  lines.push('', `⏰ 执行时间: ${executedAt || '—'}`);
+  if (nextRunAt) {
+    lines.push(`⏭️ 下次执行: ${nextRunAt}`);
+  }
+  return clampTelegramMessage(lines.join('\n'));
+}
+
+/**
  * 是否为 Turnstile 多平台全挂（删机风险最高级）
  * 与 src/turnstile.mjs 的 TURNSTILE_ALL_PROVIDERS_FAILED 语义对齐（避免循环依赖，字面量保持同步）
  * @param {object} opts

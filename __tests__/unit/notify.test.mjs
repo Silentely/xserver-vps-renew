@@ -25,6 +25,7 @@ import {
   formatTurnstileNotifyLine,
   buildSuccessNotifyMessage,
   buildSkipNotifyMessage,
+  buildManualConfirmNotifyMessage,
   isTurnstileAllProvidersFailed,
   FAILURE_CATEGORY,
   classifyRenewalFailure,
@@ -417,6 +418,35 @@ describe('buildSkipNotifyMessage', () => {
     });
     expect(msg).toContain('&lt;x&gt;');
     expect(msg).toContain('a &amp; b');
+  });
+});
+
+describe('buildManualConfirmNotifyMessage', () => {
+  it('包含人工确认指引与重跑命令', () => {
+    const msg = buildManualConfirmNotifyMessage({
+      executedAt: '2026-08-05 13:00:00',
+      reason: '同意页未找到同意复选框',
+      nextRunAt: '2026-08-05 19:00:00',
+    });
+    expect(msg).toContain('需要人工确认');
+    expect(msg).toContain('登录 Xserver 面板检查是否存在需要确认的新页面');
+    expect(msg).toContain('docker exec xserver-vps-renew ./entrypoint.sh --once');
+    expect(msg).toContain('同意页未找到同意复选框');
+    expect(msg).toContain('2026-08-05 13:00:00');
+    expect(msg).toContain('2026-08-05 19:00:00');
+  });
+
+  it('原因中的 HTML 特殊字符被转义', () => {
+    const msg = buildManualConfirmNotifyMessage({
+      reason: 'a & b <tag>',
+    });
+    expect(msg).toContain('a &amp; b &lt;tag&gt;');
+  });
+
+  it('未传参时仍可生成最小消息', () => {
+    const msg = buildManualConfirmNotifyMessage();
+    expect(msg).toContain('需要人工确认');
+    expect(msg).toContain('—');
   });
 });
 

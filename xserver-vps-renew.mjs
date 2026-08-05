@@ -77,6 +77,7 @@ import {
   buildSuccessNotifyMessage,
   buildSkipNotifyMessage,
   buildFailureNotifyMessage,
+  buildManualConfirmNotifyMessage,
   buildProxyHint,
   formatDurationMs,
   parseNotifyDetail,
@@ -410,6 +411,55 @@ async function handleLogin(page) {
   return { viaCookie: false };
 }
 
+/** 构造「需要人工确认」错误：自动同意处理无效，需用户登录手动确认后重跑容器 */
+function manualConfirmError(message) {
+  const error = new Error(message);
+  error.code = 'MANUAL_CONFIRMATION_REQUIRED';
+  return error;
+}
+
+/**
+ * 处理官方「個人情報の取り扱いについて」同意页（2026-08-05 上线，登录后必经）。
+ * 未同意时面板各页均会被重定向回 /xapanel/myaccount/agreement，导致误判「未找到免费 VPS」。
+ * 勾选 agree_flag 复选框并提交表单（原生表单 POST /xapanel/myaccount/agreement/do）。
+ * 提交后仍停留在同意页则抛错，避免静默误判。
+ * @param {Page} page
+ */
+async function ensureAgreementAccepted(page) {
+  if (!page.url().includes('/xapanel/myaccount/agreement')) {
+    return;
+  }
+
+  log('检测到官方「個人情報の取り扱いについて」同意页，正在同意...');
+
+  // 勾选同意复选框（原生 checkbox，传统 jQuery 表单无复杂校验）
+  const checkbox = await page.$('#agree_flag_1, input[name="agree_flag"]');
+  if (!checkbox) {
+    throw manualConfirmError('同意页未找到同意复选框（agree_flag），可能为官方改版，需人工确认。');
+  }
+  const checked = await checkbox.evaluate((el) => el.checked);
+  if (!checked) {
+    await checkbox.click();
+    log('已勾选「個人情報の取り扱いについて」同意复选框');
+  }
+
+  // 提交表单（POST /xapanel/myaccount/agreement/do）
+  const submitBtn = await page.$('input[name="action_user_agreement_do"]');
+  if (!submitBtn) {
+    throw manualConfirmError('同意页未找到提交按钮（action_user_agreement_do），可能为官方改版，需人工确认。');
+  }
+  await Promise.all([waitForNav(page), submitBtn.click()]);
+
+  // 校验：提交后仍停留在同意页说明同意未生效，直接抛错避免后续误判
+  if (page.url().includes('/xapanel/myaccount/agreement')) {
+    const bodyText = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+    err(`同意提交后仍停留在同意页，页面片段: ${bodyText.replace(/\s+/g, ' ').slice(0, 200)}`);
+    throw manualConfirmError('個人情報同意提交失败，仍停留在同意页，需人工登录确认。');
+  }
+
+  log(`同意页处理完成，当前页面: ${page.url()}`);
+}
+
 // ============================================================
 // 步骤 2：检查是否需要续期
 // ============================================================
@@ -418,7 +468,7 @@ async function handleLogin(page) {
  * 检查是否需要续期
  * @returns {Promise<
  *   | { needed: true, renewUrl: string, vpsInfo: { serverName: string|null, plan: string|null, expireDate: string|null }, remainingHours: number|null }
- *   | { needed: false, reasonCode: 'not_due'|'no_free_vps'|'window_blocked', vpsInfo: object, remainingHours: number|null, reasonDetail: string }
+ *   | { needed: false, reasonCode: 'not_due'|'no_free_vps'|'window_blocked', vpsInfo: object, remainingHours: number|null, reasonDetail: string, needsManualConfirmation?: boolean }
  * >}
  */
 async function checkRenewalNeeded(page) {
@@ -507,7 +557,12 @@ async function checkRenewalNeeded(page) {
   });
 
   if (!result) {
-    log('未找到免费 VPS 条目。');
+    // 未停留在 VPS 面板页（URL 不含 /xvps/）说明被官方新增/变更的确认页拦截，
+    // 标记需人工确认，由 main() 发送提醒而不是当作普通「无免费 VPS」跳过
+    const needsManualConfirmation = !page.url().includes('/xvps/');
+    log(needsManualConfirmation
+      ? `未找到免费 VPS 条目（当前页面: ${page.url()}，疑似被官方确认页拦截）。`
+      : '未找到免费 VPS 条目。');
     return {
       needed: false,
       reasonCode: 'no_free_vps',
@@ -518,6 +573,7 @@ async function checkRenewalNeeded(page) {
       },
       remainingHours: null,
       reasonDetail: '面板中未找到带免费标识的 VPS 条目',
+      needsManualConfirmation,
     };
   }
 
@@ -1305,6 +1361,10 @@ async function main() {
     const loginResult = await handleLogin(page);
     pushStep(loginResult?.viaCookie ? '登录成功（Cookie 复用）' : '登录成功');
 
+    // 官方 2026-08-05 上线「個人情報の取り扱いについて」同意页（登录后必经，
+    // 未同意时面板各页均被重定向回同意页，造成「未找到免费 VPS」）
+    await ensureAgreementAccepted(page);
+
     const fingerprint = await page.evaluate(() => ({
       deviceMemory: navigator.deviceMemory || 'N/A',
       hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
@@ -1330,6 +1390,28 @@ async function main() {
       };
     }
     if (!renewalData.needed) {
+      // 官方新增/变更确认页导致未进入 VPS 面板（URL 不含 /xvps/）时转人工确认，
+      // 发送提醒并置失败退出码，不当作普通「无免费 VPS」跳过
+      if (renewalData.reasonCode === 'no_free_vps' && renewalData.needsManualConfirmation) {
+        runOutcome = 'failure';
+        runOutcomeLabel = '需要人工确认';
+        const manualReason = `当前停留在 ${page.url()}，未进入 VPS 面板，疑似官方新增确认页面`;
+        err(manualReason);
+        persistRenewalRecord(buildRenewalRecord({
+          success: false,
+          serverName: null,
+          plan: null,
+          oldExpireDate: null,
+          errorMessage: manualReason,
+        }));
+        await notify(buildManualConfirmNotifyMessage({
+          executedAt: formatTokyoDateTime(),
+          reason: manualReason,
+          nextRunAt: resolveNextRun(),
+        }), { kind: 'manual_confirm' });
+        process.exitCode = 1;
+        return;
+      }
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
       await finishWithSkip({
         page,
@@ -1450,9 +1532,11 @@ async function main() {
       errorCode: e?.code,
     });
     runOutcome = 'failure';
-    runOutcomeLabel = failureClass.label;
+    // 需人工确认的错误不套用失败分类标签，避免误导
+    const needsManualConfirmation = e?.code === 'MANUAL_CONFIRMATION_REQUIRED';
+    runOutcomeLabel = needsManualConfirmation ? '需要人工确认' : failureClass.label;
     err(
-      `流程异常终止 [${failureClass.label}]: ${e.message}（耗时 ${durationText()}）`,
+      `流程异常终止 [${runOutcomeLabel}]: ${e.message}（耗时 ${durationText()}）`,
     );
 
     // 持久化续期失败记录
@@ -1489,26 +1573,35 @@ async function main() {
         ? e.attempts.map((a) => a.provider).filter(Boolean)
         : []);
 
-    await notify(buildFailureNotifyMessage({
-      errorMessage: e.message,
-      consecutiveFailures,
-      isEscalation: isEscalation || turnstileAllProvidersFailed,
-      proxyHint,
-      captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
-      executedAt: formatTokyoDateTime(),
-      processSteps: failureSteps,
-      detail: CONFIG.TG_NOTIFY_DETAIL,
-      turnstileAllProvidersFailed,
-      failedProviders,
-      errorCode: e?.code || '',
-      turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
-      serverName: knownVps.serverName,
-      plan: knownVps.plan,
-      expireDate: knownVps.expireDate,
-      remainingHours: knownVps.remainingHours,
-      durationMs: elapsedMs(),
-      failureCategory: failureClass.category,
-    }), { kind: 'failure' });
+    // 需人工确认：发送专门提醒（登录检查新确认页，手动处理后重跑容器），区别于通用失败通知
+    if (needsManualConfirmation) {
+      await notify(buildManualConfirmNotifyMessage({
+        executedAt: formatTokyoDateTime(),
+        reason: e.message,
+        nextRunAt: resolveNextRun(),
+      }), { kind: 'manual_confirm' });
+    } else {
+      await notify(buildFailureNotifyMessage({
+        errorMessage: e.message,
+        consecutiveFailures,
+        isEscalation: isEscalation || turnstileAllProvidersFailed,
+        proxyHint,
+        captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
+        executedAt: formatTokyoDateTime(),
+        processSteps: failureSteps,
+        detail: CONFIG.TG_NOTIFY_DETAIL,
+        turnstileAllProvidersFailed,
+        failedProviders,
+        errorCode: e?.code || '',
+        turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
+        serverName: knownVps.serverName,
+        plan: knownVps.plan,
+        expireDate: knownVps.expireDate,
+        remainingHours: knownVps.remainingHours,
+        durationMs: elapsedMs(),
+        failureCategory: failureClass.category,
+      }), { kind: 'failure' });
+    }
     process.exitCode = 1;
   } finally {
     if (browser) {

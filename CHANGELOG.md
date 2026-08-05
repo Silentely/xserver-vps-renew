@@ -3,10 +3,14 @@
 ## [Unreleased]
 
 ### 修复（2026-08-05）
-- **xvps 列表页表格异步渲染时误判「未找到免费 VPS」**
-  - 现象：登录成功且网络正常，`checkRenewalNeeded` 在 `domcontentloaded` 后立即查询 `tr:has(.freeServerIco)`，页面加载变慢（登录提交耗时 21s）时表格行尚未插入 DOM，返回 `no_free_vps`；代码逻辑自项目初始未变，8/4 重构前后一致，属官方页面渲染时序变化而非代码回归
-  - 修复：查询前 `waitForSelector('tr:has(.freeServerIco)', { timeout: 10000 })` 等待表格就绪；超时则采集页面诊断（URL / `freeServerIco` 数量 / `tr` 行数 / detail 链接数 / 表格 HTML 片段 / 正文片段）后走原判定，便于区分「官方改版」与「渲染时序」两类根因
-  - 验证：`node --check` + 19 文件 / 356 用例全绿，覆盖率门禁达标
+- **官方新增「個人情報の取り扱いについて」同意页导致误判「未找到免费 VPS」**
+  - 现象：2026-08-05 起登录成功后面板各页均被重定向至 `/xapanel/myaccount/agreement/index`（官方因网络オウル レジストラ业务移管新增的强制同意页）；未同意时 `goto /xapanel/xvps/index` 也被弹回，VPS 列表永不出现 → `no_free_vps`。代码逻辑自项目初始未变，8/4 重构前后一致，属官方页面变更而非代码回归
+  - 修复：新增 `ensureAgreementAccepted`（主脚本）/ `handleAgreement`（用户脚本）：检测 `/xapanel/myaccount/agreement` 路径 → 勾选 `#agree_flag_1` → 提交 `input[name="action_user_agreement_do"]`（原生表单 POST `/xapanel/myaccount/agreement/do`）；提交后仍停留在同意页则抛错，避免静默误判
+  - 辅助：`checkRenewalNeeded` 查询前等待表格（`waitForSelector` 10s）超时后采集页面结构诊断（URL / `freeServerIco` 数量 / `tr` 行数 / detail 链接 / 表格 HTML 或正文片段），本次即靠该诊断日志定位到同意页
+- **自动处理无效时通过 Telegram 提醒用户人工确认**（官方再次改版确认页时不再静默误判）
+  - `ensureAgreementAccepted` 失败（找不到复选框/提交按钮、提交后仍停留）抛 `MANUAL_CONFIRMATION_REQUIRED` 错误；`checkRenewalNeeded` 在 `no_free_vps` 且当前 URL 未进入 VPS 面板（`/xvps/`）时标记 `needsManualConfirmation`
+  - 两类场景均发送 `buildManualConfirmNotifyMessage`（新通知：提醒登录 Xserver 检查新确认页、手动完成后重跑容器命令），退出码置 1，区别于通用失败/跳过通知
+  - 验证：`node --check` + 19 文件 / 359 用例全绿（新增 3 用例），覆盖率门禁达标
 
 ### 修复（2026-08-04）
 - **「无需续期」场景同一轮发出两条 Telegram 通知（skip + failure）且退出码为 1**
