@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-08-05 | 修复：xvps 列表表格异步渲染致误判「未找到免费 VPS」（登录提交 21s 变慢场景）；查询前等待表格就绪，超时采集页面结构诊断（区分官方改版/渲染时序） |
 | 2026-08-04 | 修复：`finishWithSkip` 越界引用 try 块内 `page`，导致「无需续期」场景双通知（skip+failure）且退出码 1；`page` 改显式传参（19 文件 / 356 用例全绿） |
 | 2026-08-04 | 重构：拆分 `src/notify.mjs`（Telegram 通知构建）；utils 收纳 `escapeHtml`/`findChromePath`/`cleanChromeLocks`/`formatTokyoDateTime`；主脚本去除死重导出与模块包装层 |
 | 2026-08-04 | 打磨：emitLog 单次取时间戳修复跨秒双时间戳、skip 通知统一出口、parsePositiveInt 严格校验、文档测试清单同步（19 文件 / 356 用例） |

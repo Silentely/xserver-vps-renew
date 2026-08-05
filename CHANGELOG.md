@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### 修复（2026-08-05）
+- **xvps 列表页表格异步渲染时误判「未找到免费 VPS」**
+  - 现象：登录成功且网络正常，`checkRenewalNeeded` 在 `domcontentloaded` 后立即查询 `tr:has(.freeServerIco)`，页面加载变慢（登录提交耗时 21s）时表格行尚未插入 DOM，返回 `no_free_vps`；代码逻辑自项目初始未变，8/4 重构前后一致，属官方页面渲染时序变化而非代码回归
+  - 修复：查询前 `waitForSelector('tr:has(.freeServerIco)', { timeout: 10000 })` 等待表格就绪；超时则采集页面诊断（URL / `freeServerIco` 数量 / `tr` 行数 / detail 链接数 / 表格 HTML 片段 / 正文片段）后走原判定，便于区分「官方改版」与「渲染时序」两类根因
+  - 验证：`node --check` + 19 文件 / 356 用例全绿，覆盖率门禁达标
+
 ### 修复（2026-08-04）
 - **「无需续期」场景同一轮发出两条 Telegram 通知（skip + failure）且退出码为 1**
   - 根因：`finishWithSkip`（skip 统一出口）定义于 `main()` 的 `try` 块之外，内部 `page.close()` 所引用的 `page` 为 `try` 块内 `const` 声明的块级变量，不在其词法作用域——skip 通知发送成功后执行 `page.close()` 抛 `ReferenceError: page is not defined`，被 catch 误判为「续期失败」，追加发送失败通知并置退出码 1

@@ -431,6 +431,37 @@ async function checkRenewalNeeded(page) {
     });
   }
 
+  // 官方 xvps 列表表格为 JS 异步渲染，domcontentloaded 时行可能尚未插入 DOM；
+  // 等待免费 VPS 行出现，避免在页面加载变慢时误判「未找到免费 VPS」。
+  // 超时后先采集页面结构诊断（区分「官方改版」与「渲染时序」两类根因），再走原判定路径。
+  try {
+    await page.waitForSelector('tr:has(.freeServerIco)', { timeout: 10000 });
+  } catch {
+    logWarn('等待免费 VPS 表格超时（10s），正在采集页面诊断信息...');
+    const diag = await page.evaluate(() => {
+      const firstTable = document.querySelector('table');
+      return {
+        url: location.href,
+        freeIcoCount: document.querySelectorAll('.freeServerIco').length,
+        trCount: document.querySelectorAll('tr').length,
+        detailLinkCount: document.querySelectorAll('a[href*="/xvps/server/detail"]').length,
+        tableHtml: firstTable ? firstTable.outerHTML.slice(0, 800) : null,
+        bodyText: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
+      };
+    }).catch(() => null);
+    if (diag) {
+      logWarn(
+        `诊断: url=${diag.url} | freeServerIco=${diag.freeIcoCount} | tr=${diag.trCount}`
+        + ` | detail链接=${diag.detailLinkCount}`,
+      );
+      if (diag.tableHtml) {
+        logWarn(`诊断-表格HTML片段: ${diag.tableHtml}`);
+      } else {
+        logWarn(`诊断-正文片段: ${diag.bodyText}`);
+      }
+    }
+  }
+
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
   const today = getTokyoDateString();
   const tomorrow = getTokyoDateString(Date.now(), 1);
