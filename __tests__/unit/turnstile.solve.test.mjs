@@ -33,11 +33,12 @@ const makeConfig = (overrides = {}) => ({
 });
 
 describe('solveTurnstileViaAPI', () => {
-  const mockLogger = vi.fn();
+  const mockLogger = { info: vi.fn(), debug: vi.fn() };
 
   beforeEach(() => {
     mockFetch.mockReset();
-    mockLogger.mockReset();
+    mockLogger.info.mockReset();
+    mockLogger.debug.mockReset();
     vi.useFakeTimers();
   });
 
@@ -379,12 +380,12 @@ describe('injectTurnstileToken', () => {
     const mockPage = {
       evaluate: vi.fn().mockResolvedValue({ injectedCount: 0, callbackCalled: false }),
     };
-    const logger = vi.fn();
+    const logger = { info: vi.fn() };
 
     const result = await injectTurnstileToken(mockPage, 'test-token', logger);
 
     expect(result).toBe(false);
-    expect(logger).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining('0 个元素'),
     );
   });
@@ -393,11 +394,11 @@ describe('injectTurnstileToken', () => {
     const mockPage = {
       evaluate: vi.fn().mockResolvedValue({ injectedCount: 2, callbackCalled: true }),
     };
-    const logger = vi.fn();
+    const logger = { info: vi.fn() };
 
     await injectTurnstileToken(mockPage, 'test-token', logger);
 
-    expect(logger).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining('2 个元素'),
     );
   });

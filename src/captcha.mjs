@@ -3,7 +3,7 @@
  * 负责验证码识别、标准化、平假名转换
  */
 
-import { fetchWithTimeout } from './utils.mjs';
+import { fetchWithTimeout, NOOP_LOGGER } from './utils.mjs';
 
 /** 验证码标准长度 */
 export const CAPTCHA_LENGTH = 6;
@@ -136,7 +136,7 @@ export function normalizeCaptchaCode(rawText) {
  * @param {Function} logger - 日志函数
  * @returns {Promise<string>} - 识别的验证码
  */
-export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = () => {}) {
+export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = NOOP_LOGGER) {
   if (!apiUrl) {
     throw new Error('未配置 CAPTCHA_API，无法使用 Keras 模型 API 识别');
   }
@@ -144,7 +144,7 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
     throw new Error('验证码图片数据为空');
   }
 
-  logger(`使用 Keras 模型 API 识别验证码: ${apiUrl}`);
+  logger.info(`使用 Keras 模型 API 识别验证码: ${apiUrl}`);
 
   let res;
   try {
@@ -164,7 +164,7 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
     throw new Error(`Keras 模型 API 网络异常: ${error.message}`);
   }
 
-  logger(`Keras 模型 API 响应状态: ${res.status}`);
+  logger.debug(`Keras 模型 API 响应状态: ${res.status}`);
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => '');
@@ -172,12 +172,12 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
   }
 
   const rawCode = (await res.text()).trim();
-  logger(`Keras 模型 API 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
+  logger.debug(`Keras 模型 API 返回原始结果: "${rawCode}" (长度: ${rawCode.length})`);
 
   const code = normalizeCaptchaCode(rawCode);
 
   if (code) {
-    logger(`✅ Keras 模型 API 识别成功: ${code}`);
+    logger.info(`✅ Keras 模型 API 识别成功: ${code}`);
     return code;
   }
 
@@ -193,7 +193,7 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
  * @param {Function} logger - 日志函数
  * @returns {Promise<string>} - 识别的 6 位数字验证码
  */
-export async function recognizeCaptcha(imgSrc, apiUrl, logger = () => {}) {
+export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER) {
   if (!imgSrc || typeof imgSrc !== 'string') {
     throw new Error('imgSrc 必须是非空字符串');
   }
@@ -208,7 +208,7 @@ export async function recognizeCaptcha(imgSrc, apiUrl, logger = () => {}) {
   try {
     return await recognizeCaptchaWithKerasAPI(imgSrc, apiUrl, logger);
   } catch (error) {
-    logger(`❌ Keras 模型 API 识别失败: ${error.message}`);
+    logger.warn(`❌ Keras 模型 API 识别失败: ${error.message}`);
     throw error;
   }
 }

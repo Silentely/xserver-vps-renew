@@ -8,7 +8,7 @@ import {
   parseLogLevel,
   parseEnvBool,
   shouldLog,
-  isNoisyModuleLog,
+  NOOP_LOGGER,
   escapeHtml,
   formatTokyoDateTime,
   TOKYO_OFFSET_MS,
@@ -95,7 +95,7 @@ describe('parseEnvBool', () => {
   });
 });
 
-describe('parseLogLevel / shouldLog / isNoisyModuleLog', () => {
+describe('parseLogLevel / shouldLog / NOOP_LOGGER', () => {
   it('解析级别与别名', () => {
     expect(parseLogLevel('debug')).toBe(LOG_LEVEL_DEBUG);
     expect(parseLogLevel('VERBOSE')).toBe(LOG_LEVEL_DEBUG);
@@ -114,11 +114,13 @@ describe('parseLogLevel / shouldLog / isNoisyModuleLog', () => {
     expect(shouldLog('debug', 'debug')).toBe(true);
   });
 
-  it('识别模块噪音日志', () => {
-    expect(isNoisyModuleLog('CapSolver 轮询中 (1/60)... 状态: processing')).toBe(true);
-    expect(isNoisyModuleLog('Keras 模型 API 返回原始结果: "123" (长度: 3)')).toBe(true);
-    expect(isNoisyModuleLog('CapSolver 任务参数: {"type":"x"}')).toBe(true);
-    expect(isNoisyModuleLog('Turnstile 由 CapSolver 求解成功')).toBe(false);
+  it('NOOP_LOGGER 各级别为空操作（默认 logger）', () => {
+    expect(() => {
+      NOOP_LOGGER.info('x');
+      NOOP_LOGGER.debug('x');
+      NOOP_LOGGER.warn('x');
+      NOOP_LOGGER.error('x');
+    }).not.toThrow();
   });
 });
 

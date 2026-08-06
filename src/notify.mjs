@@ -8,6 +8,7 @@
 
 import { escapeHtml, formatTokyoDateTime } from './utils.mjs';
 import { FREE_VPS_MAX_HOURS, RENEWAL_WINDOW_HOURS } from './renewal-logic.mjs';
+import { isTurnstileOutageError, TURNSTILE_ALL_PROVIDERS_FAILED } from './turnstile.mjs';
 
 export const DEFAULT_NEXT_RUN_INTERVAL_HOURS = 6;
 
@@ -515,7 +516,7 @@ export function buildManualConfirmNotifyMessage({
 
 /**
  * 是否为 Turnstile 多平台全挂（删机风险最高级）
- * 与 src/turnstile.mjs 的 TURNSTILE_ALL_PROVIDERS_FAILED 语义对齐（避免循环依赖，字面量保持同步）
+ * 统一委托 src/turnstile.mjs 的 isTurnstileOutageError（唯一来源），避免跨模块 magic string 漂移
  * @param {object} opts
  * @param {boolean} [opts.turnstileAllProvidersFailed]
  * @param {string} [opts.errorMessage]
@@ -528,10 +529,8 @@ export function isTurnstileAllProvidersFailed({
   errorCode,
 } = {}) {
   if (turnstileAllProvidersFailed === true) return true;
-  if (errorCode === 'TURNSTILE_ALL_PROVIDERS_FAILED') return true;
-  const msg = String(errorMessage || '');
-  return msg.includes('TURNSTILE_ALL_PROVIDERS_FAILED')
-    || msg.includes('Turnstile 多平台均失败');
+  if (errorCode === TURNSTILE_ALL_PROVIDERS_FAILED) return true;
+  return isTurnstileOutageError({ code: errorCode, message: errorMessage });
 }
 
 /** 续期失败分类（通知标签与处置建议路由） */

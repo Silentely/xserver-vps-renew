@@ -53,6 +53,20 @@ describe('extractTurnstileParams', () => {
     });
   });
 
+  it('属性名清单以模块常量透传进 evaluate（单一来源）', async () => {
+    const page = createMockPage({ sitekey: '0x4AAA' });
+
+    await extractTurnstileParams(page);
+
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      [
+        ['data-c-data', 'data-cdata'],
+        ['data-chl-page-data', 'data-chlpagedata'],
+      ],
+    );
+  });
+
   it('无 Turnstile 元素时降级到正则匹配', async () => {
     const page = createMockPage({ hasTurnstileEl: false });
     page.content.mockReturnValue(
@@ -89,11 +103,11 @@ describe('extractTurnstileParams', () => {
 
   it('提取成功时记录日志', async () => {
     const page = createMockPage({ sitekey: '0x4LOGTEST' });
-    const logger = vi.fn();
+    const logger = { info: vi.fn(), debug: vi.fn() };
 
     await extractTurnstileParams(page, logger);
 
-    expect(logger).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining('Turnstile 参数提取成功'),
     );
   });
@@ -103,11 +117,11 @@ describe('extractTurnstileParams', () => {
     page.content.mockReturnValue(
       Promise.resolve('data-sitekey="0x4REGEX"'),
     );
-    const logger = vi.fn();
+    const logger = { info: vi.fn(), debug: vi.fn() };
 
     await extractTurnstileParams(page, logger);
 
-    expect(logger).toHaveBeenCalledWith(
+    expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining('正则匹配'),
     );
   });

@@ -11,11 +11,13 @@ const {
 } = await import('../../src/captcha.mjs');
 
 describe('recognizeCaptchaWithKerasAPI', () => {
-  const mockLogger = vi.fn();
+  const mockLogger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() };
 
   beforeEach(() => {
     mockFetch.mockReset();
-    mockLogger.mockReset();
+    mockLogger.info.mockReset();
+    mockLogger.debug.mockReset();
+    mockLogger.warn.mockReset();
   });
 
   it('成功识别验证码', async () => {
@@ -116,16 +118,18 @@ describe('recognizeCaptchaWithKerasAPI', () => {
 
     await recognizeCaptchaWithKerasAPI('data:image/png;base64,abc', 'https://api.example.com', mockLogger);
 
-    expect(mockLogger).toHaveBeenCalledWith(expect.stringContaining('Keras 模型 API 识别成功'));
+    expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Keras 模型 API 识别成功'));
   });
 });
 
 describe('recognizeCaptcha', () => {
-  const mockLogger = vi.fn();
+  const mockLogger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() };
 
   beforeEach(() => {
     mockFetch.mockReset();
-    mockLogger.mockReset();
+    mockLogger.info.mockReset();
+    mockLogger.debug.mockReset();
+    mockLogger.warn.mockReset();
   });
 
   it('非 Base64 格式抛出错误', async () => {
@@ -162,6 +166,6 @@ describe('recognizeCaptcha', () => {
       recognizeCaptcha('data:image/png;base64,abc', 'https://api.example.com', mockLogger),
     ).rejects.toThrow('503');
 
-    expect(mockLogger).toHaveBeenCalledWith(expect.stringContaining('识别失败'));
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('识别失败'));
   });
 });

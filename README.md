@@ -211,11 +211,17 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 ## 🏗️ 项目结构
 
 ```
-├── xserver-vps-renew.mjs          # 主脚本（编排入口：浏览器操作 + 流程控制）
+├── xserver-vps-renew.mjs          # 主脚本（编排入口：Chrome 启动 + 流程控制 + 通知）
 ├── src/                           # 可复用模块
+│   ├── panel-flow.mjs             # Xserver 面板业务流程（登录/同意页/到期检查/续期确认/验证码提交）
+│   ├── turnstile-flow.mjs         # Turnstile 浏览器交互（自然通过降级/求解后注入编排）
+│   ├── page-utils.mjs             # 页面通用工具（导航等待/元素文本/正文读取）
 │   ├── captcha.mjs                # 验证码处理（标准化/识别/平假名转换）
 │   ├── turnstile.mjs              # Turnstile 求解（参数构建/API 调用/token 注入）
-│   └── renewal-status.mjs         # 续期结果持久化与健康检查
+│   ├── renewal-status.mjs         # 续期结果持久化与健康检查
+│   ├── renewal-logic.mjs          # 续期业务纯逻辑（到期判定/URL 构建/提交结果）
+│   ├── notify.mjs                 # Telegram 通知构建（文案/失败分类/下次执行估算）
+│   └── utils.mjs                  # 通用纯函数（脱敏/东京日期/超时 fetch/日志级别）
 ├── browser-fingerprint-patch.js   # 浏览器指纹补丁
 ├── xserver-renews.js              # 油猴脚本版（浏览器端）
 ├── turnstile-patch/               # Turnstile 扩展（修复 screenX/Y）

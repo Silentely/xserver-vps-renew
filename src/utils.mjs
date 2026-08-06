@@ -148,25 +148,15 @@ export function shouldLog(configuredLevel, messageLevel) {
 }
 
 /**
- * 模块日志是否应降为 debug（轮询/原始响应/任务参数等噪音）
- * @param {unknown} message
- * @returns {boolean}
+ * 空日志对象（src 模块 logger 参数的默认值）
+ * 模块按级别调用 logger.info/debug/warn/error，级别决策归属模块而非调用方
  */
-export function isNoisyModuleLog(message) {
-  const s = String(message ?? '');
-  if (!s) return false;
-  return (
-    s.includes('任务参数:')
-    || s.includes('轮询中')
-    || s.includes('getTaskResult 网络异常')
-    || s.includes('getTaskResult HTTP')
-    || s.includes('瞬态 init')
-    || s.includes('原始结果')
-    || s.includes('响应状态')
-    || s.includes('使用住宅代理:')
-    || /sitekey=[0-9a-f]{8,}/i.test(s)
-  );
-}
+export const NOOP_LOGGER = Object.freeze({
+  info() {},
+  debug() {},
+  warn() {},
+  error() {},
+});
 
 /**
  * 校验续期脚本必填配置
@@ -221,12 +211,13 @@ export function escapeHtml(str) {
 
 /**
  * 按东京时区格式化日期时间（中文 locale）
+ * 时区取 TZ 环境变量（与日志 ts() 一致），默认 Asia/Tokyo
  * @param {Date|number} [when=new Date()]
  * @returns {string}
  */
 export function formatTokyoDateTime(when = new Date()) {
   const d = when instanceof Date ? when : new Date(when);
-  return d.toLocaleString('zh-CN', { timeZone: 'Asia/Tokyo' });
+  return d.toLocaleString('zh-CN', { timeZone: process.env.TZ || 'Asia/Tokyo' });
 }
 
 /**

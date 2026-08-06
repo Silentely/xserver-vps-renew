@@ -13,7 +13,7 @@
  */
 
 import { setTimeout as sleep } from 'node:timers/promises';
-import { fetchWithTimeout, maskProxyAddress } from './utils.mjs';
+import { fetchWithTimeout, maskProxyAddress, NOOP_LOGGER } from './utils.mjs';
 
 /** API 请求超时（毫秒） */
 const FETCH_TIMEOUT_MS = 30_000;
@@ -277,13 +277,17 @@ export function getTurnstileProvider(config) {
 }
 
 /**
- * 从 Turnstile widget DOM 元素读取参数（纯函数，浏览器/Node 双端可用）
- *
- * cData / chlPageData 属性名存在两种写法，需双名兼容：
+ * Turnstile widget 双名兼容属性（单一来源）：
  * - 官方/widget 内部注入：data-c-data / data-chl-page-data
  * - 社区常见自动化实现：data-cdata / data-chlpagedata
  * 仅读其一会在某些页面漏取，导致 Anti-Captcha 任务的 cData/chlPageData 恒为空。
- * 注意：page.evaluate 内联实现需与此保持同步（浏览器端无法引用模块作用域函数）。
+ * 浏览器端 page.evaluate 通过参数透传复用本常量，避免两处手工同步。
+ */
+export const TURNSTILE_C_DATA_ATTRS = ['data-c-data', 'data-cdata'];
+export const TURNSTILE_CHL_PAGE_DATA_ATTRS = ['data-chl-page-data', 'data-chlpagedata'];
+
+/**
+ * 从 Turnstile widget DOM 元素读取参数（纯函数，浏览器/Node 双端可用）
  * @param {object} el - 具备 getAttribute 方法的 DOM 元素（或 mock）
  * @returns {object} - { sitekey, action, cData, chlPageData, callbackName }
  */
@@ -301,24 +305,26 @@ export function readTurnstileWidgetParams(el) {
   return {
     sitekey: el.getAttribute('data-sitekey') || '',
     action: el.getAttribute('data-action') || '',
-    cData: firstAttr(['data-c-data', 'data-cdata']),
-    chlPageData: firstAttr(['data-chl-page-data', 'data-chlpagedata']),
+    cData: firstAttr(TURNSTILE_C_DATA_ATTRS),
+    chlPageData: firstAttr(TURNSTILE_CHL_PAGE_DATA_ATTRS),
     callbackName: el.getAttribute('data-callback') || '',
   };
 }
 
 /**
  * 从页面提取 Turnstile 参数
+ * 属性名清单由模块常量 TURNSTILE_C_DATA_ATTRS / TURNSTILE_CHL_PAGE_DATA_ATTRS 透传进浏览器上下文，
+ * 与 readTurnstileWidgetParams 保持单一来源，避免内联实现与纯函数双份维护。
  * @param {object} page - Puppeteer page 对象
  * @param {Function} logger - 日志函数
  * @returns {Promise<object|null>} - { sitekey, action, cData, chlPageData, callbackName }
  */
-export async function extractTurnstileParams(page, logger = () => {}) {
-  const params = await page.evaluate(() => {
+export async function extractTurnstileParams(page, logger = NOOP_LOGGER) {
+  const params = await page.evaluate((attrLists) => {
     const el = document.querySelector('.cf-turnstile[data-sitekey]')
       || document.querySelector('[data-sitekey]');
     if (!el) return null;
-    // 与 Node 侧 readTurnstileWidgetParams 保持一致（双名兼容，见其注释）
+    const [cDataAttrs, chlPageDataAttrs] = attrLists;
     const firstAttr = (names) => {
       for (const n of names) {
         const v = el.getAttribute(n);
@@ -329,14 +335,14 @@ export async function extractTurnstileParams(page, logger = () => {}) {
     return {
       sitekey: el.getAttribute('data-sitekey') || '',
       action: el.getAttribute('data-action') || '',
-      cData: firstAttr(['data-c-data', 'data-cdata']),
-      chlPageData: firstAttr(['data-chl-page-data', 'data-chlpagedata']),
+      cData: firstAttr(cDataAttrs),
+      chlPageData: firstAttr(chlPageDataAttrs),
       callbackName: el.getAttribute('data-callback') || '',
     };
-  });
+  }, [TURNSTILE_C_DATA_ATTRS, TURNSTILE_CHL_PAGE_DATA_ATTRS]);
 
   if (params && params.sitekey) {
-    logger(`Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
+    logger.info(`Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
       `action=${params.action || '(空)'}, callback=${params.callbackName || '(空)'}`);
     return params;
   }
@@ -344,7 +350,7 @@ export async function extractTurnstileParams(page, logger = () => {}) {
   const html = await page.content();
   const match = html.match(/data-sitekey=["']([0-9a-zA-Z_-]+)["']/);
   if (match) {
-    logger(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
+    logger.info(`Turnstile sitekey 提取成功（正则匹配）: ${match[1]}`);
     return { sitekey: match[1], action: '', cData: '', chlPageData: '', callbackName: '' };
   }
 
@@ -493,7 +499,7 @@ export async function solveTurnstileViaAPI(
   websiteURL,
   params,
   config,
-  logger = () => {},
+  logger = NOOP_LOGGER,
   timeout = 120_000,
   providerOverride = null,
 ) {
@@ -504,12 +510,12 @@ export async function solveTurnstileViaAPI(
   const sitekeyPreview = params.sitekey.length > 12
     ? `${params.sitekey.substring(0, 12)}...`
     : params.sitekey;
-  logger(`使用 ${provider.name} 求解 Turnstile (sitekey=${sitekeyPreview})`);
+  logger.info(`使用 ${provider.name} 求解 Turnstile (sitekey=${sitekeyPreview})`);
 
   // Anti-Captcha：域名代理无法提交，已自动改走 Proxyless
   if (provider.name === 'AntiCaptcha' && provider.proxyMode === 'hostname_skipped') {
     const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
-    logger(
+    logger.info(
       `ℹ️ AntiCaptcha 代理地址为域名（${masked || '***'}），官方仅支持 IP；`
       + '本次自动改用 TurnstileTaskProxyless（浏览器侧 PROXY_* 仍生效）',
     );
@@ -528,10 +534,10 @@ export async function solveTurnstileViaAPI(
 
   if (provider.supportsProxy) {
     const maskedProxyAddr = maskProxyAddress(taskConfig.proxyAddress);
-    logger(`${provider.name} 使用住宅代理: ${taskConfig.proxyType}://${maskedProxyAddr}:${taskConfig.proxyPort}`);
+    logger.debug(`${provider.name} 使用住宅代理: ${taskConfig.proxyType}://${maskedProxyAddr}:${taskConfig.proxyPort}`);
   }
 
-  logger(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
+  logger.debug(`${provider.name} 任务参数: ${JSON.stringify(maskTaskForLog(task))}`);
 
   const createPayload = buildCreateTaskPayload(provider, task);
 
@@ -567,7 +573,7 @@ export async function solveTurnstileViaAPI(
     throw new Error(`${provider.name} createTask 未返回 taskId: ${JSON.stringify(createData)}`);
   }
 
-  logger(`${provider.name} 任务已创建: taskId=${taskId}`);
+  logger.info(`${provider.name} 任务已创建: taskId=${taskId}`);
 
   const startTime = Date.now();
   const maxPolls = Math.max(1, Math.ceil(timeout / POLL_INTERVAL_MS));
@@ -590,12 +596,12 @@ export async function solveTurnstileViaAPI(
         FETCH_TIMEOUT_MS,
       );
     } catch (error) {
-      logger(`${provider.name} getTaskResult 网络异常: ${error.message}，继续轮询...`);
+      logger.debug(`${provider.name} getTaskResult 网络异常: ${error.message}，继续轮询...`);
       continue;
     }
 
     if (!resultRes.ok) {
-      logger(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
+      logger.debug(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
       continue;
     }
 
@@ -605,7 +611,7 @@ export async function solveTurnstileViaAPI(
       const errMsg = resultData.errorDescription || resultData.errorCode;
       // "init error" 是 CapSolver 瞬态错误，短暂等待后重试而非直接终止
       if (errMsg === 'init error' && i < maxPolls) {
-        logger(`${provider.name} 遇到瞬态 init error，等待后重试 (${i}/${maxPolls})...`);
+        logger.debug(`${provider.name} 遇到瞬态 init error，等待后重试 (${i}/${maxPolls})...`);
         continue;
       }
       throw new Error(`${provider.name} getTaskResult 错误: ${errMsg}`);
@@ -617,12 +623,12 @@ export async function solveTurnstileViaAPI(
         throw new Error(`${provider.name} 返回 ready 但 solution.token 为空`);
       }
       const userAgent = resultData.solution.userAgent || null;
-      logger(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
+      logger.info(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
         (userAgent ? `，UA: ${userAgent.substring(0, 50)}...` : ''));
       return { token, userAgent, providerName: provider.name };
     }
 
-    logger(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
+    logger.debug(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
   }
 
   throw new Error(`${provider.name} 轮询次数耗尽，求解失败`);
@@ -647,7 +653,7 @@ export async function solveTurnstileWithFailover(
   websiteURL,
   params,
   config,
-  logger = () => {},
+  logger = NOOP_LOGGER,
   options = {},
 ) {
   const timeout = options.timeout ?? 120_000;
@@ -663,13 +669,13 @@ export async function solveTurnstileWithFailover(
   }
 
   const chain = providers.map((p) => p.name).join(' → ');
-  logger(`Turnstile 多平台链路: ${chain}（每平台最多连续失败 ${maxFailuresPerProvider} 次后切换）`);
+  logger.info(`Turnstile 多平台链路: ${chain}（每平台最多连续失败 ${maxFailuresPerProvider} 次后切换）`);
 
   // 启动时提示 AntiCaptcha 域名代理自动 Proxyless（避免用户误以为带代理任务）
   for (const p of providers) {
     if (p.name === 'AntiCaptcha' && p.proxyMode === 'hostname_skipped') {
       const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
-      logger(
+      logger.info(
         `ℹ️ AntiCaptcha 检测到域名代理 ${masked || ''}，将使用 Proxyless（官方 TurnstileTask 仅支持 IP）`,
       );
     }
@@ -687,14 +693,14 @@ export async function solveTurnstileWithFailover(
     while (consecutiveFailures < maxFailuresPerProvider) {
       const tryNo = consecutiveFailures + 1;
       try {
-        logger(`▶ ${provider.name} 第 ${tryNo}/${maxFailuresPerProvider} 次尝试...`);
+        logger.info(`▶ ${provider.name} 第 ${tryNo}/${maxFailuresPerProvider} 次尝试...`);
         const result = await solveFn(websiteURL, params, config, logger, timeout, provider);
         attempts.push({
           provider: provider.name,
           success: true,
           failures: consecutiveFailures,
         });
-        logger(`✅ ${provider.name} 求解成功（本平台此前失败 ${consecutiveFailures} 次）`);
+        logger.info(`✅ ${provider.name} 求解成功（本平台此前失败 ${consecutiveFailures} 次）`);
         return {
           token: result.token,
           userAgent: result.userAgent ?? null,
@@ -709,7 +715,7 @@ export async function solveTurnstileWithFailover(
           attempt: consecutiveFailures,
           error: lastError,
         });
-        logger(`✖ ${provider.name} 第 ${consecutiveFailures}/${maxFailuresPerProvider} 次失败: ${lastError}`);
+        logger.info(`✖ ${provider.name} 第 ${consecutiveFailures}/${maxFailuresPerProvider} 次失败: ${lastError}`);
       }
     }
 
@@ -721,7 +727,7 @@ export async function solveTurnstileWithFailover(
     });
     const isLast = provider === providers[providers.length - 1];
     if (!isLast) {
-      logger(`⚡ ${provider.name} 已熔断（连续 ${maxFailuresPerProvider} 次失败），切换下一平台`);
+      logger.info(`⚡ ${provider.name} 已熔断（连续 ${maxFailuresPerProvider} 次失败），切换下一平台`);
     }
   }
 
@@ -751,9 +757,9 @@ export async function solveTurnstileWithFailover(
  * @param {Function} logger - 日志函数
  * @returns {Promise<boolean>} - 是否成功注入
  */
-export async function injectTurnstileToken(page, token, logger = () => {}) {
+export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER) {
   if (!token) {
-    logger('Turnstile token 为空，跳过注入');
+    logger.info('Turnstile token 为空，跳过注入');
     return false;
   }
 
@@ -796,6 +802,6 @@ export async function injectTurnstileToken(page, token, logger = () => {}) {
     return { injectedCount, callbackCalled };
   }, token);
 
-  logger(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
+  logger.info(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
   return injected.injectedCount > 0;
 }

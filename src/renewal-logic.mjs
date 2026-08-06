@@ -150,11 +150,10 @@ export function getRemainingHours(expireText, nowMs = Date.now()) {
  *
  * @param {string|null|undefined} expireDate - 页面上的到期日/时间文案
  * @param {string} today - 东京时区今天 YYYY-MM-DD
- * @param {string} tomorrow - 东京时区明天 YYYY-MM-DD（保留参数兼容调用方；小时判定下可不依赖）
  * @param {{ nowMs?: number, windowHours?: number, overdueGraceHours?: number }} [opts]
  * @returns {boolean}
  */
-export function isRenewalDue(expireDate, today, tomorrow, opts = {}) {
+export function isRenewalDue(expireDate, today, opts = {}) {
   if (!expireDate || typeof expireDate !== 'string') return false;
   const text = expireDate.trim();
   if (!text) return false;
@@ -271,6 +270,8 @@ export function detectRenewalWindowBlocked(pageText = '', currentUrl = '') {
 
 /**
  * 从详情页链接构建续期申请 URL，并校验来源
+ * 注意：detail?id → freevps/extend/index?id_vps 为子串替换，官方路径变更即静默失效；
+ * 来源 origin 校验仅兜底协议/域名，路径变化需人工跟进（已知脆弱点）。
  * @param {string} detailHref - 详情页完整 URL
  * @param {string} expectedOrigin - 期望 origin（如 https://secure.xserver.ne.jp）
  * @returns {string} 续期 URL

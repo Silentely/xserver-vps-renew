@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### 重构（2026-08-06）
+- **主脚本拆分（1638 → 795 行）**：Turnstile 浏览器交互层（`waitForTurnstile` / `waitForTurnstileToken` / `clickTurnstileFallback` / `getTurnstileToken` / `humanMouseMove`）下沉 `src/turnstile-flow.mjs`；Xserver 面板流程（登录 / 同意页 / 到期检查 / 续期确认 / 验证码提交 / 重试导航）下沉 `src/panel-flow.mjs`；页面工具（`waitForNav` / `getText` / `getBodyText`）下沉 `src/page-utils.mjs`；`main()` 仅保留编排、通知与状态持久化（新增 7 个 page-utils 用例）
+- **消除跨模块 magic string 重复**：`notify.mjs` 的 `isTurnstileAllProvidersFailed` 委托 `src/turnstile.mjs` 的 `isTurnstileOutageError` + `TURNSTILE_ALL_PROVIDERS_FAILED` 常量（原注释声称"避免循环依赖"但依赖图无环，纯属复制）；删伪理由注释
+- **修复 Turnstile callback 双重触发**：`waitForTurnstile` 内联回调注入块与 `injectTurnstileToken` 内重复调用同一 `data-callback`，现单次调用并以返回值记录注入结果
+- **属性名单一来源**：`extractTurnstileParams` 经 `page.evaluate` 第二参数透传 `TURNSTILE_C_DATA_ATTRS` / `TURNSTILE_CHL_PAGE_DATA_ATTRS`，与 `readTurnstileWidgetParams` 共用常量，删除"必须手工同步"的内联副本（新增单源断言用例）
+- **结构化分级 logger**：src 模块 logger 参数由单函数改为 `{ info, debug, warn, error }`，级别决策归属模块；删除 `utils.isNoisyModuleLog` 字符串嗅探（原依赖消息文案反推级别，文案一改即静默失效）及其用例，新增 `NOOP_LOGGER`
+- **失败路径 outage 判定单次求值**：main catch 先 `classifyRenewalFailure` 一次，`turnstileAllProvidersFailed` 由分类结果派生，不再对同一判定重复求值 3 次
+- **清理**：`isRenewalDue` 移除未使用参数 `tomorrow`（僵尸签名）；`formatTokyoDateTime` 尊重 `TZ` 环境变量（与日志时区契约一致）；`buildRenewUrl` 标注 URL 子串替换脆弱点
+- 验证：`node --check` + 20 文件 / 372 用例全绿，覆盖率门禁达标（branches 62.2% / lines 55.0%，阈值 25% / 28%）；浏览器流程模块沿用既有"依赖真实页面无单测"政策并已在 CLAUDE.md 记录
+
 ### 打磨（2026-08-06）
 - **Turnstile widget 参数属性名双名兼容**：`extractTurnstileParams` 现同时读取 `data-c-data`/`data-chl-page-data`（官方注入写法）与 `data-cdata`/`data-chlpagedata`（社区常用写法），抽出纯函数 `readTurnstileWidgetParams`，避免 Anti-Captcha 任务的 `cData`/`chlPageData` 在部分页面漏取（新增 4 用例）
 - **去重**：`handleCaptchaPage` 复用 `getTurnstileToken` 检查预填 token，消除重复遍历；抽取 `getBodyText` 统一 4 处页面正文读取；抽取 `listFailedTurnstileProviders` 统一「熔断平台提取」（主脚本过程摘要与 `formatTurnstileNotifyLine` 共用）；失败分类标签表单一来源 `FAILURE_CATEGORY_LABELS`；`recognizeCaptcha` 去除与下层的重复开始/成功日志

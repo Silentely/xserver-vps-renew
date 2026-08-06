@@ -7,6 +7,7 @@
 | 日期 | 变更内容 |
 |------|----------|
 | 2026-08-06 | 打磨：Turnstile 参数属性双名兼容（`data-c-data`/`data-cdata` 等，防 Anti-Captcha cData 漏取）；抽取 `getBodyText`/`listFailedTurnstileProviders`/`FAILURE_CATEGORY_LABELS` 消除重复；`checkRenewalNeeded` 统一 `nowMs` 基准；修复 `resolveCaptchaRetryUrl` 的 `/index` 重复 `extend` 段路径 bug；登录失败抛错附带页面提示（19 文件 / 364 用例） |
+| 2026-08-06 | 代码质量重构：主脚本 1638→795 行（Turnstile UI 层 → `src/turnstile-flow.mjs`、面板流程 → `src/panel-flow.mjs`、页面工具 → `src/page-utils.mjs`）；消除 notify↔turnstile 跨模块 magic string 重复（委托 `isTurnstileOutageError`）；修复 Turnstile callback 双重触发；`extractTurnstileParams` 与 `readTurnstileWidgetParams` 共享属性名常量（单一来源）；结构化分级 logger 取代 `isNoisyModuleLog` 字符串嗅探（净删）；失败路径 outage 判定单次求值；`isRenewalDue` 移除死参数、`formatTokyoDateTime` 尊重 `TZ`（20 文件 / 372 用例） |
 | 2026-08-05 | 修复：官方新增「個人情報の取り扱いについて」同意页（`/xapanel/myaccount/agreement`），登录后未同意即被重定向导致误判「未找到免费 VPS」；新增 `ensureAgreementAccepted` / 用户脚本 `handleAgreement` 自动勾选 `#agree_flag_1` 并提交；自动处理无效时（同意页改版/未进入面板页）发 `buildManualConfirmNotifyMessage` 提醒用户人工确认后重跑容器；`checkRenewalNeeded` 增加表格等待与页面结构诊断（诊断日志定位到本根因）（19 文件 / 359 用例） |
 | 2026-08-04 | 修复：`finishWithSkip` 越界引用 try 块内 `page`，导致「无需续期」场景双通知（skip+failure）且退出码 1；`page` 改显式传参（19 文件 / 356 用例全绿） |
 | 2026-08-04 | 重构：拆分 `src/notify.mjs`（Telegram 通知构建）；utils 收纳 `escapeHtml`/`findChromePath`/`cleanChromeLocks`/`formatTokyoDateTime`；主脚本去除死重导出与模块包装层 |
@@ -56,10 +57,13 @@
 
 ```
 xserver-vps-renew/
-├── xserver-vps-renew.mjs      # 编排入口（浏览器操作 + 流程控制 + 通知）
+├── xserver-vps-renew.mjs      # 编排入口（Chrome 启动 + 流程控制 + 通知）
 ├── src/                       # 可复用模块
+│   ├── panel-flow.mjs         # Xserver 面板业务流程（登录/同意页/到期检查/续期确认/验证码提交）
+│   ├── turnstile-flow.mjs     # Turnstile 浏览器交互（自然通过降级/求解后注入与 UA 对齐编排）
+│   ├── page-utils.mjs         # 页面通用工具（导航等待/元素文本/正文读取）
 │   ├── captcha.mjs            # 验证码处理（标准化/识别/平假名转换）
-│   ├── turnstile.mjs          # Turnstile 求解（参数构建/API 调用/token 注入）
+│   ├── turnstile.mjs          # Turnstile 求解（参数构建/API 调用/token 注入/多平台 failover）
 │   ├── renewal-status.mjs     # 续期结果持久化与健康检查
 │   ├── renewal-logic.mjs      # 续期业务纯逻辑（到期/提交结果/URL 构建）
 │   ├── notify.mjs             # Telegram 通知构建（消息文案/失败分类/下次执行估算）
@@ -129,11 +133,14 @@ graph TD
 
 | 路径 | 职责 | 入口/关键函数 |
 |------|------|---------------|
-| `xserver-vps-renew.mjs` | 编排入口（浏览器操作 + 流程控制 + 通知） | `main()`, `handleLogin()`, `checkRenewalNeeded()`, `handleCaptchaPage()` |
+| `xserver-vps-renew.mjs` | 编排入口（Chrome 启动 + 流程控制 + 通知） | `main()`, `finishWithSkip()` |
+| `src/panel-flow.mjs` | Xserver 面板业务流程（浏览器步骤） | `handleLogin()`, `ensureAgreementAccepted()`, `checkRenewalNeeded()`, `handleRenewalConfirm()`, `handleCaptchaPage()`, `navigateForCaptchaRetry()` |
+| `src/turnstile-flow.mjs` | Turnstile 浏览器交互（自然通过降级 + 求解后注入编排） | `waitForTurnstile()`, `waitForTurnstileToken()`, `clickTurnstileFallback()`, `getTurnstileToken()`, `humanMouseMove()` |
+| `src/page-utils.mjs` | 页面通用工具 | `waitForNav()`, `getText()`, `getBodyText()` |
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
-| `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()`, `readTurnstileWidgetParams()` |
+| `src/turnstile.mjs` | Turnstile 求解（参数构建/API 调用/token 注入/多平台 failover） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()`, `readTurnstileWidgetParams()`, `isTurnstileOutageError()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
-| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()`, `escapeHtml()`, `formatTokyoDateTime()`, `findChromePath()`, `cleanChromeLocks()` |
+| `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()`, `escapeHtml()`, `formatTokyoDateTime()`, `findChromePath()`, `cleanChromeLocks()`, `NOOP_LOGGER` |
 | `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()` |
 | `src/notify.mjs` | Telegram 通知构建（纯函数） | `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage`, `classifyRenewalFailure()`, `buildFailureHints()`, `buildProxyHint()`, `resolveNextRunAt()`, `parseNotifyDetail()`, `clampTelegramMessage()`, `formatProcessSteps()`, `listFailedTurnstileProviders()`, `FAILURE_CATEGORY_LABELS` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
@@ -287,14 +294,15 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（19 个测试文件，364 个用例）：
+- **已测试模块**（20 个测试文件，372 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
-  - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`
+  - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`、`extractTurnstileParams` / `readTurnstileWidgetParams`（属性名双名兼容）
+  - `src/page-utils.mjs` — `waitForNav`（成功/失败/默认 logger）、`getText`、`getBodyText`（含 evaluate 异常容错）
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
   - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取
   - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断
-  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`findChromePath`、`cleanChromeLocks`
-- **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）；`xserver-vps-renew.mjs` 为编排入口，浏览器步骤依赖真实页面，无单元覆盖
+  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`findChromePath`、`cleanChromeLocks`、`NOOP_LOGGER`
+- **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）；`src/panel-flow.mjs`、`src/turnstile-flow.mjs`、`xserver-vps-renew.mjs` 为浏览器步骤与编排入口，依赖真实页面，无单元覆盖（与原主脚本内联时一致）
 - **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%
 
 ---

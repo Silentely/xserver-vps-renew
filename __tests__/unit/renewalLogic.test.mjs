@@ -49,7 +49,7 @@ describe('isRenewalDue', () => {
     // 2026-07-11 20:00 JST = 11:00 UTC；到期日末 23:59:59 JST → 剩余约 4h
     const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
     expect(
-      isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-11', '2026-07-11', { nowMs }),
     ).toBe(true);
   });
 
@@ -57,7 +57,7 @@ describe('isRenewalDue', () => {
     // 2026-07-23 00:56 JST = 2026-07-22 15:56 UTC；到期 2026-07-24 日末 → 剩余约 47h
     const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0);
     expect(
-      isRenewalDue('2026-07-24', '2026-07-23', '2026-07-24', { nowMs }),
+      isRenewalDue('2026-07-24', '2026-07-23', { nowMs }),
     ).toBe(false);
   });
 
@@ -65,27 +65,27 @@ describe('isRenewalDue', () => {
     // 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；到期日末 → 剩余约 18h
     const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
     expect(
-      isRenewalDue('2026-07-11', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-11', '2026-07-11', { nowMs }),
     ).toBe(false);
   });
 
   it('仅日期：其他日期返回 false', () => {
     const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
     expect(
-      isRenewalDue('2026-07-20', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-20', '2026-07-11', { nowMs }),
     ).toBe(false);
   });
 
   it('空值返回 false', () => {
-    expect(isRenewalDue(null, '2026-07-11', '2026-07-12')).toBe(false);
-    expect(isRenewalDue('', '2026-07-11', '2026-07-12')).toBe(false);
+    expect(isRenewalDue(null, '2026-07-11')).toBe(false);
+    expect(isRenewalDue('', '2026-07-11')).toBe(false);
   });
 
   it('允许首尾空白', () => {
     // 2026-07-11 20:00 JST，到期日末 → 可续
     const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
     expect(
-      isRenewalDue(' 2026-07-11 ', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue(' 2026-07-11 ', '2026-07-11', { nowMs }),
     ).toBe(true);
   });
 
@@ -93,7 +93,7 @@ describe('isRenewalDue', () => {
     // now = 2026-07-11 10:00 JST = 01:00 UTC；expire 20:00 JST → 剩余 10h
     const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
     expect(
-      isRenewalDue('2026-07-11 20:00', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs }),
     ).toBe(true);
   });
 
@@ -101,7 +101,7 @@ describe('isRenewalDue', () => {
     // now = 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；expire 20:00 JST → 剩余 14h
     const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
     expect(
-      isRenewalDue('2026-07-11 20:00', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs }),
     ).toBe(false);
   });
 
@@ -109,14 +109,14 @@ describe('isRenewalDue', () => {
     // expire 10:00 JST，now 10:30 JST → 剩余 -0.5h
     const nowMs = Date.UTC(2026, 6, 11, 1, 30, 0);
     expect(
-      isRenewalDue('2026-07-11 10:00', '2026-07-11', '2026-07-12', { nowMs }),
+      isRenewalDue('2026-07-11 10:00', '2026-07-11', { nowMs }),
     ).toBe(true);
   });
 
   it('日本格式纯日期：明天到期不可续', () => {
     const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0); // 2026-07-23 00:56 JST
     expect(
-      isRenewalDue('2026年7月24日', '2026-07-23', '2026-07-24', { nowMs }),
+      isRenewalDue('2026年7月24日', '2026-07-23', { nowMs }),
     ).toBe(false);
   });
 });

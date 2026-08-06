@@ -159,11 +159,12 @@ describe('listTurnstileProviders', () => {
 });
 
 describe('solveTurnstileWithFailover', () => {
-  const logger = vi.fn();
+  const logger = { info: vi.fn(), debug: vi.fn() };
   const params = { sitekey: '0x4AAAA' };
 
   beforeEach(() => {
-    logger.mockReset();
+    logger.info.mockReset();
+    logger.debug.mockReset();
   });
 
   it('无 key 抛错', async () => {
@@ -344,7 +345,7 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
   });
 
   it('域名代理时 solve 日志提示且任务无 proxy 字段', async () => {
-    const logger = vi.fn();
+    const logger = { info: vi.fn(), debug: vi.fn() };
     // 通过 list + build 验证 task 不带 proxy（集成在 solve 前）
     const config = makeConfig({
       ANTICAPTCHA_API_KEY: 'a',
@@ -361,7 +362,7 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
       'https://ex.com', { sitekey: '0x4' }, config, logger,
       { maxFailuresPerProvider: 1, solveFn },
     );
-    const joined = logger.mock.calls.map((c) => c[0]).join('\n');
+    const joined = logger.info.mock.calls.map((c) => c[0]).join('\n');
     expect(joined).toMatch(/域名代理|Proxyless/);
   });
 });
