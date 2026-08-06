@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### 打磨（2026-08-06）
+- **cron 环境变量白名单防漂移测试**：新增 `env-whitelist.test.mjs`（4 用例）校验三处清单同步——主脚本 `CONFIG` 读取项 ⊆ `entrypoint.sh` cron-run.sh 白名单（防定时模式配置静默丢失）、白名单 ⊆ `.env.example`（防漏文档）、白名单无重复、`.env.example` 可配置项均被主脚本或 entrypoint 读取；`CRON_SCHEDULE`（#7 有意不导出）与 `CRON_SCHEDULE_DISPLAY` / `ENABLE_DIAGNOSTICS`（内部透传）列为预期例外
+- 验证：`node --check` + 21 文件 / 376 用例全绿
+
 ### 重构（2026-08-06）
 - **主脚本拆分（1638 → 795 行）**：Turnstile 浏览器交互层（`waitForTurnstile` / `waitForTurnstileToken` / `clickTurnstileFallback` / `getTurnstileToken` / `humanMouseMove`）下沉 `src/turnstile-flow.mjs`；Xserver 面板流程（登录 / 同意页 / 到期检查 / 续期确认 / 验证码提交 / 重试导航）下沉 `src/panel-flow.mjs`；页面工具（`waitForNav` / `getText` / `getBodyText`）下沉 `src/page-utils.mjs`；`main()` 仅保留编排、通知与状态持久化（新增 7 个 page-utils 用例）
 - **消除跨模块 magic string 重复**：`notify.mjs` 的 `isTurnstileAllProvidersFailed` 委托 `src/turnstile.mjs` 的 `isTurnstileOutageError` + `TURNSTILE_ALL_PROVIDERS_FAILED` 常量（原注释声称"避免循环依赖"但依赖图无环，纯属复制）；删伪理由注释

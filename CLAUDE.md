@@ -7,7 +7,8 @@
 | 日期 | 变更内容 |
 |------|----------|
 | 2026-08-06 | 打磨：Turnstile 参数属性双名兼容（`data-c-data`/`data-cdata` 等，防 Anti-Captcha cData 漏取）；抽取 `getBodyText`/`listFailedTurnstileProviders`/`FAILURE_CATEGORY_LABELS` 消除重复；`checkRenewalNeeded` 统一 `nowMs` 基准；修复 `resolveCaptchaRetryUrl` 的 `/index` 重复 `extend` 段路径 bug；登录失败抛错附带页面提示（19 文件 / 364 用例） |
-| 2026-08-06 | 代码质量重构：主脚本 1638→795 行（Turnstile UI 层 → `src/turnstile-flow.mjs`、面板流程 → `src/panel-flow.mjs`、页面工具 → `src/page-utils.mjs`）；消除 notify↔turnstile 跨模块 magic string 重复（委托 `isTurnstileOutageError`）；修复 Turnstile callback 双重触发；`extractTurnstileParams` 与 `readTurnstileWidgetParams` 共享属性名常量（单一来源）；结构化分级 logger 取代 `isNoisyModuleLog` 字符串嗅探（净删）；失败路径 outage 判定单次求值；`isRenewalDue` 移除死参数、`formatTokyoDateTime` 尊重 `TZ`（20 文件 / 372 用例） |
+| 2026-08-06 | 代码质量重构：主脚本 1638→795 行（Turnstile UI 层 → `src/turnstile-flow.mjs`、面板流程 → `src/panel-flow.mjs`、页面工具 → `src/page-utils.mjs`）；消除 notify↔turnstile 跨模块 magic string 重复（委托 `isTurnstileOutageError`）；修复 Turnstile callback 双重触发；`extractTurnstileParams` 与 `readTurnstileWidgetParams` 共享属性名常量（单一来源）；结构化分级 logger 取代 `isNoisyModuleLog` 字符串嗅探（净删）；失败路径 outage 判定单次求值；`isRenewalDue` 移除死参数、`formatTokyoDateTime` 尊重 `TZ`；新增 cron 白名单防漂移测试（20 文件 / 372 用例） |
+| 2026-08-06 | 防漂移：`env-whitelist.test.mjs` 校验 cron-run.sh 白名单 ↔ 主脚本 CONFIG ↔ .env.example 三处同步（21 文件 / 376 用例） |
 | 2026-08-05 | 修复：官方新增「個人情報の取り扱いについて」同意页（`/xapanel/myaccount/agreement`），登录后未同意即被重定向导致误判「未找到免费 VPS」；新增 `ensureAgreementAccepted` / 用户脚本 `handleAgreement` 自动勾选 `#agree_flag_1` 并提交；自动处理无效时（同意页改版/未进入面板页）发 `buildManualConfirmNotifyMessage` 提醒用户人工确认后重跑容器；`checkRenewalNeeded` 增加表格等待与页面结构诊断（诊断日志定位到本根因）（19 文件 / 359 用例） |
 | 2026-08-04 | 修复：`finishWithSkip` 越界引用 try 块内 `page`，导致「无需续期」场景双通知（skip+failure）且退出码 1；`page` 改显式传参（19 文件 / 356 用例全绿） |
 | 2026-08-04 | 重构：拆分 `src/notify.mjs`（Telegram 通知构建）；utils 收纳 `escapeHtml`/`findChromePath`/`cleanChromeLocks`/`formatTokyoDateTime`；主脚本去除死重导出与模块包装层 |
@@ -294,7 +295,7 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（20 个测试文件，372 个用例）：
+- **已测试模块**（21 个测试文件，376 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`、`extractTurnstileParams` / `readTurnstileWidgetParams`（属性名双名兼容）
   - `src/page-utils.mjs` — `waitForNav`（成功/失败/默认 logger）、`getText`、`getBodyText`（含 evaluate 异常容错）
@@ -302,6 +303,7 @@ npm run test:watch
   - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取
   - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断
   - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`findChromePath`、`cleanChromeLocks`、`NOOP_LOGGER`
+  - **配置同步防漂移**：`env-whitelist.test.mjs` — cron-run.sh 白名单 ↔ 主脚本 CONFIG ↔ .env.example 三处清单一致性（含 #7 有意排除项与内部透传例外）
 - **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）；`src/panel-flow.mjs`、`src/turnstile-flow.mjs`、`xserver-vps-renew.mjs` 为浏览器步骤与编排入口，依赖真实页面，无单元覆盖（与原主脚本内联时一致）
 - **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%
 
