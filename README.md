@@ -12,7 +12,7 @@
 - ✅ 自动检测免费 VPS 到期状态，进入剩余 ≤12 小时窗口时执行续期
 - ✅ **Puppeteer Stealth + rebrowser** 反检测技术栈
 - ✅ **浏览器指纹优化** - 基于真实浏览器指纹数据，提升 Turnstile 通过率
-- ✅ **图形验证码识别** - Keras 模型 API（Cloud Run，准确率 95%+；内置默认端点，可自建覆盖）
+- ✅ **图形验证码识别** - Keras 模型 API（Cloud Run；内置默认端点，可自建覆盖）
 - ✅ **平假名智能转换** - 自动识别并转换日语平假名数字验证码
 - ✅ Cloudflare Turnstile 人机验证（**多平台 failover**）：
   - **CapSolver**（推荐主平台）：`CAPSOLVER_API_KEY`，`AntiTurnstileTaskProxyLess`；[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)
@@ -91,8 +91,8 @@ node xserver-vps-renew.mjs
 **Keras 模型 API**（Cloud Run 部署）：
 - 使用训练好的 Keras 模型识别日文平假名数字验证码
 - 部署在 Google Cloud Run（无服务器）
-- 准确率：95%+
-- 响应速度：0.5 秒
+- 高识别准确率
+- 秒级响应
 - 成本：完全免费（Cloud Run 免费额度内）
 - 自动识别失败重试（最多 3 次）
 
@@ -208,6 +208,19 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 | `RENEWAL_STATUS_FILE` | `/data/chrome-profile/renewal-status.json` | 续期记录持久化文件路径（与 Chrome 配置同卷） |
 | `ALERT_AFTER_FAILURES` | `3` | 连续失败达到此次值时，Telegram 告警升级为【告警升级】 |
 
+### 可选 - 高级设置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CHROME_PATH` | 自动检测 | Chrome 可执行文件路径（本地运行）；macOS / Linux 路径示例见 `.env.example` |
+| `CHROME_USER_DATA` | `/data/chrome-profile` | Chrome 用户数据目录（本地运行） |
+| `NAVIGATION_TIMEOUT_MS` | `30000` | 页面导航超时（毫秒） |
+| `TURNSTILE_TIMEOUT_MS` | `60000` | Turnstile 自然通过等待超时（毫秒） |
+| `TURNSTILE_API_TIMEOUT_MS` | `120000` | Turnstile API 求解轮询超时（毫秒） |
+| `CAPTCHA_MAX_RETRY` | `3` | 图形验证码识别最大重试次数 |
+| `NOTIFY_NEXT_RUN_HOURS` | `6` | 成功通知中「下次执行」的估算间隔（小时）；外部平台定时拉起容器时建议与平台调度一致 |
+| `ENABLE_DIAGNOSTICS` | 未启用 | 设为 `true` 时容器启动阶段运行 `diagnostics.sh` 环境诊断 |
+
 ## 🏗️ 项目结构
 
 ```
@@ -231,7 +244,9 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 ├── entrypoint.sh                  # 容器入口
 ├── diagnostics.sh                 # 容器环境诊断脚本
 ├── vitest.config.mjs              # 测试配置
+├── renovate.json                  # 自动依赖更新配置
 ├── .env.example                   # 环境变量模板
+├── .trivyignore                   # Trivy 镜像扫描忽略清单
 ├── .github/workflows/
 │   └── docker-publish.yml         # CI：自动构建 + 测试 + 覆盖率门禁 + 镜像推送
 ├── CHANGELOG.md                   # 变更日志
@@ -325,39 +340,16 @@ npm run test:watch
 
 ## 🐛 故障排查
 
-### 图形验证码识别失败
+完整的症状对照、原因与处置见 [RUNBOOK.md 故障排查手册](RUNBOOK.md)（常见错误表、Anti-Captcha 域名代理专项、回滚、凭据轮换等）。以下仅列最高频的两类：
 
-**症状**：日志中出现 `认证に失敗しました`（认证失败）
+- 日志出现 `認証に失敗しました`：多为图形验证码识别错误，或 Turnstile Proxyless 求解的出口 IP 与浏览器不一致（Anti-Captcha + 域名代理时）。按 RUNBOOK「常见错误」表逐项排查。
+- Turnstile 无法通过 / 成功率极低：最常见原因是未配置 `CAPSOLVER_API_KEY`，Docker 下自然通过几乎不可用。配置至少 1 家打码平台并确认余额。
 
-**原因**：图形验证码识别错误（6 位平假名数字）
-
-**解决方法**：
-1. 确认 `CAPTCHA_API` 可达（默认公共端点或自建 Cloud Run）
-2. 检查 Cloud Run 服务是否正常运行（冷启动时可能 503）
-3. 查看日志中的识别结果，连续失败可稍后重试
-
-### Turnstile 无法自动通过 / 成功率极低
-
-**症状**：
-- 启动日志：`未配置 CAPSOLVER_API_KEY（必须）：Turnstile 人机验证将依赖自然通过，成功率极低...`
-- 或：`Turnstile 等待超时` / `未配置 Turnstile 求解 API`
-
-**可能原因**：
-1. **未配置 `CAPSOLVER_API_KEY`（最常见）** — 自然通过在 Docker 中几乎不可用
-2. CapSolver 余额不足或密钥无效
-3. IP 地址被 Cloudflare 标记
-4. Docker 环境 GPU / 指纹信息异常
-
-**解决方法**：
-1. **至少配置 1 家** Turnstile key（推荐 `CAPSOLVER_API_KEY`，[注册邀请链接](https://dashboard.capsolver.com/passport/register?inviteCode=qMhzQIY_e_aG)）并重启容器
-2. **强烈建议再配** `ANTICAPTCHA_API_KEY`（[Anti-Captcha 邀请链接](https://getcaptchasolution.com/4isxcbvw0n)）实现 failover
-3. 检查各打码平台余额是否充足
-4. 可选：配置住宅代理；也可改用/加配 `YESCAPTCHA_API_KEY` / `TWOCAPTCHA_API_KEY`
-5. 若收到【最高级告警·删机风险】：请**当日手动登录官网续期**，勿只等脚本
+若收到【最高级告警·删机风险】：请**当日手动登录官网续期**，勿只等脚本。
 
 ## 💰 成本估算
 
-| 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（约 30 次） |
+| 服务 | 用途 | 免费额度 | 超额成本 | 每月成本（约 30 次续期） |
 |------|------|---------|---------|---------------------|
 | Keras 模型 API | 验证码识别（Cloud Run） | 有免费额度 | $0 | **$0** |
 | CapSolver | Turnstile（推荐主平台） | — | ~$0.002/次 | **~$0.06** |
