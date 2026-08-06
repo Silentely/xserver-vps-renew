@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### 打磨（2026-08-06）
+- **Turnstile widget 参数属性名双名兼容**：`extractTurnstileParams` 现同时读取 `data-c-data`/`data-chl-page-data`（官方注入写法）与 `data-cdata`/`data-chlpagedata`（社区常用写法），抽出纯函数 `readTurnstileWidgetParams`，避免 Anti-Captcha 任务的 `cData`/`chlPageData` 在部分页面漏取（新增 4 用例）
+- **去重**：`handleCaptchaPage` 复用 `getTurnstileToken` 检查预填 token，消除重复遍历；抽取 `getBodyText` 统一 4 处页面正文读取；抽取 `listFailedTurnstileProviders` 统一「熔断平台提取」（主脚本过程摘要与 `formatTurnstileNotifyLine` 共用）；失败分类标签表单一来源 `FAILURE_CATEGORY_LABELS`；`recognizeCaptcha` 去除与下层的重复开始/成功日志
+- **一致性**：`checkRenewalNeeded` 剩余小时与到期判定统一 `nowMs` 时间基准，避免跨秒边界判定不一致
+- **修复**：`resolveCaptchaRetryUrl` 的 `/index` 替换不再重复拼接 `extend` 段（原产出 `.../extend/extend/conf` 错误路径）；登录失败抛错附带页面错误提示，便于 Telegram 通知诊断
+- 验证：`node --check` + 19 文件 / 364 用例全绿（新增 5 用例），覆盖率门禁达标（branches 62.5% / lines 54.6%，阈值 25% / 28%）
+
 ### 修复（2026-08-05）
 - **官方新增「個人情報の取り扱いについて」同意页导致误判「未找到免费 VPS」**
   - 现象：2026-08-05 起登录成功后面板各页均被重定向至 `/xapanel/myaccount/agreement/index`（官方因网络オウル レジストラ业务移管新增的强制同意页）；未同意时 `goto /xapanel/xvps/index` 也被弹回，VPS 列表永不出现 → `no_free_vps`。代码逻辑自项目初始未变，8/4 重构前后一致，属官方页面变更而非代码回归

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 const {
   extractTurnstileParams,
+  readTurnstileWidgetParams,
 } = await import('../../src/turnstile.mjs');
 
 // 构造 mock page 对象
@@ -115,5 +116,61 @@ describe('extractTurnstileParams', () => {
     const page = createMockPage();
 
     expect(() => extractTurnstileParams(page)).not.toThrow();
+  });
+
+  describe('readTurnstileWidgetParams（纯函数，属性名双名兼容）', () => {
+    const makeEl = (attrs) => ({
+      getAttribute: (name) => (name in attrs ? attrs[name] : null),
+    });
+
+    it('读取官方写法 data-c-data / data-chl-page-data', () => {
+      const el = makeEl({
+        'data-sitekey': '0x4AAA',
+        'data-action': 'login',
+        'data-c-data': 'cdata-val',
+        'data-chl-page-data': 'chl-val',
+        'data-callback': 'onTurnstileSuccess',
+      });
+      expect(readTurnstileWidgetParams(el)).toEqual({
+        sitekey: '0x4AAA',
+        action: 'login',
+        cData: 'cdata-val',
+        chlPageData: 'chl-val',
+        callbackName: 'onTurnstileSuccess',
+      });
+    });
+
+    it('读取社区写法 data-cdata / data-chlpagedata', () => {
+      const el = makeEl({
+        'data-sitekey': '0x4BBB',
+        'data-cdata': 'legacy-cd',
+        'data-chlpagedata': 'legacy-chl',
+      });
+      expect(readTurnstileWidgetParams(el)).toEqual({
+        sitekey: '0x4BBB',
+        action: '',
+        cData: 'legacy-cd',
+        chlPageData: 'legacy-chl',
+        callbackName: '',
+      });
+    });
+
+    it('两种写法并存时官方写法优先', () => {
+      const el = makeEl({
+        'data-sitekey': '0x4CCC',
+        'data-c-data': 'official',
+        'data-cdata': 'legacy',
+      });
+      expect(readTurnstileWidgetParams(el).cData).toBe('official');
+    });
+
+    it('无属性或元素非法时返回空对象', () => {
+      expect(readTurnstileWidgetParams(null)).toEqual({
+        sitekey: '', action: '', cData: '', chlPageData: '', callbackName: '',
+      });
+      expect(readTurnstileWidgetParams({})).toEqual({
+        sitekey: '', action: '', cData: '', chlPageData: '', callbackName: '',
+      });
+    });
   });
 });

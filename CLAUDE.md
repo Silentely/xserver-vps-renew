@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-08-06 | 打磨：Turnstile 参数属性双名兼容（`data-c-data`/`data-cdata` 等，防 Anti-Captcha cData 漏取）；抽取 `getBodyText`/`listFailedTurnstileProviders`/`FAILURE_CATEGORY_LABELS` 消除重复；`checkRenewalNeeded` 统一 `nowMs` 基准；修复 `resolveCaptchaRetryUrl` 的 `/index` 重复 `extend` 段路径 bug；登录失败抛错附带页面提示（19 文件 / 364 用例） |
 | 2026-08-05 | 修复：官方新增「個人情報の取り扱いについて」同意页（`/xapanel/myaccount/agreement`），登录后未同意即被重定向导致误判「未找到免费 VPS」；新增 `ensureAgreementAccepted` / 用户脚本 `handleAgreement` 自动勾选 `#agree_flag_1` 并提交；自动处理无效时（同意页改版/未进入面板页）发 `buildManualConfirmNotifyMessage` 提醒用户人工确认后重跑容器；`checkRenewalNeeded` 增加表格等待与页面结构诊断（诊断日志定位到本根因）（19 文件 / 359 用例） |
 | 2026-08-04 | 修复：`finishWithSkip` 越界引用 try 块内 `page`，导致「无需续期」场景双通知（skip+failure）且退出码 1；`page` 改显式传参（19 文件 / 356 用例全绿） |
 | 2026-08-04 | 重构：拆分 `src/notify.mjs`（Telegram 通知构建）；utils 收纳 `escapeHtml`/`findChromePath`/`cleanChromeLocks`/`formatTokyoDateTime`；主脚本去除死重导出与模块包装层 |
@@ -79,7 +80,7 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（19 个文件，356 个用例）
+└── __tests__/unit/             # 单元测试（19 个文件，364 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
@@ -130,11 +131,11 @@ graph TD
 |------|------|---------------|
 | `xserver-vps-renew.mjs` | 编排入口（浏览器操作 + 流程控制 + 通知） | `main()`, `handleLogin()`, `checkRenewalNeeded()`, `handleCaptchaPage()` |
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
-| `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()` |
+| `src/turnstile.mjs` | Turnstile 求解（多平台 failover + 浏览器操作） | `listTurnstileProviders()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()`, `readTurnstileWidgetParams()` |
 | `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()`, `escapeHtml()`, `formatTokyoDateTime()`, `findChromePath()`, `cleanChromeLocks()` |
 | `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()` |
-| `src/notify.mjs` | Telegram 通知构建（纯函数） | `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage`, `classifyRenewalFailure()`, `buildFailureHints()`, `buildProxyHint()`, `resolveNextRunAt()`, `parseNotifyDetail()`, `clampTelegramMessage()`, `formatProcessSteps()` |
+| `src/notify.mjs` | Telegram 通知构建（纯函数） | `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage`, `classifyRenewalFailure()`, `buildFailureHints()`, `buildProxyHint()`, `resolveNextRunAt()`, `parseNotifyDetail()`, `clampTelegramMessage()`, `formatProcessSteps()`, `listFailedTurnstileProviders()`, `FAILURE_CATEGORY_LABELS` |
 | `browser-fingerprint-patch.js` | 浏览器指纹伪装（WebGL/Canvas/Plugins/Connection 等） | `injectBrowserFingerprint(page)` |
 | `turnstile-patch/content.js` | 修复 CDP 导致的 MouseEvent.screenX/screenY 异常 | Chrome 扩展 content script |
 | `entrypoint.sh` | Docker 容器入口（单次模式 / 定时模式 / supercronic 调度） | `run_renew()`, `cleanup()` |
@@ -286,7 +287,7 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（19 个测试文件，356 个用例）：
+- **已测试模块**（19 个测试文件，364 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`
   - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`

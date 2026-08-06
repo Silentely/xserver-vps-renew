@@ -84,6 +84,7 @@ import {
   isTurnstileAllProvidersFailed,
   clampTelegramMessage,
   resolveTurnstileProviderLabel,
+  listFailedTurnstileProviders,
   classifyRenewalFailure,
   resolveNextRunAt,
   DEFAULT_NEXT_RUN_INTERVAL_HOURS,
@@ -127,6 +128,9 @@ puppeteer.use(StealthPlugin());
 
 // 真实浏览器调试收集的 UA (Chrome 149 Edge on macOS)
 const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
+
+/** 浏览器窗口/视口尺寸（与真实调试分辨率一致；启动参数与 defaultViewport 共用） */
+const VIEWPORT = { width: 1440, height: 900 };
 
 /** 状态文件路径（从环境变量读取） */
 const RENEWAL_STATUS_FILE = process.env.RENEWAL_STATUS_FILE || DEFAULT_STATUS_FILE;
@@ -359,6 +363,14 @@ async function getText(page, selector) {
   return page.evaluate((e) => e.textContent.trim(), el);
 }
 
+/**
+ * 读取当前页面正文文本（统一容错：evaluate 异常时返回空串）
+ * 多个流程（同意页校验/拦截检测/提交结果解析/页面诊断）共用
+ */
+async function getBodyText(page) {
+  return page.evaluate(() => document.body?.innerText || '').catch(() => '');
+}
+
 // ============================================================
 // 步骤 1：登录
 // ============================================================
@@ -380,9 +392,11 @@ async function handleLogin(page) {
     return { viaCookie: true };
   }
 
-  // 检查页面是否有登录错误
+  // 检查页面是否有登录错误（记录并在最终抛错时附带，便于 Telegram 诊断）
+  let loginErrorText = null;
   const errorText = await getText(page, '.errorMessage');
   if (errorText) {
+    loginErrorText = errorText;
     err(`登录页存在错误信息: ${errorText}`);
   }
 
@@ -404,7 +418,8 @@ async function handleLogin(page) {
   }
 
   if (page.url().includes('/login/')) {
-    throw new Error('登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。');
+    const pageHint = loginErrorText ? `（页面提示: ${loginErrorText}）` : '';
+    throw new Error(`登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。${pageHint}`);
   }
 
   log('登录成功！');
@@ -452,7 +467,7 @@ async function ensureAgreementAccepted(page) {
 
   // 校验：提交后仍停留在同意页说明同意未生效，直接抛错避免后续误判
   if (page.url().includes('/xapanel/myaccount/agreement')) {
-    const bodyText = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+    const bodyText = await getBodyText(page);
     err(`同意提交后仍停留在同意页，页面片段: ${bodyText.replace(/\s+/g, ' ').slice(0, 200)}`);
     throw manualConfirmError('個人情報同意提交失败，仍停留在同意页，需人工登录确认。');
   }
@@ -580,7 +595,9 @@ async function checkRenewalNeeded(page) {
   // 清理 VPS 信息中的多余空白符
   const cleanServerName = normalizeCellText(result.serverName);
   const cleanPlan = normalizeCellText(result.plan);
-  const remainingHours = getRemainingHours(result.expireDate);
+  // 统一时间基准：剩余小时与到期判定使用同一 nowMs，避免跨秒边界判定不一致
+  const nowMs = Date.now();
+  const remainingHours = getRemainingHours(result.expireDate, nowMs);
 
   log(
     `VPS: ${cleanServerName ?? '未找到'}`
@@ -591,7 +608,7 @@ async function checkRenewalNeeded(page) {
 
   // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
   // 纯日期按东京日末估算剩余小时，不再把「明天到期」一律判为可续（#5）
-  if (!isRenewalDue(result.expireDate, today, tomorrow)) {
+  if (!isRenewalDue(result.expireDate, today, tomorrow, { nowMs })) {
     const remainingLabel =
       remainingHours != null ? `剩余约 ${remainingHours.toFixed(1)}h` : '剩余时间未知';
     const reasonDetail =
@@ -682,7 +699,7 @@ async function handleRenewalConfirm(page, renewUrl) {
  * @returns {Promise<null | { status: 'window_blocked', reason: string, retryAfter: string|null }>}
  */
 async function detectBlockedPage(page) {
-  const pageText = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+  const pageText = await getBodyText(page);
   const detection = detectRenewalWindowBlocked(pageText, page.url());
   if (!detection.blocked) return null;
   log(`⏳ 官方拦截：${detection.reason}`);
@@ -1043,17 +1060,9 @@ async function handleCaptchaPage(page, options = {}) {
       if (!imgDataUri) throw new Error('未找到验证码图片。');
 
       // 优化：在验证码识别期间，并行检查 Turnstile 是否已提前通过
-      let turnstileCheckPromise = null;
+      // （复用 getTurnstileToken，避免重复实现「找有值 cf-turnstile-response」逻辑）
+      const turnstileCheckPromise = getTurnstileToken(page).then((tkn) => Boolean(tkn));
       let turnstileAlreadyPassed = false;
-
-      // 启动 Turnstile 提前检查（不阻塞验证码识别）
-      turnstileCheckPromise = page.evaluate(() => {
-        const fields = document.querySelectorAll('[name="cf-turnstile-response"]');
-        for (const field of fields) {
-          if (field.value) return true;
-        }
-        return false;
-      }).catch(() => false);
 
       // 识别验证码（并行进行 Turnstile 检查）
       const code = await recognizeCaptcha(imgDataUri, CONFIG.CAPTCHA_API, moduleLog);
@@ -1095,7 +1104,7 @@ async function handleCaptchaPage(page, options = {}) {
 
       // 验证续期是否真正成功
       await sleep(2000);
-      const pageText = await page.evaluate(() => document.body.innerText);
+      const pageText = await getBodyText(page);
       const currentUrl = page.url();
 
       log(`📄 续期提交后页面 URL: ${currentUrl}`);
@@ -1295,7 +1304,7 @@ async function main() {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      '--window-size=1440,900',  // 🔧 优化：使用真实浏览器调试的分辨率
+      `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,  // 🔧 优化：使用真实浏览器调试的分辨率
       '--window-position=0,0',
       '--tz=Asia/Tokyo',         // 🔧 修正：Xserver 位于日本，使用东京时区
     ];
@@ -1330,7 +1339,7 @@ async function main() {
       userDataDir: CONFIG.CHROME_USER_DATA,
       headless: false,
       args: chromeArgs,
-      defaultViewport: { width: 1440, height: 900 },  // 🔧 优化：匹配启动参数
+      defaultViewport: VIEWPORT,  // 🔧 优化：匹配启动参数
     });
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
@@ -1452,10 +1461,7 @@ async function main() {
     if (captchaMeta.turnstileProvider) {
       const providerLabel = resolveTurnstileProviderLabel(captchaMeta.turnstileProvider)
         || captchaMeta.turnstileProvider;
-      const failedBefore = (captchaMeta.turnstileAttempts || [])
-        .filter((a) => a && a.success === false)
-        .map((a) => resolveTurnstileProviderLabel(a.provider) || a.provider)
-        .filter(Boolean);
+      const failedBefore = listFailedTurnstileProviders(captchaMeta.turnstileAttempts);
       if (failedBefore.length > 0) {
         pushStep(
           `Turnstile 由 ${providerLabel} 求解成功`

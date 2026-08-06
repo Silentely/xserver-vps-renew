@@ -301,7 +301,9 @@ export function buildRenewUrl(detailHref, expectedOrigin) {
 export function resolveCaptchaRetryUrl(currentUrl) {
   if (!currentUrl || typeof currentUrl !== 'string') return '';
   if (currentUrl.includes('/conf')) return currentUrl;
-  return currentUrl.replace('/do', '/conf').replace('/index', '/extend/conf');
+  // index 段 → conf 段：官方路径为 .../freevps/extend/index → .../freevps/extend/conf
+  // （原实现 /index → /extend/conf 会把 extend 段重复拼接成 .../extend/extend/conf）
+  return currentUrl.replace('/do', '/conf').replace('/index', '/conf');
 }
 
 /**

@@ -294,6 +294,20 @@ export function resolveTurnstileProviderLabel(name) {
 }
 
 /**
+ * 提取 failover 尝试中失败（熔断）的平台展示名列表
+ * 主脚本过程摘要与 formatTurnstileNotifyLine 共用，避免重复实现
+ * @param {{ provider?: string, success?: boolean }[]|null|undefined} attempts
+ * @returns {string[]} 已熔断平台名（转标签后去空）
+ */
+export function listFailedTurnstileProviders(attempts) {
+  if (!Array.isArray(attempts)) return [];
+  return attempts
+    .filter((a) => a && a.success === false)
+    .map((a) => resolveTurnstileProviderLabel(a.provider) || a.provider)
+    .filter(Boolean);
+}
+
+/**
  * 格式化 Turnstile 求解摘要（通知用）
  * @param {object} [opts]
  * @param {string|null} [opts.providerName] - 最终成功的平台
@@ -304,12 +318,7 @@ export function formatTurnstileNotifyLine({ providerName, attempts } = {}) {
   const label = resolveTurnstileProviderLabel(providerName);
   if (!label) return '';
   const name = escapeHtml(label);
-  const failed = Array.isArray(attempts)
-    ? attempts
-      .filter((a) => a && a.success === false)
-      .map((a) => resolveTurnstileProviderLabel(a.provider))
-      .filter(Boolean)
-    : [];
+  const failed = listFailedTurnstileProviders(attempts);
   if (failed.length === 0) {
     return `🔐 Turnstile: ${name}`;
   }
@@ -446,33 +455,26 @@ export function buildSkipNotifyMessage({
     ? `🔓 距可续窗口: ${escapeHtml(untilWindowText)}`
     : '';
 
-  if (mode === TG_NOTIFY_DETAIL_COMPACT) {
-    return clampTelegramMessage([
-      title,
-      '',
-      `⏰ 执行时间: ${time}`,
-      `🖥️ 服务器名: ${name}`,
-      `📅 当前到期: ${expire}`,
-      `⏳ 剩余时间: ${remaining}`,
-      ...(untilWindowLine ? [untilWindowLine] : []),
-      ...(durationLine ? [durationLine] : []),
-      `⏭️ 下次执行: ${next}`,
-    ].join('\n'));
-  }
-
   const lines = [
     title,
     '',
     `⏰ 执行时间: ${time}`,
     `🖥️ 服务器名: ${name}`,
-    `📦 VPS 规格: ${escapeHtml(plan || (isNoVps ? '—' : '未知'))}`,
+  ];
+  // 规格与判定详情仅 full 模式展示；其余行两模式共用（compact 由 formatProcessSteps 自动省略过程）
+  if (mode === TG_NOTIFY_DETAIL_FULL) {
+    lines.push(`📦 VPS 规格: ${escapeHtml(plan || (isNoVps ? '—' : '未知'))}`);
+  }
+  lines.push(
     `📅 当前到期: ${expire}`,
     `⏳ 剩余时间: ${remaining}`,
-    ...(untilWindowLine ? [untilWindowLine] : []),
-    `📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`,
-    ...(durationLine ? [durationLine] : []),
-    `⏭️ 下次执行: ${next}`,
-  ];
+  );
+  if (untilWindowLine) lines.push(untilWindowLine);
+  if (mode === TG_NOTIFY_DETAIL_FULL) {
+    lines.push(`📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`);
+  }
+  if (durationLine) lines.push(durationLine);
+  lines.push(`⏭️ 下次执行: ${next}`);
 
   return clampTelegramMessage(lines.join('\n') + formatProcessSteps(processSteps, mode));
 }
@@ -544,6 +546,18 @@ export const FAILURE_CATEGORY = {
   UNKNOWN: 'unknown',
 };
 
+/** 分类 → 中文标签（classifyRenewalFailure 与 buildFailureNotifyMessage 共用，唯一来源） */
+export const FAILURE_CATEGORY_LABELS = {
+  [FAILURE_CATEGORY.TURNSTILE_OUTAGE]: 'Turnstile 全平台熔断',
+  [FAILURE_CATEGORY.TURNSTILE]: 'Turnstile 求解',
+  [FAILURE_CATEGORY.CAPTCHA]: '图形验证码',
+  [FAILURE_CATEGORY.LOGIN]: '登录失败',
+  [FAILURE_CATEGORY.CONFIG]: '配置错误',
+  [FAILURE_CATEGORY.TIMEOUT]: '超时/网络',
+  [FAILURE_CATEGORY.BUSINESS]: '业务限制',
+  [FAILURE_CATEGORY.UNKNOWN]: '其他错误',
+};
+
 /**
  * 分类续期失败原因（纯函数，供日志与 Telegram 共用）
  * @param {object} [opts]
@@ -564,7 +578,7 @@ export function classifyRenewalFailure({
   })) {
     return {
       category: FAILURE_CATEGORY.TURNSTILE_OUTAGE,
-      label: 'Turnstile 全平台熔断',
+      label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TURNSTILE_OUTAGE],
     };
   }
 
@@ -576,42 +590,42 @@ export function classifyRenewalFailure({
     /配置校验失败|配置对象无效|代理配置不完整|PROXY_TYPE|PROXY_PORT|CAPTCHA_API 协议|CAPTCHA_API 不是/.test(msg)
     || code === 'CONFIG_INVALID'
   ) {
-    return { category: FAILURE_CATEGORY.CONFIG, label: '配置错误' };
+    return { category: FAILURE_CATEGORY.CONFIG, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.CONFIG] };
   }
 
   if (
     /登录失败|请检查 XSERVER_MEMBER_ID|请检查 XSERVER_PASSWORD|凭据|认证に失敗|会員ID|パスワード/.test(msg)
   ) {
-    return { category: FAILURE_CATEGORY.LOGIN, label: '登录失败' };
+    return { category: FAILURE_CATEGORY.LOGIN, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.LOGIN] };
   }
 
   if (
     /信用卡|カード|決済|無料枠|需要绑定|需要注册|需要设置支付/.test(msg)
   ) {
-    return { category: FAILURE_CATEGORY.BUSINESS, label: '业务限制' };
+    return { category: FAILURE_CATEGORY.BUSINESS, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.BUSINESS] };
   }
 
   if (
     /验证码|Keras|CAPTCHA_API|imgSrc|平假名|识别失败|无效结果/.test(msg)
     && !/Turnstile|cf-turnstile|打码平台/.test(msg)
   ) {
-    return { category: FAILURE_CATEGORY.CAPTCHA, label: '图形验证码' };
+    return { category: FAILURE_CATEGORY.CAPTCHA, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.CAPTCHA] };
   }
 
   if (
     /Turnstile|cf-turnstile|令牌|sitekey|打码平台|CapSolver|AntiCaptcha|YesCaptcha|2Captcha/.test(msg)
     || code.startsWith('TURNSTILE_')
   ) {
-    return { category: FAILURE_CATEGORY.TURNSTILE, label: 'Turnstile 求解' };
+    return { category: FAILURE_CATEGORY.TURNSTILE, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TURNSTILE] };
   }
 
   if (
     /超时|timeout|Timeout|Navigation|net::|ERR_|ECONN|ENOTFOUND|网络异常|AbortError/i.test(msg)
   ) {
-    return { category: FAILURE_CATEGORY.TIMEOUT, label: '超时/网络' };
+    return { category: FAILURE_CATEGORY.TIMEOUT, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TIMEOUT] };
   }
 
-  return { category: FAILURE_CATEGORY.UNKNOWN, label: '其他错误' };
+  return { category: FAILURE_CATEGORY.UNKNOWN, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.UNKNOWN] };
 }
 
 /**
@@ -767,18 +781,8 @@ export function buildFailureNotifyMessage({
     errorCode,
     turnstileAllProvidersFailed: multiProviderOutage,
   });
-  const categoryLabels = {
-    [FAILURE_CATEGORY.TURNSTILE_OUTAGE]: 'Turnstile 全平台熔断',
-    [FAILURE_CATEGORY.TURNSTILE]: 'Turnstile 求解',
-    [FAILURE_CATEGORY.CAPTCHA]: '图形验证码',
-    [FAILURE_CATEGORY.LOGIN]: '登录失败',
-    [FAILURE_CATEGORY.CONFIG]: '配置错误',
-    [FAILURE_CATEGORY.TIMEOUT]: '超时/网络',
-    [FAILURE_CATEGORY.BUSINESS]: '业务限制',
-    [FAILURE_CATEGORY.UNKNOWN]: '其他错误',
-  };
-  const failureMeta = failureCategory && categoryLabels[failureCategory]
-    ? { category: failureCategory, label: categoryLabels[failureCategory] }
+  const failureMeta = failureCategory && FAILURE_CATEGORY_LABELS[failureCategory]
+    ? { category: failureCategory, label: FAILURE_CATEGORY_LABELS[failureCategory] }
     : autoClassified;
 
   const title = multiProviderOutage

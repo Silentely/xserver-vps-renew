@@ -229,6 +229,14 @@ describe('resolveCaptchaRetryUrl', () => {
     );
   });
 
+  it('/index 替换为 /conf（不重复 extend 段）', () => {
+    expect(resolveCaptchaRetryUrl(
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511',
+    )).toBe(
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf?id_vps=40091511',
+    );
+  });
+
   it('空值返回空字符串', () => {
     expect(resolveCaptchaRetryUrl('')).toBe('');
     expect(resolveCaptchaRetryUrl(null)).toBe('');

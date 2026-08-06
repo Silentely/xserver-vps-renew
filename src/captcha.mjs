@@ -186,6 +186,8 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = (
 
 /**
  * 验证码识别入口（Keras 模型 API）
+ * 仅做入参校验并转发下层实现；日志统一由 recognizeCaptchaWithKerasAPI 输出，
+ * 避免两层重复打「开始识别/识别成功」（下层日志含 API 地址，信息更完整）
  * @param {string} imgSrc - Base64 编码的验证码图片（data:image/... 格式）
  * @param {string} apiUrl - Keras API 地址
  * @param {Function} logger - 日志函数
@@ -203,12 +205,8 @@ export async function recognizeCaptcha(imgSrc, apiUrl, logger = () => {}) {
     throw new Error('未配置 Keras 模型 API（需要 CAPTCHA_API）');
   }
 
-  logger('使用 Keras 模型 API 识别验证码...');
-
   try {
-    const code = await recognizeCaptchaWithKerasAPI(imgSrc, apiUrl, logger);
-    logger(`✅ 验证码识别成功: ${code}`);
-    return code;
+    return await recognizeCaptchaWithKerasAPI(imgSrc, apiUrl, logger);
   } catch (error) {
     logger(`❌ Keras 模型 API 识别失败: ${error.message}`);
     throw error;

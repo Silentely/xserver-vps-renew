@@ -277,6 +277,37 @@ export function getTurnstileProvider(config) {
 }
 
 /**
+ * 从 Turnstile widget DOM 元素读取参数（纯函数，浏览器/Node 双端可用）
+ *
+ * cData / chlPageData 属性名存在两种写法，需双名兼容：
+ * - 官方/widget 内部注入：data-c-data / data-chl-page-data
+ * - 社区常见自动化实现：data-cdata / data-chlpagedata
+ * 仅读其一会在某些页面漏取，导致 Anti-Captcha 任务的 cData/chlPageData 恒为空。
+ * 注意：page.evaluate 内联实现需与此保持同步（浏览器端无法引用模块作用域函数）。
+ * @param {object} el - 具备 getAttribute 方法的 DOM 元素（或 mock）
+ * @returns {object} - { sitekey, action, cData, chlPageData, callbackName }
+ */
+export function readTurnstileWidgetParams(el) {
+  if (!el || typeof el.getAttribute !== 'function') {
+    return { sitekey: '', action: '', cData: '', chlPageData: '', callbackName: '' };
+  }
+  const firstAttr = (names) => {
+    for (const n of names) {
+      const v = el.getAttribute(n);
+      if (v) return v;
+    }
+    return '';
+  };
+  return {
+    sitekey: el.getAttribute('data-sitekey') || '',
+    action: el.getAttribute('data-action') || '',
+    cData: firstAttr(['data-c-data', 'data-cdata']),
+    chlPageData: firstAttr(['data-chl-page-data', 'data-chlpagedata']),
+    callbackName: el.getAttribute('data-callback') || '',
+  };
+}
+
+/**
  * 从页面提取 Turnstile 参数
  * @param {object} page - Puppeteer page 对象
  * @param {Function} logger - 日志函数
@@ -287,11 +318,19 @@ export async function extractTurnstileParams(page, logger = () => {}) {
     const el = document.querySelector('.cf-turnstile[data-sitekey]')
       || document.querySelector('[data-sitekey]');
     if (!el) return null;
+    // 与 Node 侧 readTurnstileWidgetParams 保持一致（双名兼容，见其注释）
+    const firstAttr = (names) => {
+      for (const n of names) {
+        const v = el.getAttribute(n);
+        if (v) return v;
+      }
+      return '';
+    };
     return {
       sitekey: el.getAttribute('data-sitekey') || '',
       action: el.getAttribute('data-action') || '',
-      cData: el.getAttribute('data-cdata') || '',
-      chlPageData: el.getAttribute('data-chlpagedata') || '',
+      cData: firstAttr(['data-c-data', 'data-cdata']),
+      chlPageData: firstAttr(['data-chl-page-data', 'data-chlpagedata']),
       callbackName: el.getAttribute('data-callback') || '',
     };
   });
