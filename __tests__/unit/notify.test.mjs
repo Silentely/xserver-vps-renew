@@ -659,6 +659,28 @@ describe('buildFailureNotifyMessage', () => {
     expect(msg).not.toContain('失败说明');
   });
 
+  it('full 与 compact 均展示下次检查时间（传入 nextRunAt 时）', () => {
+    for (const detail of ['full', 'compact']) {
+      const msg = buildFailureNotifyMessage({
+        errorMessage: 'boom',
+        executedAt: 't',
+        nextRunAt: '2026-08-07 22:00:00',
+        detail,
+      });
+      expect(msg).toContain('下次检查');
+      expect(msg).toContain('2026-08-07 22:00:00');
+    }
+  });
+
+  it('未传 nextRunAt 时不出现下次检查行', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'boom',
+      executedAt: 't',
+      detail: 'full',
+    });
+    expect(msg).not.toContain('下次检查');
+  });
+
   it('登录类失败使用登录处置建议', () => {
     const msg = buildFailureNotifyMessage({
       errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',

@@ -117,9 +117,13 @@ function t(text) {
             line-height: 1.5;
             box-shadow: 0 4px 14px rgba(0,0,0,0.25);
             max-width: 320px;
+            max-height: 40vh;
+            overflow-y: auto;
             word-break: break-word;
             opacity: 0;
             animation: vps-renewal-fadein 0.25s ease forwards;
+            /* 状态切换时平滑过渡背景色，避免生硬跳变 */
+            transition: background-color 0.3s ease, border-color 0.3s ease;
         }
         @keyframes vps-renewal-fadein {
             from { opacity: 0; transform: translateY(-4px); }
@@ -141,6 +145,12 @@ function t(text) {
         #vps-renewal-progress[data-state="info"] {
             background: #1e3a8a;
             border-color: #3b82f6;
+        }
+        /* 尊重系统「减少动态效果」偏好：禁用位移动画 */
+        @media (prefers-reduced-motion: reduce) {
+            #vps-renewal-progress {
+                animation: none;
+            }
         }
     `);
  
@@ -181,6 +191,9 @@ function t(text) {
         const statusEl = document.createElement('div');
         statusEl.id = 'vps-renewal-progress';
         statusEl.setAttribute('data-state', state || 'info');
+        // 无障碍：状态区域对读屏软件播报更新
+        statusEl.setAttribute('role', 'status');
+        statusEl.setAttribute('aria-live', 'polite');
         statusEl.textContent = t(message);
         document.body.appendChild(statusEl);
     }

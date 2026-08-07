@@ -237,8 +237,7 @@ export function escapeHtml(str) {
 
 /**
  * 格式化日志时间戳（YYYY-MM-DD HH:mm:ss，时区取 TZ 环境变量，默认 Asia/Tokyo）
- * 与 formatTokyoDateTime（zh-CN locale）不同：locale 无关、固定宽度，
- * 避免不同 Node 版本 toLocaleString 输出漂移（如年份格式/24 点制差异）
+ * locale 无关、固定宽度，避免不同 Node 版本 toLocaleString 输出漂移（如年份格式/24 点制差异）
  * @param {number|Date} [when=Date.now()]
  * @param {string} [tz=process.env.TZ || 'Asia/Tokyo']
  * @returns {string}
@@ -261,14 +260,14 @@ export function formatLogTimestamp(when = Date.now(), tz = process.env.TZ || 'As
 }
 
 /**
- * 按东京时区格式化日期时间（中文 locale）
- * 时区取 TZ 环境变量（与日志 ts() 一致），默认 Asia/Tokyo
+ * 按东京时区格式化日期时间（固定宽度 YYYY-MM-DD HH:mm:ss，与日志时间戳同一实现）
+ * 时区取 TZ 环境变量（与日志 ts() 一致），默认 Asia/Tokyo。
+ * 2026-08-07 起委托 formatLogTimestamp：通知与日志格式统一，便于 docker logs 对账。
  * @param {Date|number} [when=new Date()]
  * @returns {string}
  */
 export function formatTokyoDateTime(when = new Date()) {
-  const d = when instanceof Date ? when : new Date(when);
-  return d.toLocaleString('zh-CN', { timeZone: process.env.TZ || 'Asia/Tokyo' });
+  return formatLogTimestamp(when, process.env.TZ || 'Asia/Tokyo');
 }
 
 /**

@@ -577,6 +577,9 @@ export async function solveTurnstileViaAPI(
 
   const startTime = Date.now();
   const maxPolls = Math.max(1, Math.ceil(timeout / POLL_INTERVAL_MS));
+  // 瞬态异常/进度日志降噪：debug 模式下每 3s 一条会刷屏（120s 超时 ≈40 行），
+  // 进度每 5 轮输出一次；异常信号保留首次与每 5 次，便于观测又不淹没关键日志
+  let transientLogCount = 0;
 
   for (let i = 1; i <= maxPolls; i++) {
     if (Date.now() - startTime > timeout) {
@@ -596,12 +599,18 @@ export async function solveTurnstileViaAPI(
         FETCH_TIMEOUT_MS,
       );
     } catch (error) {
-      logger.debug(`${provider.name} getTaskResult 网络异常: ${error.message}，继续轮询...`);
+      transientLogCount++;
+      if (transientLogCount === 1 || transientLogCount % 5 === 0) {
+        logger.debug(`${provider.name} getTaskResult 网络异常: ${error.message}，继续轮询...`);
+      }
       continue;
     }
 
     if (!resultRes.ok) {
-      logger.debug(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
+      transientLogCount++;
+      if (transientLogCount === 1 || transientLogCount % 5 === 0) {
+        logger.debug(`${provider.name} getTaskResult HTTP 错误: ${resultRes.status}，继续轮询...`);
+      }
       continue;
     }
 
@@ -628,7 +637,10 @@ export async function solveTurnstileViaAPI(
       return { token, userAgent, providerName: provider.name };
     }
 
-    logger.debug(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
+    // 进度日志每 5 轮输出一次（debug 降噪）；最后一轮也输出便于核对轮数
+    if (i % 5 === 0 || i === maxPolls) {
+      logger.debug(`${provider.name} 轮询中 (${i}/${maxPolls})... 状态: ${resultData.status || 'processing'}`);
+    }
   }
 
   throw new Error(`${provider.name} 轮询次数耗尽，求解失败`);

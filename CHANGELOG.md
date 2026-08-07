@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 打磨（2026-08-07 · 迭代打磨）
+- **分阶段耗时日志**：主脚本 `pushStep` 每步日志附带耗时（距上一步/启动），`docker logs` 可直接定位慢环节（Chrome 启动 / 登录 / 验证码 / Turnstile）；通知中的执行步骤文本保持纯净不受影响
+- **提交后结果软等待**：`panel-flow` 新增 `waitForSubmissionResult`——提交后轮询页面直到命中明确「成功」信号即提前返回（正常路径提速），未命中则等待至 2s 上限（与原固定等待行为下限一致），避免成功页渲染完成前过早读到中间态而误判失败（新增 4 用例）
+- **Turnstile token 软等待**：`turnstile-flow` 注入 token 后固定 `sleep(2s)` 改为轮询 `cf-turnstile-response` 至 2s 上限——token 就绪立即继续，最坏路径不变
+- **通知时间格式统一**：`formatTokyoDateTime` 委托 `formatLogTimestamp`（固定宽度 `YYYY-MM-DD HH:mm:ss`）——通知与日志时间戳一致，`docker logs` 与 Telegram 对账不再因 zh-CN locale 的 `2026/8/7 18:10:49` 格式漂移而困扰
+- **失败通知补「下次检查」**：`buildFailureNotifyMessage` 新增 `nextRunAt` 行（compact/full 均展示）——失败后用户可预期下次自动重试时间，不必误以为需手动盯守
+- **Turnstile 轮询日志降噪**：debug 模式下轮询进度每 5 轮输出一次（原每 3s 一条，120s 超时 ≈40 行刷屏）；瞬态网络异常/HTTP 错误首次 + 每 5 次保留，信号不丢失
+- **启动日志上次运行摘要**：main 启动时输出上次运行结局（成功/失败/跳过 + 东京时间 + 连续失败/成功统计），cron 每次触发第一眼可见上次状态；首次运行输出提示
+- **用户脚本 UI/UX**（`xserver-renews.js`）：状态面板支持 `prefers-reduced-motion`（禁用位移动画）、长文本滚动（max-height 40vh + overflow-y）、状态色过渡动画（0.3s ease）、`role=status` + `aria-live=polite` 无障碍播报
+- **容器诊断增强**（`diagnostics.sh`）：新增「关键 API 连通性」探测——Keras 验证码识别端点与已配置的 Turnstile 打码平台 API 基址（冷启动超时/平台不可达为续期失败高频根因；GET 405 视为可达，仅验证连通）
+- 验证：`node --check` + 22 文件 / 410 用例全绿（新增 7 用例），覆盖率门禁达标；浏览器流程模块（panel-flow / turnstile-flow）沿用既有「依赖真实页面无单测」政策
+
 ### 打磨（2026-08-07）
 - **日志可观测性**：`emitLog` 输出增加 `[DEBUG]/[INFO]/[WARN]/[ERROR]` 级别标签，`docker logs` 可按级别过滤/采集；新增纯函数 `formatLogLine`（utils）锁定「时间戳 + 级别 + 消息」格式（error 自动补 ❌，消息已带不重复）；主脚本底部兜底「未捕获异常」也走统一日志格式（原裸 `console.error` 无时间戳）
 - **日志级别语义修正**：关键路径告警从 info 提级 warn——主脚本「未配置任何 Turnstile 打码平台」、failover「✖ 第 N 次失败」「⚡ 已熔断切换」（`LOG_LEVEL=warn` 下仍可见，避免静默熔断）；failover 测试 logger mock 补齐 `warn/error` 并对齐 `NOOP_LOGGER` 契约，新增 warn 断言

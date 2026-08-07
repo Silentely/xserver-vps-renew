@@ -404,6 +404,38 @@ export async function navigateForCaptchaRetry(page, currentUrl, renewUrl, { conf
 }
 
 /**
+ * 提交后轮询等待续期结果（替代固定 sleep(2000)）
+ * 每 intervalMs 读取一次页面正文与 URL 并评估：
+ * - 出现明确「成功」信号立即返回（正常路径提速）
+ * - 其余情况持续轮询至 timeoutMs（与原固定等待的行为下限一致），
+ *   避免在成功页渲染完成前过早读到中间态而误判失败
+ * @param {import('puppeteer').Page} page
+ * @param {{ timeoutMs?: number, intervalMs?: number, logger?: object }} [opts]
+ * @returns {Promise<{ pageText: string, currentUrl: string, evaluation: object }>}
+ */
+export async function waitForSubmissionResult(
+  page,
+  { timeoutMs = 2000, intervalMs = 400, logger = NOOP_LOGGER } = {},
+) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let pageText = '';
+  let currentUrl = '';
+  let evaluation = null;
+  while (Date.now() < deadline) {
+    pageText = await getBodyText(page);
+    currentUrl = page.url();
+    evaluation = evaluateSubmissionResult(pageText, currentUrl);
+    if (evaluation.status === 'success') break;
+    await sleep(intervalMs);
+  }
+  if (evaluation?.status === 'success') {
+    logger.debug(`续期结果轮询命中成功信号（${Date.now() - startedAt}ms 内）`);
+  }
+  return { pageText, currentUrl, evaluation };
+}
+
+/**
  * 验证码页面完整流程
  * @param {import('puppeteer').Page} page
  * @param {{ renewUrl?: string|null }} [options] - renewUrl 用于失败后回到 index?id_vps=
@@ -474,15 +506,10 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       logger.info(`提交完成，当前页面: ${page.url()}`);
 
-      // 验证续期是否真正成功
-      await sleep(2000);
-      const pageText = await getBodyText(page);
-      const currentUrl = page.url();
+      // 验证续期是否真正成功：轮询等待明确结果（成功信号提前返回，行为下限与原固定 2s 一致）
+      const { pageText, currentUrl, evaluation } = await waitForSubmissionResult(page, { logger });
 
       logger.info(`📄 续期提交后页面 URL: ${currentUrl}`);
-
-      // 纯函数解析提交结果（不输出 pageText，避免日志泄露）
-      const evaluation = evaluateSubmissionResult(pageText, currentUrl);
 
       if (evaluation.status === 'success') {
         logger.info(`✅ 页面确认续期成功！检测到: "${evaluation.matched}"`);

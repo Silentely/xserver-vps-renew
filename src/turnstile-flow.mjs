@@ -242,9 +242,15 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
       } else {
         logger.debug('未找到 Turnstile callback，已注入 input 元素');
       }
-      await sleep(2000);
-
-      const verifyToken = await getTurnstileToken(page, logger);
+      // 软等待 token 就绪（替代固定 2s）：注入后回调通常很快写入，成功时立即继续；
+      // 未写入则轮询至 2s 上限后按原逻辑处理（callback 可能已消费 token）
+      const tokenDeadline = Date.now() + 2000;
+      let verifyToken = '';
+      while (Date.now() < tokenDeadline) {
+        verifyToken = await getTurnstileToken(page, logger);
+        if (verifyToken) break;
+        await sleep(400);
+      }
       if (verifyToken) {
         logger.debug(`Turnstile token 已就绪，长度: ${verifyToken.length}`);
       } else {

@@ -350,7 +350,21 @@ describe('escapeHtml', () => {
 });
 
 describe('formatTokyoDateTime', () => {
-  it('返回非空字符串', () => {
-    expect(formatTokyoDateTime(Date.UTC(2026, 6, 11, 0, 0, 0))).toBeTruthy();
+  it('输出固定宽度 YYYY-MM-DD HH:mm:ss（与日志时间戳一致）', () => {
+    // 2026-07-10 15:00:00 UTC = 2026-07-11 00:00:00 JST
+    const utc = Date.UTC(2026, 6, 10, 15, 0, 0);
+    expect(formatTokyoDateTime(utc)).toBe('2026-07-11 00:00:00');
+  });
+
+  it('尊重 TZ 环境变量', () => {
+    const utc = Date.UTC(2026, 6, 10, 15, 0, 0);
+    const prev = process.env.TZ;
+    process.env.TZ = 'UTC';
+    try {
+      expect(formatTokyoDateTime(utc)).toBe('2026-07-10 15:00:00');
+    } finally {
+      if (prev === undefined) delete process.env.TZ;
+      else process.env.TZ = prev;
+    }
   });
 });

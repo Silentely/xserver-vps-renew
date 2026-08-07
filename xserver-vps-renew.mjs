@@ -340,6 +340,29 @@ async function main() {
     throw new Error(`配置校验失败: ${configErrors.join('；')}`);
   }
 
+  // 上次运行结果摘要：每次 cron 触发第一眼看到上次结局与连续统计
+  // （读取失败由 getRenewalStatus 内部 warn 记录，不阻断启动）
+  {
+    const status = getRenewalStatus(
+      RENEWAL_STATUS_FILE,
+      ALERT_AFTER_CONSECUTIVE_FAILURES,
+      LOGGER,
+    );
+    const last = status.lastRecord;
+    if (last) {
+      const outcome = last.skipped ? '跳过' : (last.success ? '成功' : '失败');
+      const when = last.timestamp ? formatTokyoDateTime(new Date(last.timestamp)) : '时间未知';
+      const errBrief = last.errorMessage ? `，${last.errorMessage.slice(0, 100)}${last.errorMessage.length > 100 ? '…' : ''}` : '';
+      const newDate = last.newExpireDate ? `，新到期 ${last.newExpireDate}` : '';
+      log(
+        `上次运行: ${outcome}（${when}）${newDate}${errBrief}`
+        + ` | 连续失败 ${status.consecutiveFailures} / 连续成功 ${status.consecutiveSuccesses}`,
+      );
+    } else {
+      logDebug('上次运行: 无历史记录（首次运行）');
+    }
+  }
+
   {
     const tsProviders = listTurnstileProviders(CONFIG);
     if (tsProviders.length === 0) {
@@ -369,9 +392,15 @@ async function main() {
   let browser = null;
   // 执行过程摘要（try 内外共享，失败通知也能附带已完成步骤）
   const processSteps = [];
+  // 分阶段计时：日志里每步附带「距上一步/启动」耗时，便于 docker logs 定位慢环节；
+  // 通知中的步骤文本保持纯净，不受耗时影响
+  let lastStepAtMs = startedAtMs;
   const pushStep = (step) => {
+    const now = Date.now();
+    const stepMs = now - lastStepAtMs;
+    lastStepAtMs = now;
     processSteps.push(step);
-    log(step);
+    log(`${step}（耗时 ${formatDurationMs(stepMs)}）`);
   };
   /** 本轮已知的 VPS 上下文（失败通知复用） */
   let knownVps = {
@@ -775,6 +804,7 @@ async function main() {
         remainingHours: knownVps.remainingHours,
         durationMs: elapsedMs(),
         failureCategory: failureMeta.category,
+        nextRunAt: resolveNextRun(),
       }), { kind: 'failure' });
     }
     process.exitCode = 1;

@@ -778,6 +778,7 @@ export function buildFailureHints({
  * @param {number|null} [params.durationMs]
  * @param {string|null} [params.durationText]
  * @param {string} [params.failureCategory] - 预分类；缺省时自动 classify
+ * @param {string} [params.nextRunAt] - 下次自动检查时间（通知失败后告知重试预期）
  * @returns {string}
  */
 export function buildFailureNotifyMessage({
@@ -801,6 +802,7 @@ export function buildFailureNotifyMessage({
   durationMs = null,
   durationText = null,
   failureCategory = null,
+  nextRunAt = null,
 }) {
   const mode = parseNotifyDetail(detail);
   const multiProviderOutage = isTurnstileAllProvidersFailed({
@@ -841,6 +843,8 @@ export function buildFailureNotifyMessage({
 
   const safeError = escapeHtml(truncateNotifyText(errorMessage || '未知错误'));
   const durationLine = formatDurationNotifyLine(durationMs, durationText);
+  // 失败后告知下次自动检查时间，避免用户误以为需一直手动盯守
+  const nextRunLine = nextRunAt ? `⏭️ 下次检查: ${escapeHtml(nextRunAt)}` : '';
   const remainingLine = remainingHours != null && Number.isFinite(Number(remainingHours))
     ? `⏳ 剩余时间: ${escapeHtml(formatRemainingHours(remainingHours))}`
     : '';
@@ -861,6 +865,7 @@ export function buildFailureNotifyMessage({
     `💥 错误信息: <code>${safeError}</code>\n` +
     `${turnstileFailLine ? `${turnstileFailLine}\n` : ''}` +
     `${durationLine ? `${durationLine}\n` : ''}` +
+    `${nextRunLine ? `${nextRunLine}\n` : ''}` +
     `${multiProviderOutage || failureMeta.category === FAILURE_CATEGORY.TURNSTILE_OUTAGE
       ? `🛑 <b>Turnstile 打码平台已全部失败</b>${failedLabels.length
         ? `（${escapeHtml(failedLabels.join(' → '))}）`

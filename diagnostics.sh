@@ -40,4 +40,27 @@ echo "  磁盘剩余: $(df -h /tmp 2>/dev/null | awk 'NR==2{print $4}' || echo '
 echo "  Chrome: $(google-chrome-stable --version 2>/dev/null || echo '未安装')"
 echo "  Node: $(node --version 2>/dev/null || echo '未安装')"
 
+echo "🎯 关键 API 连通性:"
+# Keras 验证码识别（Cloud Run）：冷启动/不可达是续期失败高频根因。
+# GET 可能返回 405（端点仅接受 POST），有 HTTP 响应即视为可达。
+if [ -n "${CAPTCHA_API:-}" ]; then
+  curl -s -o /dev/null -w "  CAPTCHA_API (Keras): HTTP %{http_code} (%{time_total}s)\n" \
+    "$CAPTCHA_API" --connect-timeout 10 || echo "  CAPTCHA_API (Keras): 失败"
+else
+  echo "  CAPTCHA_API (Keras): 未设置（使用内置默认端点）"
+fi
+
+# Turnstile 打码平台：按已配置 key 探测对应 API 基址可达性
+while IFS='|' read -r provider base envvar; do
+  if [ -n "${!envvar:-}" ]; then
+    curl -s -o /dev/null -w "  ${provider}: HTTP %{http_code} (%{time_total}s)\n" \
+      "$base" --connect-timeout 10 || echo "  ${provider}: 失败"
+  fi
+done <<'PROVIDERS'
+CapSolver|https://api.capsolver.com|CAPSOLVER_API_KEY
+AntiCaptcha|https://api.anti-captcha.com|ANTICAPTCHA_API_KEY
+YesCaptcha|https://api.yescaptcha.com|YESCAPTCHA_API_KEY
+2Captcha|https://api.2captcha.com|TWOCAPTCHA_API_KEY
+PROVIDERS
+
 echo "====== 诊断结束 ======"
