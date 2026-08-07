@@ -16,11 +16,21 @@ export const DEFAULT_ALERT_AFTER_FAILURES = 3;
 const DEFAULT_MAX_RECORDS = 30;
 
 /**
+ * 默认控制台 logger（未注入 logger 参数时使用，保持向后兼容）
+ * 与主脚本 LOGGER 同构：{ warn, error }；注入后时间戳/级别标签由主脚本统一输出
+ */
+const CONSOLE_LOGGER = {
+  warn: (msg) => console.warn(`[renewal-status] ${msg}`),
+  error: (msg) => console.error(`[renewal-status] ❌ ${msg}`),
+};
+
+/**
  * 读取续期状态历史
  * @param {string} filePath - 状态文件路径
+ * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
  * @returns {object} - { records: [...], lastRecord: object|null }
  */
-export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
+export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE, logger = CONSOLE_LOGGER) {
   try {
     const data = readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(data);
@@ -34,7 +44,7 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
   } catch (error) {
     // 文件不存在属于正常冷启动，静默返回空状态
     if (error.code !== 'ENOENT') {
-      console.warn(`[renewal-status] 读取状态文件异常: ${error.message}，重置为空记录`);
+      logger.warn(`读取状态文件异常: ${error.message}，重置为空记录`);
     }
     return { records: [], lastRecord: null };
   }
@@ -45,10 +55,11 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE) {
  * @param {object} record - 续期记录
  * @param {string} filePath - 状态文件路径
  * @param {number} maxRecords - 最大保留记录数
+ * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
  * @throws {Error} 目录不可写或写入失败时抛出
  */
-export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRecords = DEFAULT_MAX_RECORDS) {
-  const { records } = readRenewalStatus(filePath);
+export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRecords = DEFAULT_MAX_RECORDS, logger = CONSOLE_LOGGER) {
+  const { records } = readRenewalStatus(filePath, logger);
   records.push(record);
   const trimmed = records.slice(-Math.max(1, maxRecords));
   const dir = dirname(filePath);
@@ -58,7 +69,7 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
   } catch (error) {
     // 目录已存在时 mkdir 可能报错，后续 accessSync / write 会再次校验
     if (error.code !== 'EEXIST') {
-      console.warn(`[renewal-status] 创建目录 ${dir} 失败: ${error.message}`);
+      logger.warn(`创建目录 ${dir} 失败: ${error.message}`);
     }
   }
 
@@ -66,7 +77,7 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
     accessSync(dir, constants.W_OK);
   } catch {
     const msg = `目录 ${dir} 不可写，请检查挂载卷权限（容器内需 appuser 可写）`;
-    console.error(`[renewal-status] ❌ ${msg}`);
+    logger.error(msg);
     throw new Error(msg);
   }
 
@@ -79,7 +90,7 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
     renameSync(tmpPath, filePath);
   } catch (error) {
     const msg = `写入状态文件失败: ${error.message}`;
-    console.error(`[renewal-status] ❌ ${msg}`);
+    logger.error(msg);
     throw new Error(msg);
   }
 }
@@ -129,14 +140,34 @@ export function countConsecutiveFailures(records) {
 }
 
 /**
+ * 计算连续成功次数（从记录尾部向前统计）
+ * 跳过类记录（skipped=true）不计入成功也不中断连成功
+ * @param {Array} records - 续期记录数组
+ * @returns {number} - 连续成功次数
+ */
+export function countConsecutiveSuccesses(records) {
+  if (!Array.isArray(records) || records.length === 0) return 0;
+  let count = 0;
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i];
+    if (!rec || rec.skipped) continue;
+    if (rec.success) count++;
+    else break;
+  }
+  return count;
+}
+
+/**
  * 获取续期健康状态
  * @param {string} filePath - 状态文件路径
  * @param {number} alertThreshold - 连续失败告警阈值
- * @returns {object} - { healthy, lastRecord, lastSuccess, consecutiveFailures, totalRuns }
+ * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
+ * @returns {object} - { healthy, lastRecord, lastSuccess, consecutiveFailures, consecutiveSuccesses, totalRuns }
  */
-export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold = DEFAULT_ALERT_AFTER_FAILURES) {
-  const { records, lastRecord } = readRenewalStatus(filePath);
+export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold = DEFAULT_ALERT_AFTER_FAILURES, logger = CONSOLE_LOGGER) {
+  const { records, lastRecord } = readRenewalStatus(filePath, logger);
   const consecutiveFailures = countConsecutiveFailures(records);
+  const consecutiveSuccesses = countConsecutiveSuccesses(records);
   const lastSuccess = [...records].reverse().find((r) => r && r.success && !r.skipped) || null;
   const threshold = Number.isFinite(alertThreshold) && alertThreshold > 0
     ? alertThreshold
@@ -146,6 +177,7 @@ export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold 
     lastRecord,
     lastSuccess,
     consecutiveFailures,
+    consecutiveSuccesses,
     totalRuns: records.length,
   };
 }

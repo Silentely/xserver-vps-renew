@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 打磨（2026-08-07）
+- **日志可观测性**：`emitLog` 输出增加 `[DEBUG]/[INFO]/[WARN]/[ERROR]` 级别标签，`docker logs` 可按级别过滤/采集；新增纯函数 `formatLogLine`（utils）锁定「时间戳 + 级别 + 消息」格式（error 自动补 ❌，消息已带不重复）；主脚本底部兜底「未捕获异常」也走统一日志格式（原裸 `console.error` 无时间戳）
+- **日志级别语义修正**：关键路径告警从 info 提级 warn——主脚本「未配置任何 Turnstile 打码平台」、failover「✖ 第 N 次失败」「⚡ 已熔断切换」（`LOG_LEVEL=warn` 下仍可见，避免静默熔断）；failover 测试 logger mock 补齐 `warn/error` 并对齐 `NOOP_LOGGER` 契约，新增 warn 断言
+- **时间戳单源化**：新增 `formatLogTimestamp`（utils，locale 无关固定宽度 `YYYY-MM-DD HH:mm:ss`、`hourCycle: h23` 防午夜 24 点制），主脚本 `ts()` 委托之；`renewal-status.mjs` 读写/状态查询接入可选 logger 参数（默认控制台兜底），主脚本注入 `LOGGER` 后状态读写日志同样带时间戳与级别标签；启动摘要日志新增「时区」字段（兼作 env-whitelist 防漂移守卫的 `TZ` 读取点）
+- **通知文案**：「下次执行」统一为「下次检查」（成功/跳过通知，语义更准确）；成功通知新增「📈 已连续成功 N 次」——`renewal-status` 新增 `countConsecutiveSuccesses` 纯函数（跳过类不计入不中断），`getRenewalStatus` 增加 `consecutiveSuccesses` 字段；失败通知 `proxyHint` 为空时不再产生双空行
+- **Telegram 可靠性**：新增 `parseTelegramSendResult` 纯函数——Bot API 对「chat 不存在/被屏蔽」等逻辑错误返回 HTTP 200 + `{ok:false}`，原实现会误报「已发送」，现校验响应体并输出 `description`
+- **性能**：Turnstile 渲染等待与验证码图重试等待由固定 `sleep(2000/3000ms)` 改为「软等待」`waitForSelectorSoft`（page-utils 新纯函数）：selector 出现立即继续、超时最坏与原等待一致——正常路径提速，最坏路径不变
+- **浏览器指纹体检**：新增 `analyzeFingerprintHealth` 纯函数——`navigator.webdriver=true`（Stealth 失效最强信号）及设备内存/核心数异常时启动即 warn 告警
+- **用户脚本 UI**（`xserver-renews.js`）：状态面板升级为状态色方案（成功绿/错误红/警告琥珀/信息蓝），圆角/内边距/阴影/最大宽度/换行优化，新增淡入动画；错误/警告/成功路径的 9 处提示点按语义着色
+- 验证：`node --check` + 21 文件 / 403 用例全绿（新增 27 用例），覆盖率门禁达标（branches 63.9% / lines 57.1%，阈值 25% / 28%）；浏览器流程模块（panel-flow / turnstile-flow）沿用既有「依赖真实页面无单测」政策
+
 ### 打磨（2026-08-06）
 - **cron 环境变量白名单防漂移测试**：新增 `env-whitelist.test.mjs`（4 用例）校验三处清单同步——主脚本 `CONFIG` 读取项 ⊆ `entrypoint.sh` cron-run.sh 白名单（防定时模式配置静默丢失）、白名单 ⊆ `.env.example`（防漏文档）、白名单无重复、`.env.example` 可配置项均被主脚本或 entrypoint 读取；`CRON_SCHEDULE`（#7 有意不导出）与 `CRON_SCHEDULE_DISPLAY` / `ENABLE_DIAGNOSTICS`（内部透传）列为预期例外
 - 验证：`node --check` + 21 文件 / 376 用例全绿

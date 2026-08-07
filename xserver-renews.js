@@ -108,12 +108,39 @@ function t(text) {
             top: 10px;
             right: 10px;
             z-index: 10000;
-            background: #333;
+            background: #1f2937;
+            border: 1px solid #4b5563;
             color: white;
-            padding: 10px;
-            border-radius: 5px;
+            padding: 10px 14px;
+            border-radius: 8px;
             font-size: 12px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            line-height: 1.5;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+            max-width: 320px;
+            word-break: break-word;
+            opacity: 0;
+            animation: vps-renewal-fadein 0.25s ease forwards;
+        }
+        @keyframes vps-renewal-fadein {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* 状态色：成功 / 错误 / 警告 / 信息（默认 info） */
+        #vps-renewal-progress[data-state="success"] {
+            background: #065f46;
+            border-color: #10b981;
+        }
+        #vps-renewal-progress[data-state="error"] {
+            background: #7f1d1d;
+            border-color: #ef4444;
+        }
+        #vps-renewal-progress[data-state="warn"] {
+            background: #78350f;
+            border-color: #f59e0b;
+        }
+        #vps-renewal-progress[data-state="info"] {
+            background: #1e3a8a;
+            border-color: #3b82f6;
         }
     `);
  
@@ -146,24 +173,30 @@ function t(text) {
  
     /**
      * 创建一个状态提示元素并显示消息
+     * @param {string} message - 提示文案（经 t() 翻译）
+     * @param {'info'|'success'|'warn'|'error'} [state='info'] - 状态（决定背景色）
      */
-    function createStatusElement(message) {
+    function createStatusElement(message, state) {
         removeStatusElement(); // 先移除已有的元素
         const statusEl = document.createElement('div');
         statusEl.id = 'vps-renewal-progress';
+        statusEl.setAttribute('data-state', state || 'info');
         statusEl.textContent = t(message);
         document.body.appendChild(statusEl);
     }
  
     /**
      * 更新或移除状态提示元素
+     * @param {string} message - 提示文案（经 t() 翻译）
+     * @param {'info'|'success'|'warn'|'error'} [state='info'] - 状态（决定背景色）
      */
-    function updateStatusElement(message) {
+    function updateStatusElement(message, state) {
         const statusEl = document.getElementById('vps-renewal-progress');
         if (statusEl) {
+            statusEl.setAttribute('data-state', state || 'info');
             statusEl.textContent = t(message);
         } else {
-            createStatusElement(message);
+            createStatusElement(message, state);
         }
     }
  
@@ -209,7 +242,7 @@ function t(text) {
                                 submitBtn.click();
                             } else {
                                 console.warn(`${LOG_PREFIX} 无法找到登录表单或提交按钮。`);
-                                updateStatusElement("警告：无法提交登录表单，请手动登录。");
+                                updateStatusElement("警告：无法提交登录表单，请手动登录。", 'warn');
                             }
                         }
                     }, 500);
@@ -218,7 +251,7 @@ function t(text) {
                 }
             } catch (e) {
                 console.error(`${LOG_PREFIX} 自动登录失败: `, e);
-                updateStatusElement("自动登录失败，请手动登录。");
+                updateStatusElement("自动登录失败，请手动登录。", 'error');
             }
         } else {
             console.log(`${LOG_PREFIX} 未发现凭据或页面有错误信息，等待用户手动操作。`);
@@ -261,7 +294,7 @@ function t(text) {
  
             if (!row) {
                 console.log(`${LOG_PREFIX} 未找到免费VPS条目。`);
-                updateStatusElement("未找到免费VPS。");
+                updateStatusElement("未找到免费VPS。", 'warn');
                 return;
             }
  
@@ -278,7 +311,7 @@ function t(text) {
                 console.log(`${LOG_PREFIX} 条件满足：到期日为今天或明天（续期窗口剩余≤12h）。正在跳转到续期页面...`);
                 const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
                 if (detailLink && detailLink.href) {
-                    updateStatusElement("检测到即将过期，正在续期...");
+                    updateStatusElement("检测到即将过期，正在续期...", 'warn');
                     setTimeout(() => {
                         location.href = detailLink.href.replace('detail?id', 'freevps/extend/index?id_vps');
                     }, 1000);
@@ -287,12 +320,12 @@ function t(text) {
                 }
             } else {
                 console.log(`${LOG_PREFIX} 条件不满足：无需执行续期操作。`);
-                updateStatusElement("当前VPS无需续期。");
+                updateStatusElement("当前VPS无需续期。", 'success');
                 setTimeout(removeStatusElement, 3000);
             }
         } catch (e) {
             console.error(`${LOG_PREFIX} 在VPS管理主页处理出现错误:`, e);
-            updateStatusElement("检查续期状态出错，请刷新页面重试。");
+            updateStatusElement("检查续期状态出错，请刷新页面重试。", 'error');
         }
     }
  
@@ -319,7 +352,7 @@ function t(text) {
             }, 1000);
         } catch (e) {
             console.error(`${LOG_PREFIX} 续期确认按钮处理异常:`, e);
-            updateStatusElement("续期申请页面交互失败。");
+            updateStatusElement("续期申请页面交互失败。", 'error');
         }
     }
  
@@ -429,7 +462,7 @@ function t(text) {
             // 设置超时机制防止无限等待
             const timeoutId = setTimeout(() => {
                 console.error(`${LOG_PREFIX} Cloudflare Turnstile令牌生成超时，强制提交表单。`);
-                updateStatusElement("人机验证响应超时，强制提交...");
+                updateStatusElement("人机验证响应超时，强制提交...", 'warn');
                 submitForm();
             }, 15000);
  
@@ -454,7 +487,7 @@ function t(text) {
  
         } catch (error) {
             console.error(`${LOG_PREFIX} 处理验证码时发生错误:`, error);
-            updateStatusElement("验证码处理异常，请刷新页面重试。");
+            updateStatusElement("验证码处理异常，请刷新页面重试。", 'error');
         }
  
         // 提交表单逻辑

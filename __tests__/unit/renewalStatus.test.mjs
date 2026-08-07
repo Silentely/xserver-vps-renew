@@ -16,6 +16,7 @@ vi.mock('node:fs', () => mockFs);
 const {
   buildRenewalRecord,
   countConsecutiveFailures,
+  countConsecutiveSuccesses,
   readRenewalStatus,
   writeRenewalStatus,
   getRenewalStatus,
@@ -157,6 +158,40 @@ describe('countConsecutiveFailures', () => {
   });
 });
 
+describe('countConsecutiveSuccesses', () => {
+  it('空记录返回 0', () => {
+    expect(countConsecutiveSuccesses([])).toBe(0);
+    expect(countConsecutiveSuccesses(null)).toBe(0);
+  });
+
+  it('从尾部统计连续成功', () => {
+    const records = [
+      { success: false },
+      { success: true },
+      { success: true },
+    ];
+    expect(countConsecutiveSuccesses(records)).toBe(2);
+  });
+
+  it('最新记录失败时返回 0', () => {
+    const records = [
+      { success: true },
+      { success: true },
+      { success: false },
+    ];
+    expect(countConsecutiveSuccesses(records)).toBe(0);
+  });
+
+  it('跳过记录不计入也不中断连成功', () => {
+    const records = [
+      { success: false },
+      { success: true, skipped: true },
+      { success: true },
+    ];
+    expect(countConsecutiveSuccesses(records)).toBe(1);
+  });
+});
+
 describe('readRenewalStatus', () => {
   beforeEach(() => {
     mockFs.readFileSync.mockReset();
@@ -188,6 +223,14 @@ describe('readRenewalStatus', () => {
     const result = readRenewalStatus(TEST_FILE);
     expect(result.records).toEqual([]);
     expect(result.lastRecord).toBeNull();
+  });
+
+  it('解析失败时经注入 logger 输出警告', () => {
+    mockFs.readFileSync.mockReturnValue('not valid json');
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    readRenewalStatus(TEST_FILE, logger);
+    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn.mock.calls[0][0]).toContain('读取状态文件异常');
   });
 
   it('records 非数组时返回空状态', () => {
@@ -339,6 +382,7 @@ describe('getRenewalStatus', () => {
     const status = getRenewalStatus(TEST_FILE);
     expect(status.healthy).toBe(true);
     expect(status.consecutiveFailures).toBe(0);
+    expect(status.consecutiveSuccesses).toBe(1);
     expect(status.totalRuns).toBe(3);
   });
 

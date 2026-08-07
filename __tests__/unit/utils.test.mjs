@@ -8,9 +8,12 @@ import {
   parseLogLevel,
   parseEnvBool,
   shouldLog,
+  formatLogLine,
   NOOP_LOGGER,
   escapeHtml,
   formatTokyoDateTime,
+  formatLogTimestamp,
+  analyzeFingerprintHealth,
   TOKYO_OFFSET_MS,
   DEFAULT_LOG_LEVEL,
   LOG_LEVEL_DEBUG,
@@ -121,6 +124,85 @@ describe('parseLogLevel / shouldLog / NOOP_LOGGER', () => {
       NOOP_LOGGER.warn('x');
       NOOP_LOGGER.error('x');
     }).not.toThrow();
+  });
+});
+
+describe('formatLogLine', () => {
+  it('输出 时间戳 + [级别] + 消息', () => {
+    expect(formatLogLine('2026-08-07 12:00:00', 'info', '正在检查续期状态'))
+      .toBe('2026-08-07 12:00:00 [INFO] 正在检查续期状态');
+    expect(formatLogLine('2026-08-07 12:00:00', 'warn', '警告'))
+      .toBe('2026-08-07 12:00:00 [WARN] 警告');
+    expect(formatLogLine('2026-08-07 12:00:00', 'debug', '细节'))
+      .toBe('2026-08-07 12:00:00 [DEBUG] 细节');
+  });
+
+  it('error 消息未带 ❌ 时自动补充', () => {
+    expect(formatLogLine('t', 'error', '流程失败'))
+      .toBe('t [ERROR] ❌ 流程失败');
+  });
+
+  it('error 消息已带 ❌ 时不重复', () => {
+    expect(formatLogLine('t', 'error', '❌ 流程失败'))
+      .toBe('t [ERROR] ❌ 流程失败');
+  });
+
+  it('未知级别回退 [INFO]，空消息输出空内容', () => {
+    expect(formatLogLine('t', 'nope', 'x')).toBe('t [INFO] x');
+    expect(formatLogLine('t', 'info', null)).toBe('t [INFO] ');
+  });
+});
+
+describe('formatLogTimestamp', () => {
+  it('输出固定宽度 YYYY-MM-DD HH:mm:ss', () => {
+    const out = formatLogTimestamp();
+    expect(out).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('按东京时区转换（UTC 15:00 → JST 次日 00:00）', () => {
+    const utc = Date.UTC(2026, 6, 10, 15, 0, 0);
+    expect(formatLogTimestamp(utc, 'Asia/Tokyo')).toBe('2026-07-11 00:00:00');
+  });
+
+  it('午夜不出现 24 点制（h23）', () => {
+    const utc = Date.UTC(2026, 6, 10, 15, 30, 5);
+    expect(formatLogTimestamp(utc, 'Asia/Tokyo')).toBe('2026-07-11 00:30:05');
+  });
+
+  it('支持自定义时区', () => {
+    const utc = Date.UTC(2026, 6, 10, 15, 0, 0);
+    expect(formatLogTimestamp(utc, 'UTC')).toBe('2026-07-10 15:00:00');
+  });
+});
+
+describe('analyzeFingerprintHealth', () => {
+  it('webdriver=true 提示 stealth 失效风险', () => {
+    const risks = analyzeFingerprintHealth({ webdriver: true });
+    expect(risks.length).toBe(1);
+    expect(risks[0]).toContain('webdriver=true');
+  });
+
+  it('设备内存/核心数异常时提示', () => {
+    expect(analyzeFingerprintHealth({ deviceMemory: 0 }).length).toBe(1);
+    expect(analyzeFingerprintHealth({ hardwareConcurrency: 0 }).length).toBe(1);
+  });
+
+  it('健康指纹返回空数组', () => {
+    expect(analyzeFingerprintHealth({
+      webdriver: false,
+      deviceMemory: 8,
+      hardwareConcurrency: 8,
+    })).toEqual([]);
+  });
+
+  it('空值/缺省不误报', () => {
+    expect(analyzeFingerprintHealth({})).toEqual([]);
+    expect(analyzeFingerprintHealth()).toEqual([]);
+    expect(analyzeFingerprintHealth({
+      webdriver: false,
+      deviceMemory: 'N/A',
+      hardwareConcurrency: 'N/A',
+    })).toEqual([]);
   });
 });
 

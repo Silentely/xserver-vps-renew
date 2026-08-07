@@ -169,19 +169,19 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 | `TG_CHAT_ID` | 无 | Telegram Chat ID（从 @userinfobot 获取） |
 | `TG_NOTIFY_DETAIL` | `full` | 通知详细程度：`full`（完整摘要）/ `compact`（简洁摘要） |
 | `TG_NOTIFY_SKIP` | `true` | 是否推送「无需续期/跳过」通知；`false` 时仅成功/失败推送 |
-| `LOG_LEVEL` | `info` | 日志级别：`debug` / `info` / `warn` / `error`（排查时可设 `debug`） |
+| `LOG_LEVEL` | `info` | 日志级别：`debug` / `info` / `warn` / `error`（排查时可设 `debug`）；输出行含 `[DEBUG]/[INFO]/[WARN]/[ERROR]` 标签，可按级别 grep 过滤 |
 
 配置后**每次脚本执行结束都会推送**一条摘要（不限成功）。用 `TG_NOTIFY_DETAIL` 控制篇幅：
 
 | 模式 | 内容 |
 |------|------|
 | `full`（默认） | 关键字段 + 规格/判定说明/失败建议 + **执行过程步骤** |
-| `compact` | 仅关键状态（时间、服务器、到期/结果、下次执行），无过程列表 |
+| `compact` | 仅关键状态（时间、服务器、到期/结果、下次检查），无过程列表 |
 
 | 场景 | full | compact |
 |------|------|---------|
-| 续期成功 | 规格、原/新到期日、Turnstile、耗时、下次执行、过程步骤 | 服务器、新到期日、Turnstile、耗时、下次执行 |
-| 无需续期 | 规格、剩余时间、距可续窗口、判定原因、耗时、过程步骤 | 服务器、到期、剩余时间、距可续窗口、耗时、下次执行 |
+| 续期成功 | 规格、原/新到期日、Turnstile、连续成功次数、耗时、下次检查、过程步骤 | 服务器、新到期日、Turnstile、连续成功次数、耗时、下次检查 |
+| 无需续期 | 规格、剩余时间、距可续窗口、判定原因、耗时、过程步骤 | 服务器、到期、剩余时间、距可续窗口、耗时、下次检查 |
 | 续期失败 | 失败类型、服务器/规格/到期/剩余、错误（截断）、Turnstile、耗时、代理提示、**按类处置建议**、过程步骤 | 失败类型、服务器、错误、告警升级、耗时 |
 
 ### 可选 - 代理配置
@@ -218,7 +218,7 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 | `TURNSTILE_TIMEOUT_MS` | `60000` | Turnstile 自然通过等待超时（毫秒） |
 | `TURNSTILE_API_TIMEOUT_MS` | `120000` | Turnstile API 求解轮询超时（毫秒） |
 | `CAPTCHA_MAX_RETRY` | `3` | 图形验证码识别最大重试次数 |
-| `NOTIFY_NEXT_RUN_HOURS` | `6` | 成功通知中「下次执行」的估算间隔（小时）；外部平台定时拉起容器时建议与平台调度一致 |
+| `NOTIFY_NEXT_RUN_HOURS` | `6` | 成功通知中「下次检查」的估算间隔（小时）；外部平台定时拉起容器时建议与平台调度一致 |
 | `ENABLE_DIAGNOSTICS` | 未启用 | 设为 `true` 时容器启动阶段运行 `diagnostics.sh` 环境诊断 |
 
 ## 🏗️ 项目结构

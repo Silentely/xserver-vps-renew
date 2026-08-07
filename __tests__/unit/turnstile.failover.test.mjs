@@ -159,12 +159,15 @@ describe('listTurnstileProviders', () => {
 });
 
 describe('solveTurnstileWithFailover', () => {
-  const logger = { info: vi.fn(), debug: vi.fn() };
+  // 模块 logger 契约为 { info, debug, warn, error } 四方法（与 NOOP_LOGGER 对齐）
+  const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const params = { sitekey: '0x4AAAA' };
 
   beforeEach(() => {
     logger.info.mockReset();
     logger.debug.mockReset();
+    logger.warn.mockReset();
+    logger.error.mockReset();
   });
 
   it('无 key 抛错', async () => {
@@ -218,6 +221,10 @@ describe('solveTurnstileWithFailover', () => {
       { provider: 'CapSolver', success: false, failures: 3, lastError: 'CapSolver down 3' },
       { provider: 'AntiCaptcha', success: true, failures: 0 },
     ]);
+    // 失败/熔断为关键路径告警，应走 warn 级别（LOG_LEVEL=warn 时仍可见）
+    const warnJoined = logger.warn.mock.calls.map((c) => c[0]).join('\n');
+    expect(warnJoined).toMatch(/✖ CapSolver 第 \d+\/3 次失败/);
+    expect(warnJoined).toMatch(/已熔断/);
   });
 
   it('主平台第 2 次成功则不切换', async () => {

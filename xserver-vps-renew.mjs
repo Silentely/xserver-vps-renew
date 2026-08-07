@@ -64,6 +64,9 @@ import {
   parseLogLevel,
   parseEnvBool,
   shouldLog,
+  formatLogLine,
+  formatLogTimestamp,
+  analyzeFingerprintHealth,
   findChromePath,
   cleanChromeLocks,
   formatTokyoDateTime,
@@ -83,6 +86,7 @@ import {
   formatDurationMs,
   parseNotifyDetail,
   clampTelegramMessage,
+  parseTelegramSendResult,
   resolveTurnstileProviderLabel,
   listFailedTurnstileProviders,
   classifyRenewalFailure,
@@ -212,35 +216,19 @@ const HAS_PROXY = !!(CONFIG.PROXY_TYPE && CONFIG.PROXY_ADDRESS && CONFIG.PROXY_P
 // 🔧 优化：使用环境变量时区（默认东京时区），统一日志时间格式
 // ============================================================
 
-const LOG_TIMEZONE = process.env.TZ || 'Asia/Tokyo';
-
 /**
- * 格式化时间戳（按环境变量时区）
- * @returns {string} 格式化后的时间字符串（YYYY-MM-DD HH:mm:ss）
+ * 格式化时间戳（按环境变量时区，YYYY-MM-DD HH:mm:ss）
+ * 委托 utils.formatLogTimestamp 单一实现，避免与通知时间戳逻辑双份维护
  */
-const ts = () => {
-  const now = new Date();
-  return now.toLocaleString('ja-JP', {
-    timeZone: LOG_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  }).replace(/\//g, '-');
-};
+const ts = () => formatLogTimestamp();
 
 /** 按 LOG_LEVEL 输出；error 统一带 ❌ 前缀写 stderr（消息自身已带则不重复） */
 function emitLog(level, msg) {
   if (!shouldLog(CONFIG.LOG_LEVEL, level)) return;
   // 单次取时间戳：避免跨秒时同条日志出现两个不一致的时间（原实现最多调用 3 次 ts()）
-  const stamp = ts();
-  const text = String(msg ?? '');
-  const line = `${stamp} ${text}`;
+  const line = formatLogLine(ts(), level, msg);
   if (level === LOG_LEVEL_ERROR) {
-    console.error(text.startsWith('❌') ? line : `${stamp} ❌ ${text}`);
+    console.error(line);
     return;
   }
   if (level === LOG_LEVEL_WARN) {
@@ -304,6 +292,13 @@ async function notify(message, opts = {}) {
       return;
     }
 
+    // Telegram 对逻辑错误（chat 不存在/被屏蔽等）返回 200 + { ok:false }，需校验响应体
+    const sendResult = parseTelegramSendResult(await res.text().catch(() => ''));
+    if (!sendResult.ok) {
+      err(`Telegram 通知发送失败: ${sendResult.description}`);
+      return;
+    }
+
     log(`Telegram 通知已发送（${text.length} 字，模式 ${CONFIG.TG_NOTIFY_DETAIL}）`);
   } catch (e) {
     const reason = e.name === 'AbortError' ? '请求超时' : e.message;
@@ -317,7 +312,8 @@ async function notify(message, opts = {}) {
  */
 function persistRenewalRecord(record) {
   try {
-    writeRenewalStatus(record, RENEWAL_STATUS_FILE);
+    // 第 3 参 maxRecords 走默认值；第 4 参注入 LOGGER，让状态读写日志带时间戳/级别标签
+    writeRenewalStatus(record, RENEWAL_STATUS_FILE, undefined, LOGGER);
     log(`📝 续期记录已保存: ${RENEWAL_STATUS_FILE}`);
   } catch (e) {
     err(`续期记录保存失败: ${e.message}`);
@@ -333,6 +329,7 @@ async function main() {
   log('========== Xserver VPS 自动续期开始 ==========');
   log(
     `日志级别: ${CONFIG.LOG_LEVEL}`
+    + ` | 时区: ${process.env.TZ || 'Asia/Tokyo'}`
     + ` | 通知: ${CONFIG.TG_NOTIFY_DETAIL}`
     + `${CONFIG.TG_NOTIFY_SKIP ? '' : '（跳过类不推送）'}`
     + `${CONFIG.TG_BOT_TOKEN && CONFIG.TG_CHAT_ID ? ' | Telegram 已配置' : ' | Telegram 未配置'}`,
@@ -346,7 +343,7 @@ async function main() {
   {
     const tsProviders = listTurnstileProviders(CONFIG);
     if (tsProviders.length === 0) {
-      log('⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份');
+      logWarn('⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份');
     } else {
       const chain = tsProviders.map((p) => p.name).join(' → ');
       log(`Turnstile 多平台链路: ${chain}（每平台连续失败 ${CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES} 次后切换）`);
@@ -533,6 +530,10 @@ async function main() {
       language: navigator.language,
       webdriver: navigator.webdriver || false,
     }));
+    // 指纹体检：stealth 失效（webdriver=true）等高风险信号在启动时即告警
+    for (const risk of analyzeFingerprintHealth(fingerprint)) {
+      logWarn(`指纹体检: ${risk}`);
+    }
     logDebug(
       `浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB,`
       + ` hardwareConcurrency=${fingerprint.hardwareConcurrency},`
@@ -675,6 +676,13 @@ async function main() {
       newExpireDate,
     }));
 
+    // 含本轮在内的连续成功次数（持久化后读取，供通知展示「稳定运行」信号）
+    const { consecutiveSuccesses } = getRenewalStatus(
+      RENEWAL_STATUS_FILE,
+      ALERT_AFTER_CONSECUTIVE_FAILURES,
+      LOGGER,
+    );
+
     await notify(buildSuccessNotifyMessage({
       serverName: renewalData.vpsInfo.serverName,
       plan: renewalData.vpsInfo.plan,
@@ -688,6 +696,7 @@ async function main() {
       turnstileAttempts: captchaMeta.turnstileAttempts,
       durationMs: elapsedMs(),
       remainingHours: renewalData.remainingHours,
+      consecutiveSuccesses,
     }), { kind: 'success' });
     await page.close();
   } catch (e) {
@@ -715,7 +724,11 @@ async function main() {
     }));
 
     // 告警升级：连续失败达到阈值时发送升级告警
-    const { consecutiveFailures } = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES);
+    const { consecutiveFailures } = getRenewalStatus(
+      RENEWAL_STATUS_FILE,
+      ALERT_AFTER_CONSECUTIVE_FAILURES,
+      LOGGER,
+    );
     const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
 
     const antiProxyMode = resolveAntiCaptchaProxyMode(CONFIG);
@@ -788,7 +801,8 @@ async function main() {
 // 仅在直接执行时运行 main()
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((e) => {
-    console.error(`未捕获异常: ${e.message}`);
+    // 兜底路径也走统一日志格式（时间戳 + [ERROR] 标签），与 emitLog 输出一致
+    err(`未捕获异常: ${e.message}`);
     process.exitCode = 1;
   });
 }

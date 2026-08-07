@@ -9,6 +9,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NOOP_LOGGER } from './utils.mjs';
+import { waitForSelectorSoft } from './page-utils.mjs';
 import {
   listTurnstileProviders,
   extractTurnstileParams,
@@ -197,7 +198,13 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
   logger.debug(`检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
 
   logger.debug('等待 Turnstile 渲染...');
-  await sleep(3000);
+  // 软等待 iframe 出现替代固定 3s：渲染快时立即继续，慢时最坏仍等 3s（行为下限不变）
+  await waitForSelectorSoft(
+    page,
+    'iframe[src*="challenges.cloudflare.com"], .cf-turnstile iframe',
+    3000,
+    logger,
+  );
 
   try {
     await page.screenshot({ path: '/tmp/turnstile-before-solve.png', fullPage: false });

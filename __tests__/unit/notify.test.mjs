@@ -32,6 +32,7 @@ import {
   buildFailureHints,
   buildFailureNotifyMessage,
   buildProxyHint,
+  parseTelegramSendResult,
 } from '../../src/notify.mjs';
 
 describe('parseCronIntervalHours / estimateNextRunMs', () => {
@@ -207,6 +208,7 @@ describe('buildSuccessNotifyMessage', () => {
     expect(msg).toContain('续期成功');
     expect(msg).toContain('vps-1');
     expect(msg).toContain('2026-07-31');
+    expect(msg).toContain('下次检查');
   });
 
   it('HTML 特殊字符被转义', () => {
@@ -293,6 +295,29 @@ describe('buildSuccessNotifyMessage', () => {
     expect(msg).toContain('续期前剩余');
     expect(msg).toContain('约 8.5 小时');
   });
+
+  it('成功通知可附带连续成功次数（两模式均展示）', () => {
+    for (const detail of ['full', 'compact']) {
+      const msg = buildSuccessNotifyMessage({
+        serverName: 'vps-1',
+        executedAt: 't',
+        nextRunAt: 'n',
+        consecutiveSuccesses: 4,
+        detail,
+      });
+      expect(msg).toContain('已连续成功 4 次');
+    }
+  });
+
+  it('连续成功次数为空或 0 时不展示', () => {
+    const msg = buildSuccessNotifyMessage({
+      serverName: 'vps-1',
+      executedAt: 't',
+      nextRunAt: 'n',
+      consecutiveSuccesses: null,
+    });
+    expect(msg).not.toContain('已连续成功');
+  });
 });
 
 describe('formatTurnstileNotifyLine / resolveTurnstileProviderLabel', () => {
@@ -355,6 +380,7 @@ describe('buildSkipNotifyMessage', () => {
     expect(msg).toContain('距可续窗口');
     expect(msg).toContain('约 3.5 小时后可续');
     expect(msg).toContain('剩余≤12h 可续');
+    expect(msg).toContain('下次检查');
     expect(msg).toContain('执行过程');
     expect(msg).toContain('1. 登录成功');
   });
@@ -643,6 +669,42 @@ describe('buildFailureNotifyMessage', () => {
     expect(msg).toContain('登录失败');
     expect(msg).toContain('XSERVER_MEMBER_ID');
     expect(msg).not.toContain('验证码识别已自动重试');
+  });
+
+  it('proxyHint 为空时失败通知不产生多余空行', () => {
+    const msg = buildFailureNotifyMessage({
+      errorMessage: 'x',
+      executedAt: 't',
+      detail: 'full',
+      proxyHint: '',
+    });
+    // head 与失败说明之间应恰好一个空行（连续 3 个换行即出现双空行）
+    expect(msg).not.toContain('\n\n\n');
+    expect(msg).toContain('失败说明');
+  });
+});
+
+describe('parseTelegramSendResult', () => {
+  it('HTTP 200 + ok:true 视为发送成功', () => {
+    expect(parseTelegramSendResult('{"ok":true,"result":{"message_id":1}}'))
+      .toEqual({ ok: true, description: '' });
+    expect(parseTelegramSendResult({ ok: true })).toEqual({ ok: true, description: '' });
+  });
+
+  it('HTTP 200 + ok:false（chat 不存在/被屏蔽）识别为失败并带原因', () => {
+    expect(parseTelegramSendResult('{"ok":false,"error_code":400,"description":"chat not found"}'))
+      .toEqual({ ok: false, description: 'chat not found' });
+  });
+
+  it('非 JSON 响应识别为失败', () => {
+    const out = parseTelegramSendResult('<html>error</html>');
+    expect(out.ok).toBe(false);
+    expect(out.description).toContain('非 JSON');
+  });
+
+  it('空响应体识别为失败', () => {
+    expect(parseTelegramSendResult(null).ok).toBe(false);
+    expect(parseTelegramSendResult('').ok).toBe(false);
   });
 });
 

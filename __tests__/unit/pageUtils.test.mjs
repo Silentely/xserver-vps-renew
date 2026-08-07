@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { waitForNav, getText, getBodyText } from '../../src/page-utils.mjs';
+import { waitForNav, getText, getBodyText, waitForSelectorSoft } from '../../src/page-utils.mjs';
 
 describe('waitForNav', () => {
   it('导航成功返回 true', async () => {
@@ -61,5 +61,33 @@ describe('getBodyText', () => {
       evaluate: vi.fn().mockRejectedValue(new Error('Execution context destroyed')),
     };
     expect(await getBodyText(page)).toBe('');
+  });
+});
+
+describe('waitForSelectorSoft', () => {
+  it('元素在超时前出现时立即返回 true', async () => {
+    const page = {
+      waitForSelector: vi.fn().mockResolvedValue(true),
+    };
+    const logger = { debug: vi.fn() };
+    expect(await waitForSelectorSoft(page, 'img[src^="data:"]', 2000, logger)).toBe(true);
+    expect(page.waitForSelector).toHaveBeenCalledWith('img[src^="data:"]', { timeout: 2000 });
+    expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  it('超时未出现时返回 false 并记 debug 日志（不抛错）', async () => {
+    const page = {
+      waitForSelector: vi.fn().mockRejectedValue(new Error('timeout')),
+    };
+    const logger = { debug: vi.fn() };
+    expect(await waitForSelectorSoft(page, '.nope', 3000, logger)).toBe(false);
+    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('.nope'));
+  });
+
+  it('无 logger 时不报错（默认 NOOP_LOGGER）', async () => {
+    const page = {
+      waitForSelector: vi.fn().mockRejectedValue(new Error('timeout')),
+    };
+    await expect(waitForSelectorSoft(page, '.nope', 1000)).resolves.toBe(false);
   });
 });

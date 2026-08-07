@@ -337,6 +337,7 @@ export function formatTurnstileNotifyLine({ providerName, attempts } = {}) {
  * @param {number|null} [params.durationMs] - 本轮耗时（毫秒）
  * @param {string|null} [params.durationText] - 已格式化的耗时文案（优先于 durationMs）
  * @param {number|null} [params.remainingHours] - 续期前剩余小时（可选）
+ * @param {number|null} [params.consecutiveSuccesses] - 含本轮在内的连续成功次数（可选）
  * @returns {string}
  */
 export function buildSuccessNotifyMessage({
@@ -353,6 +354,7 @@ export function buildSuccessNotifyMessage({
   durationMs = null,
   durationText = null,
   remainingHours = null,
+  consecutiveSuccesses = null,
 }) {
   const mode = parseNotifyDetail(detail);
   const time = escapeHtml(executedAt || formatTokyoDateTime());
@@ -366,6 +368,10 @@ export function buildSuccessNotifyMessage({
   const remainingLine = remainingHours != null && Number.isFinite(Number(remainingHours))
     ? `⏳ 续期前剩余: ${escapeHtml(formatRemainingHours(remainingHours))}`
     : '';
+  // 连续成功（含本轮）≥1 时展示，给用户「自动化运行稳定」的直观信号
+  const streakLine = consecutiveSuccesses != null && Number(consecutiveSuccesses) >= 1
+    ? `📈 已连续成功 ${Number(consecutiveSuccesses)} 次`
+    : '';
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     return clampTelegramMessage(
@@ -374,8 +380,9 @@ export function buildSuccessNotifyMessage({
       `🖥️ 服务器名: ${name}\n` +
       `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
       `${turnstileLine ? `${turnstileLine}\n` : ''}` +
+      `${streakLine ? `${streakLine}\n` : ''}` +
       `${durationLine ? `${durationLine}\n` : ''}` +
-      `⏭️ 下次执行: ${next}`,
+      `⏭️ 下次检查: ${next}`,
     );
   }
 
@@ -388,8 +395,9 @@ export function buildSuccessNotifyMessage({
     `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
     `${remainingLine ? `${remainingLine}\n` : ''}` +
     `${turnstileLine ? `${turnstileLine}\n` : ''}` +
+    `${streakLine ? `${streakLine}\n` : ''}` +
     `${durationLine ? `${durationLine}\n` : ''}` +
-    `⏭️ 下次执行: ${next}` +
+    `⏭️ 下次检查: ${next}` +
     formatProcessSteps(processSteps, mode),
   );
 }
@@ -475,7 +483,7 @@ export function buildSkipNotifyMessage({
     lines.push(`📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`);
   }
   if (durationLine) lines.push(durationLine);
-  lines.push(`⏭️ 下次执行: ${next}`);
+  lines.push(`⏭️ 下次检查: ${next}`);
 
   return clampTelegramMessage(lines.join('\n') + formatProcessSteps(processSteps, mode));
 }
@@ -512,6 +520,34 @@ export function buildManualConfirmNotifyMessage({
     lines.push(`⏭️ 下次执行: ${nextRunAt}`);
   }
   return clampTelegramMessage(lines.join('\n'));
+}
+
+/**
+ * 解析 Telegram sendMessage 响应（纯函数）
+ * Bot API 对逻辑错误（chat 不存在、bot 被屏蔽等）返回 HTTP 200 + { ok:false, description }，
+ * 仅检查 HTTP 状态会误报「已发送」。
+ * @param {string|object|null|undefined} body - 响应体（JSON 字符串或已解析对象）
+ * @returns {{ ok: boolean, description: string }}
+ */
+export function parseTelegramSendResult(body) {
+  let data = body;
+  if (typeof body === 'string') {
+    try {
+      data = JSON.parse(body);
+    } catch {
+      return { ok: false, description: `响应非 JSON: ${body.slice(0, 100)}` };
+    }
+  }
+  if (!data || typeof data !== 'object') {
+    return { ok: false, description: '响应体为空或非对象' };
+  }
+  if (data.ok === false) {
+    return {
+      ok: false,
+      description: String(data.description || data.error_code || '未知错误'),
+    };
+  }
+  return { ok: true, description: '' };
 }
 
 /**
@@ -843,9 +879,11 @@ export function buildFailureNotifyMessage({
     captchaMaxRetry,
   });
 
+  // proxyHint 为空时避免产生多余空行（head 末尾恒有 \n，空提示只需补一个 \n 形成单一空行）
+  const hintBlock = proxyHint ? `\n${proxyHint}\n\n` : '\n';
   return clampTelegramMessage(
     head +
-    `\n${proxyHint}\n\n` +
+    hintBlock +
     failHints +
     formatProcessSteps(processSteps, mode),
   );

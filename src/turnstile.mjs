@@ -715,7 +715,8 @@ export async function solveTurnstileWithFailover(
           attempt: consecutiveFailures,
           error: lastError,
         });
-        logger.info(`✖ ${provider.name} 第 ${consecutiveFailures}/${maxFailuresPerProvider} 次失败: ${lastError}`);
+        // 失败为关键路径告警：warn 级别（LOG_LEVEL=warn 时仍可见，避免静默熔断）
+        logger.warn(`✖ ${provider.name} 第 ${consecutiveFailures}/${maxFailuresPerProvider} 次失败: ${lastError}`);
       }
     }
 
@@ -727,7 +728,7 @@ export async function solveTurnstileWithFailover(
     });
     const isLast = provider === providers[providers.length - 1];
     if (!isLast) {
-      logger.info(`⚡ ${provider.name} 已熔断（连续 ${maxFailuresPerProvider} 次失败），切换下一平台`);
+      logger.warn(`⚡ ${provider.name} 已熔断（连续 ${maxFailuresPerProvider} 次失败），切换下一平台`);
     }
   }
 

@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-08-07 | 打磨：日志增加 [DEBUG]/[INFO]/[WARN]/[ERROR] 级别标签（formatLogLine）；关键告警提级 warn（failover 失败/熔断）；时间戳单源化 formatLogTimestamp + renewal-status 接入 logger；通知「下次执行」→「下次检查」+ 成功通知「连续成功 N 次」（countConsecutiveSuccesses）；Telegram 响应体 ok:false 校验（parseTelegramSendResult）；Turnstile/验证码图等待改软等待 waitForSelectorSoft；指纹体检 analyzeFingerprintHealth；用户脚本状态面板状态色/动画（21 文件 / 403 用例） |
 | 2026-08-06 | 打磨：Turnstile 参数属性双名兼容（`data-c-data`/`data-cdata` 等，防 Anti-Captcha cData 漏取）；抽取 `getBodyText`/`listFailedTurnstileProviders`/`FAILURE_CATEGORY_LABELS` 消除重复；`checkRenewalNeeded` 统一 `nowMs` 基准；修复 `resolveCaptchaRetryUrl` 的 `/index` 重复 `extend` 段路径 bug；登录失败抛错附带页面提示（19 文件 / 364 用例） |
 | 2026-08-06 | 代码质量重构：主脚本 1638→795 行（Turnstile UI 层 → `src/turnstile-flow.mjs`、面板流程 → `src/panel-flow.mjs`、页面工具 → `src/page-utils.mjs`）；消除 notify↔turnstile 跨模块 magic string 重复（委托 `isTurnstileOutageError`）；修复 Turnstile callback 双重触发；`extractTurnstileParams` 与 `readTurnstileWidgetParams` 共享属性名常量（单一来源）；结构化分级 logger 取代 `isNoisyModuleLog` 字符串嗅探（净删）；失败路径 outage 判定单次求值；`isRenewalDue` 移除死参数、`formatTokyoDateTime` 尊重 `TZ`；新增 cron 白名单防漂移测试（20 文件 / 372 用例） |
 | 2026-08-06 | 防漂移：`env-whitelist.test.mjs` 校验 cron-run.sh 白名单 ↔ 主脚本 CONFIG ↔ .env.example 三处同步（21 文件 / 376 用例） |
@@ -85,7 +86,7 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（19 个文件，364 个用例）
+└── __tests__/unit/             # 单元测试（21 个文件，403 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
     ├── cleanChromeLocks.test.mjs
@@ -295,14 +296,14 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（21 个测试文件，376 个用例）：
+- **已测试模块**（21 个测试文件，403 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`、`extractTurnstileParams` / `readTurnstileWidgetParams`（属性名双名兼容）
-  - `src/page-utils.mjs` — `waitForNav`（成功/失败/默认 logger）、`getText`、`getBodyText`（含 evaluate 异常容错）
-  - `src/renewal-status.mjs` — `readRenewalStatus`、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`getRenewalStatus`
+  - `src/page-utils.mjs` — `waitForNav`（成功/失败/默认 logger）、`getText`、`getBodyText`（含 evaluate 异常容错）、`waitForSelectorSoft`（软等待替代固定 sleep）
+  - `src/renewal-status.mjs` — `readRenewalStatus`（含 logger 注入）、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`countConsecutiveSuccesses`、`getRenewalStatus`
   - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取
-  - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断
-  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`findChromePath`、`cleanChromeLocks`、`NOOP_LOGGER`
+  - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要 + 连续成功）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断、`parseTelegramSendResult`（200+ok:false 逻辑错误识别）
+  - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`formatLogTimestamp`、`formatLogLine`（级别标签）、`analyzeFingerprintHealth`、`findChromePath`、`cleanChromeLocks`、`NOOP_LOGGER`
   - **配置同步防漂移**：`env-whitelist.test.mjs` — cron-run.sh 白名单 ↔ 主脚本 CONFIG ↔ .env.example 三处清单一致性（含 #7 有意排除项与内部透传例外）
 - **未覆盖**：端到端浏览器操作流程（登录 / 续期确认 / 完整提交流程需集成测试或手动验证）；`src/panel-flow.mjs`、`src/turnstile-flow.mjs`、`xserver-vps-renew.mjs` 为浏览器步骤与编排入口，依赖真实页面，无单元覆盖（与原主脚本内联时一致）
 - **CI 门禁**（`vitest.config.mjs`）：分支覆盖率 ≥ 25%；functions / lines / statements ≥ 28%

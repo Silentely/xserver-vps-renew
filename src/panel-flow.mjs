@@ -10,7 +10,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NOOP_LOGGER, getTokyoDateString } from './utils.mjs';
-import { waitForNav, getText, getBodyText } from './page-utils.mjs';
+import { waitForNav, getText, getBodyText, waitForSelectorSoft } from './page-utils.mjs';
 import {
   isRenewalDue,
   buildRenewUrl,
@@ -384,8 +384,8 @@ export async function navigateForCaptchaRetry(page, currentUrl, renewUrl, { conf
     if (confirmResult?.status === 'window_blocked') {
       throw new Error(confirmResult.reason || '未进入官方 12 小时续期窗口');
     }
-    // handleRenewalConfirm 已落到 conf；再等图渲染
-    await sleep(2000);
+    // handleRenewalConfirm 已落到 conf；软等待验证码图渲染（原固定 2s，渲染快时更快）
+    await waitForSelectorSoft(page, 'img[src^="data:"]', 2000, logger);
     return;
   }
 
@@ -399,8 +399,8 @@ export async function navigateForCaptchaRetry(page, currentUrl, renewUrl, { conf
     logger.warn(`⏭️ 重试：降级直接打开 conf（可能无验证码图）: ${nav.url}`);
     await page.goto(nav.url, { waitUntil: 'domcontentloaded', timeout: config.NAVIGATION_TIMEOUT });
   }
-  // Base64 内嵌图渲染需要时间
-  await sleep(3000);
+  // Base64 内嵌图渲染需要时间：软等待替代固定 3s（渲染快时立即继续）
+  await waitForSelectorSoft(page, 'img[src^="data:"]', 3000, logger);
 }
 
 /**

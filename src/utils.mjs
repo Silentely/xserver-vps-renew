@@ -110,6 +110,32 @@ const LOG_LEVEL_RANK = {
   [LOG_LEVEL_ERROR]: 40,
 };
 
+/** 日志级别标签（输出行中插入，便于 docker logs 按级别过滤/告警采集） */
+export const LOG_LEVEL_TAG = {
+  [LOG_LEVEL_DEBUG]: '[DEBUG]',
+  [LOG_LEVEL_INFO]: '[INFO]',
+  [LOG_LEVEL_WARN]: '[WARN]',
+  [LOG_LEVEL_ERROR]: '[ERROR]',
+};
+
+/**
+ * 格式化单条日志行（纯函数，供主脚本 emitLog 使用）
+ * 输出形如 `2026-08-07 12:00:00 [INFO] 消息`；error 消息未带 ❌ 前缀时自动补充
+ * @param {string} stamp - 时间戳（YYYY-MM-DD HH:mm:ss）
+ * @param {string} level - debug|info|warn|error
+ * @param {unknown} msg - 日志内容
+ * @returns {string} 完整日志行
+ */
+export function formatLogLine(stamp, level, msg) {
+  const text = String(msg ?? '');
+  const tag = LOG_LEVEL_TAG[level] || LOG_LEVEL_TAG[LOG_LEVEL_INFO];
+  const base = `${stamp} ${tag}`;
+  if (level === LOG_LEVEL_ERROR && !text.startsWith('❌')) {
+    return `${base} ❌ ${text}`;
+  }
+  return `${base} ${text}`;
+}
+
 /**
  * 解析 LOG_LEVEL 环境变量
  * 支持 debug/verbose/trace → debug；info/log/normal → info；warn；error/quiet → error
@@ -210,6 +236,31 @@ export function escapeHtml(str) {
 }
 
 /**
+ * 格式化日志时间戳（YYYY-MM-DD HH:mm:ss，时区取 TZ 环境变量，默认 Asia/Tokyo）
+ * 与 formatTokyoDateTime（zh-CN locale）不同：locale 无关、固定宽度，
+ * 避免不同 Node 版本 toLocaleString 输出漂移（如年份格式/24 点制差异）
+ * @param {number|Date} [when=Date.now()]
+ * @param {string} [tz=process.env.TZ || 'Asia/Tokyo']
+ * @returns {string}
+ */
+export function formatLogTimestamp(when = Date.now(), tz = process.env.TZ || 'Asia/Tokyo') {
+  const d = when instanceof Date ? when : new Date(when);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
+/**
  * 按东京时区格式化日期时间（中文 locale）
  * 时区取 TZ 环境变量（与日志 ts() 一致），默认 Asia/Tokyo
  * @param {Date|number} [when=new Date()]
@@ -233,6 +284,28 @@ export function findChromePath() {
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   ];
   return candidates.find((p) => existsSync(p)) || 'google-chrome-stable';
+}
+
+/**
+ * 分析浏览器指纹健康度（纯函数，供主脚本启动时体检）
+ * webdriver=true 是 stealth 失效的最强信号；设备内存/核心数异常也可能被检测
+ * @param {object} fingerprint - { webdriver, deviceMemory, hardwareConcurrency }
+ * @returns {string[]} 风险提示列表（空数组表示健康）
+ */
+export function analyzeFingerprintHealth(fingerprint = {}) {
+  const risks = [];
+  if (fingerprint.webdriver === true) {
+    risks.push('检测到 navigator.webdriver=true：Stealth 反检测可能失效，被 Cloudflare 识别的风险极高');
+  }
+  const mem = Number(fingerprint.deviceMemory);
+  if (Number.isFinite(mem) && mem <= 0) {
+    risks.push('deviceMemory 异常（<=0）：指纹与真实浏览器差异明显');
+  }
+  const cores = Number(fingerprint.hardwareConcurrency);
+  if (Number.isFinite(cores) && cores <= 0) {
+    risks.push('hardwareConcurrency 异常（<=0）：指纹与真实浏览器差异明显');
+  }
+  return risks;
 }
 
 /**
