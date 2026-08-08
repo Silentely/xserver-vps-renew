@@ -2,11 +2,37 @@
 set -euo pipefail
 # 容器网络与环境诊断脚本
 
-echo "====== 环境诊断 $(date -Iseconds) ======"
+# 脱敏主机/代理地址：保留末尾 4 字符，其余替换为 *（与主脚本 maskProxyAddress 惯例一致）
+mask_address() {
+  local addr="${1:-}"
+  if [ -z "$addr" ]; then
+    echo "未设置"
+    return
+  fi
+  local len=${#addr}
+  if [ "$len" -le 4 ]; then
+    echo "$addr"
+    return
+  fi
+  local head_len=$((len - 4))
+  local masked=""
+  local i
+  for ((i = 0; i < head_len; i++)); do
+    masked="${masked}*"
+  done
+  echo "${masked}${addr: -4}"
+}
+
+# 统一时间戳：尊重 TZ，缺省东京时区（与主脚本日志 formatLogTimestamp 一致）
+ts() {
+    TZ="${TZ:-Asia/Tokyo}" date -Iseconds
+}
+
+echo "====== 环境诊断 $(ts) ======"
 
 echo "📡 代理配置:"
 echo "  PROXY_TYPE=${PROXY_TYPE:-未设置}"
-echo "  PROXY_ADDRESS=${PROXY_ADDRESS:-未设置}"
+echo "  PROXY_ADDRESS=$(mask_address "${PROXY_ADDRESS:-}")"
 echo "  PROXY_PORT=${PROXY_PORT:-未设置}"
 if [ -n "$PROXY_LOGIN" ]; then
   echo "  PROXY_LOGIN=已设置"

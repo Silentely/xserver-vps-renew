@@ -308,6 +308,20 @@ export function analyzeFingerprintHealth(fingerprint = {}) {
 }
 
 /**
+ * 是否保存 Turnstile 求解前后截图（纯函数）
+ * 默认仅 LOG_LEVEL=debug 时写盘，避免默认级别下每轮运行向 /tmp 累积无用截图
+ * （容器内 /tmp 是有限资源，截图通常仅排查时有用）；
+ * 显式设置 SAVE_TURNSTILE_SCREENSHOTS=true 时可在 info 级别强制开启（故障排查）。
+ * @param {object} [config] - CONFIG 对象（含 LOG_LEVEL / SAVE_TURNSTILE_SCREENSHOTS）
+ * @returns {boolean}
+ */
+export function shouldSaveTurnstileScreenshot(config) {
+  if (!config || typeof config !== 'object') return false;
+  if (config.SAVE_TURNSTILE_SCREENSHOTS === true) return true;
+  return config.LOG_LEVEL === 'debug';
+}
+
+/**
  * 清理 Chrome 用户数据目录中的残留锁文件
  * 避免异常退出后下次启动报 SingletonLock 错误
  * @param {string} userDataDir

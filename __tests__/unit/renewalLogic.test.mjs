@@ -13,6 +13,7 @@ import {
   extractRetryAfterFromText,
   extractExpireDateFromText,
   normalizeCellText,
+  extractVpsInfoFromCellTexts,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
 } from '../../src/renewal-logic.mjs';
@@ -378,6 +379,55 @@ describe('normalizeCellText', () => {
   it('空值返回 null', () => {
     expect(normalizeCellText('')).toBeNull();
     expect(normalizeCellText(null)).toBeNull();
+  });
+});
+
+describe('extractVpsInfoFromCellTexts', () => {
+  it('从混合单元格文本解析服务器名与规格', () => {
+    const cells = [
+      'host01',
+      ' 4GB プラン（メモリ 4GB / コア 2 / NVMe 100GB） ',
+      '2026-08-09',
+    ];
+    expect(extractVpsInfoFromCellTexts(cells)).toEqual({
+      serverName: 'host01',
+      plan: '4GB プラン（メモリ 4GB / コア 2 / NVMe 100GB）',
+    });
+  });
+
+  it('无匹配单元格时返回 null（不清空已匹配项）', () => {
+    expect(extractVpsInfoFromCellTexts(['2026-08-09', '通常表示'])).toEqual({
+      serverName: null,
+      plan: null,
+    });
+  });
+
+  it('空白/非字符串项忽略，不抛错', () => {
+    expect(extractVpsInfoFromCellTexts(['  ', null, undefined, 123])).toEqual({
+      serverName: null,
+      plan: null,
+    });
+  });
+
+  it('非数组输入返回空结果', () => {
+    expect(extractVpsInfoFromCellTexts(null)).toEqual({ serverName: null, plan: null });
+    expect(extractVpsInfoFromCellTexts(undefined)).toEqual({ serverName: null, plan: null });
+  });
+
+  it('规格单元格长度阈值（>10）与服务器名长度阈值（<30）生效', () => {
+    // 短文本含 GB 不算规格；长文本含 host 不算服务器名
+    expect(extractVpsInfoFromCellTexts(['4GB', 'host-with-very-long-name-that-exceeds-thirty-chars'])).toEqual({
+      serverName: null,
+      plan: null,
+    });
+  });
+
+  it('后匹配覆盖前者（与旧内联遍历等价）', () => {
+    const cells = ['host01', 'host02'];
+    expect(extractVpsInfoFromCellTexts(cells)).toEqual({
+      serverName: 'host02',
+      plan: null,
+    });
   });
 });
 

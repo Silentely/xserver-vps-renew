@@ -14,6 +14,7 @@ import {
   formatTokyoDateTime,
   formatLogTimestamp,
   analyzeFingerprintHealth,
+  shouldSaveTurnstileScreenshot,
   TOKYO_OFFSET_MS,
   DEFAULT_LOG_LEVEL,
   LOG_LEVEL_DEBUG,
@@ -203,6 +204,31 @@ describe('analyzeFingerprintHealth', () => {
       deviceMemory: 'N/A',
       hardwareConcurrency: 'N/A',
     })).toEqual([]);
+  });
+});
+
+describe('shouldSaveTurnstileScreenshot', () => {
+  it('默认级别（info 等）不写盘', () => {
+    expect(shouldSaveTurnstileScreenshot({ LOG_LEVEL: 'info' })).toBe(false);
+    expect(shouldSaveTurnstileScreenshot({ LOG_LEVEL: 'warn' })).toBe(false);
+    expect(shouldSaveTurnstileScreenshot({})).toBe(false);
+    expect(shouldSaveTurnstileScreenshot()).toBe(false);
+    expect(shouldSaveTurnstileScreenshot(null)).toBe(false);
+  });
+
+  it('LOG_LEVEL=debug 时写盘', () => {
+    expect(shouldSaveTurnstileScreenshot({ LOG_LEVEL: 'debug' })).toBe(true);
+  });
+
+  it('显式 SAVE_TURNSTILE_SCREENSHOTS=true 强制开启（排查用）', () => {
+    expect(shouldSaveTurnstileScreenshot({
+      LOG_LEVEL: 'info',
+      SAVE_TURNSTILE_SCREENSHOTS: true,
+    })).toBe(true);
+    expect(shouldSaveTurnstileScreenshot({
+      LOG_LEVEL: 'debug',
+      SAVE_TURNSTILE_SCREENSHOTS: false,
+    })).toBe(true);
   });
 });
 

@@ -4,6 +4,12 @@ set -euo pipefail
 LOG_PREFIX="[xserver-vps-renew]"
 XVFB_PID=""
 
+# 统一时间戳：尊重 TZ，缺省东京时区（与主脚本日志 formatLogTimestamp 一致），
+# 避免本地/未设 TZ 容器与主脚本日志出现时区不一致
+ts() {
+    TZ="${TZ:-Asia/Tokyo}" date -Iseconds
+}
+
 # ============================================================
 # 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
 # ============================================================
@@ -54,7 +60,7 @@ show_cron_schedule() {
 # 🔧 修复：执行成功后显示下次续期时间
 # ============================================================
 run_renew() {
-    echo "$LOG_PREFIX ====== 开始执行续期 $(date -Iseconds) ======"
+    echo "$LOG_PREFIX ====== 开始执行续期 $(ts) ======"
     if [ -n "${RENEWAL_STATUS_FILE:-}" ]; then
         echo "$LOG_PREFIX 状态文件: $RENEWAL_STATUS_FILE"
     fi
@@ -72,7 +78,7 @@ run_renew() {
         echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
     fi
 
-    echo "$LOG_PREFIX ====== 执行完毕 $(date -Iseconds) ======"
+    echo "$LOG_PREFIX ====== 执行完毕 $(ts) ======"
     return $EXIT_CODE
 }
 
@@ -112,6 +118,11 @@ elif [ -n "${CRON_SCHEDULE:-}" ]; then
 #!/bin/bash
 LOG_PREFIX="[xserver-vps-renew]"
 
+# 统一时间戳：尊重 TZ，缺省东京时区（与主脚本日志一致）
+ts() {
+    TZ="${TZ:-Asia/Tokyo}" date -Iseconds
+}
+
 exec 9>/tmp/xserver-renew.lock
 if ! flock -n 9; then
     echo "$LOG_PREFIX ⏭️ 上一次执行仍在运行，跳过"
@@ -137,6 +148,7 @@ export TG_NOTIFY_DETAIL="${TG_NOTIFY_DETAIL:-}"
 export TG_NOTIFY_SKIP="${TG_NOTIFY_SKIP:-}"
 export NOTIFY_NEXT_RUN_HOURS="${NOTIFY_NEXT_RUN_HOURS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-}"
+export SAVE_TURNSTILE_SCREENSHOTS="${SAVE_TURNSTILE_SCREENSHOTS:-}"
 export PROXY_TYPE="${PROXY_TYPE:-}"
 export PROXY_ADDRESS="${PROXY_ADDRESS:-}"
 export PROXY_PORT="${PROXY_PORT:-}"
@@ -156,7 +168,7 @@ export TURNSTILE_TIMEOUT_MS="${TURNSTILE_TIMEOUT_MS:-}"
 export TURNSTILE_API_TIMEOUT_MS="${TURNSTILE_API_TIMEOUT_MS:-}"
 export CAPTCHA_MAX_RETRY="${CAPTCHA_MAX_RETRY:-}"
 
-echo "$LOG_PREFIX ====== 定时任务触发 $(date -Iseconds) ======"
+echo "$LOG_PREFIX ====== 定时任务触发 $(ts) ======"
 
 MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do

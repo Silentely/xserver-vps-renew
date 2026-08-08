@@ -508,9 +508,13 @@ export function buildManualConfirmNotifyMessage({
     '',
     '自动处理疑似遇到官方新增或变更的确认页面，无法继续自动续期。',
     '请登录 Xserver 面板检查是否存在需要确认的新页面',
-    '（如个人信息同意、安全验证等），手动完成后重新运行容器：',
+    '（如个人信息同意、安全验证等），手动完成后重新运行：',
     '',
+    'Docker 部署:',
     '<code>docker exec xserver-vps-renew ./entrypoint.sh --once</code>',
+    '',
+    '本地 Node 运行:',
+    '<code>node xserver-vps-renew.mjs</code>',
   ];
   if (reason) {
     lines.push('', `原因: ${escapeHtml(reason)}`);

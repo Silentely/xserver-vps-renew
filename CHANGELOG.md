@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### 打磨（2026-08-08 · 任务 36 十轮迭代）
+- **截图按需写入**：`turnstile-flow` 求解前后截图仅在 `LOG_LEVEL=debug` 时落盘（新增 `SAVE_TURNSTILE_SCREENSHOTS=true` 可强制开启），避免默认级别下每轮运行向 `/tmp` 累积无用截图（新增 3 用例）
+- **`page.close` 异常防御**：新增 `page-utils.safeClosePage`，skip/success 路径 close 抛错仅记 warn 不中断——防止「已跳过/已成功 + 失败」双通知误报（close 失败由 finally 中 `browser.close` 兜底回收；新增 4 用例）
+- **自然通过降级立即点击**：`waitForTurnstileToken` 首次点击立即触发（原前 10 秒纯轮询空等），后续仍按 10 秒间隔重试；`clickFn` 可注入便于单测（新增 3 用例）
+- **VPS 行解析纯函数化**：`checkRenewalNeeded` 内联 40+ 行单元格解析收敛为 `renewal-logic.extractVpsInfoFromCellTexts`（页面端仅提取文本，解析在 Node 端完成），清理未用参数（新增 6 用例）
+- **日志降噪**：skip 路径 `pushStep` 与 `logText` 去重（相同文案只输出一条，总耗时由流程结束行统一输出）；验证码提交后「当前页面 URL」降噪为 debug（轮询结果行已含同信息）
+- **人工确认通知友好度**：`buildManualConfirmNotifyMessage` 同时给出 Docker 与本地 Node 两种重跑命令，适配非容器部署用户
+- **用户脚本策略对齐**：`xserver-renews.js` Turnstile 超时不再强制提交（必然「認証に失敗」），改为提示手动完成人机验证，与主脚本「未通过禁止提交」一致
+- **诊断脚本脱敏**：`diagnostics.sh` 代理地址输出经 `mask_address` 脱敏（保留末尾 4 字符），与主脚本 `maskProxyAddress` 惯例一致
+- **新到期日提取收敛**：主脚本内联「更新後の利用期限」TD 查找 + 正文回退收敛为 `page-utils.extractNewExpireDate`（evaluate 异常回退空串不抛错；新增 4 用例）
+- **时间戳时区显式化**：`entrypoint.sh` / `cron-run.sh` / `diagnostics.sh` 的时间戳统一经 `ts()`（`TZ` 缺省 `Asia/Tokyo`），与主脚本 `formatLogTimestamp` 时区一致，本地/未设 TZ 容器不再出现时区漂移
+- 验证：`node --check` + 23 文件 / 430 用例全绿（净增 20 用例），覆盖率门禁达标；浏览器流程模块沿用既有「依赖真实页面无单测」政策
+
 ### 打磨（2026-08-07 · 迭代打磨）
 - **分阶段耗时日志**：主脚本 `pushStep` 每步日志附带耗时（距上一步/启动），`docker logs` 可直接定位慢环节（Chrome 启动 / 登录 / 验证码 / Turnstile）；通知中的执行步骤文本保持纯净不受影响
 - **提交后结果软等待**：`panel-flow` 新增 `waitForSubmissionResult`——提交后轮询页面直到命中明确「成功」信号即提前返回（正常路径提速），未命中则等待至 2s 上限（与原固定等待行为下限一致），避免成功页渲染完成前过早读到中间态而误判失败（新增 4 用例）

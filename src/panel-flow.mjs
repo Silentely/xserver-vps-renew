@@ -19,6 +19,7 @@ import {
   evaluateSubmissionResult,
   detectRenewalWindowBlocked,
   normalizeCellText,
+  extractVpsInfoFromCellTexts,
   getRemainingHours,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
@@ -188,6 +189,8 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   const tomorrow = getTokyoDateString(Date.now(), 1);
   logger.debug(`参考日期（东京）: 今天 ${today} / 明天 ${tomorrow}`);
 
+  // 页面端仅提取原始文本（DOM 上下文不做业务判定），
+  // 服务器名/规格解析收敛到纯函数 extractVpsInfoFromCellTexts（可单测）
   const result = await page.evaluate(() => {
     const row = document.querySelector('tr:has(.freeServerIco)');
     if (!row) {
@@ -197,33 +200,11 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
     const termEl = row.querySelector('.contract__term');
     const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
 
-    // 提取 VPS 规格信息
-    const cells = row.querySelectorAll('td');
-
-    let serverName = null;
-    let plan = null;
-
-    // 遍历所有单元格，根据内容特征判断
-    cells.forEach((cell, idx) => {
-      const text = cell.textContent.replace(/\s+/g, ' ').trim(); // 移除多余空白符
-
-      // 判断规格：包含内存/CPU/存储信息
-      if ((text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe'))
-          && text.length > 10) {
-        plan = text;
-      }
-
-      // 判断服务器名：包含 host/vps 关键词，且长度较短
-      if ((text.includes('host') || text.includes('vps-')) && text.length < 30) {
-        serverName = text;
-      }
-    });
-
     return {
       expireDate: termEl ? termEl.textContent.trim() : null,
       detailHref: detailLink ? detailLink.href : null,
-      serverName: serverName,
-      plan: plan,
+      cellTexts: Array.from(row.querySelectorAll('td'))
+        .map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
     };
   });
 
@@ -249,8 +230,10 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   }
 
   // 清理 VPS 信息中的多余空白符
-  const cleanServerName = normalizeCellText(result.serverName);
-  const cleanPlan = normalizeCellText(result.plan);
+  const { serverName: parsedServerName, plan: parsedPlan } =
+    extractVpsInfoFromCellTexts(result.cellTexts);
+  const cleanServerName = normalizeCellText(parsedServerName);
+  const cleanPlan = normalizeCellText(parsedPlan);
   // 统一时间基准：剩余小时与到期判定使用同一 nowMs，避免跨秒边界判定不一致
   const nowMs = Date.now();
   const remainingHours = getRemainingHours(result.expireDate, nowMs);
@@ -504,7 +487,8 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       await Promise.all([waitForNav(page, config.NAVIGATION_TIMEOUT, logger), submitBtn.click()]);
 
-      logger.info(`提交完成，当前页面: ${page.url()}`);
+      // 提交后页面 URL 由轮询结果行（info）统一输出，此处降噪为 debug，避免相邻两条重复 URL 日志
+      logger.debug(`提交完成，当前页面: ${page.url()}`);
 
       // 验证续期是否真正成功：轮询等待明确结果（成功信号提前返回，行为下限与原固定 2s 一致）
       const { pageText, currentUrl, evaluation } = await waitForSubmissionResult(page, { logger });

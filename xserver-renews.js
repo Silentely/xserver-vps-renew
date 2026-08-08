@@ -73,7 +73,7 @@ function t(text) {
         '验证码识别完成，准备提交表单...': { en: 'CAPTCHA recognition complete, preparing to submit form...', ja: 'CAPTCHAの認識が完了しました。フォームを送信する準備をしています...', },
         '已完成验证码填写，正在处理人机验证...': { en: 'CAPTCHA entry complete, processing human verification...', ja: 'CAPTCHAの入力が完了しました。人間認証を処理中...', },
         '等待人机验证令牌生成...': { en: 'Waiting for human verification token generation...', ja: '人間認証トークンの生成を待っています...', },
-        '人机验证响应超时，强制提交...': { en: 'Human verification response timed out, forcing submission...', ja: '人間認証の応答がタイムアウトしました。強制送信中...', },
+        '人机验证响应超时，请手动完成人机验证后再提交。': { en: 'Human verification timed out. Please complete the verification manually and submit.', ja: '人間認証の応答がタイムアウトしました。手動で認証を完了して送信してください。' },
         '验证码处理异常，请刷新页面重试。': { en: 'CAPTCHA processing error, please refresh the page and try again.', ja: 'CAPTCHA処理でエラーが発生しました。ページをリロードして再試行してください。', },
         '所有验证已完成，准备提交...': { en: 'All verifications completed, preparing to submit...', ja: 'すべての認証が完了しました。送信準備中...', },
         '找不到提交按钮，请手动提交表单': { en: 'Submit button not found, please submit the form manually.', ja: '送信ボタンが見つかりません。手動でフォームを送信してください。', },
@@ -472,11 +472,12 @@ function t(text) {
             console.log(`${LOG_PREFIX} Cloudflare 令牌不存在，设置监听器等待生成...`);
             updateStatusElement("等待人机验证令牌生成...");
  
-            // 设置超时机制防止无限等待
+            // 设置超时机制防止无限等待。
+            // 与主脚本策略一致：Turnstile 未通过时禁止强制提交（否则必然「認証に失敗」），
+            // 超时仅提示用户手动完成人机验证，不自动提交表单。
             const timeoutId = setTimeout(() => {
-                console.error(`${LOG_PREFIX} Cloudflare Turnstile令牌生成超时，强制提交表单。`);
-                updateStatusElement("人机验证响应超时，强制提交...", 'warn');
-                submitForm();
+                console.warn(`${LOG_PREFIX} Cloudflare Turnstile令牌生成超时，未自动提交（强制提交必然认证失败）。`);
+                updateStatusElement("人机验证响应超时，请手动完成人机验证后再提交。", 'warn');
             }, 15000);
  
             // 监听cf-turnstile-response字段的value属性变化

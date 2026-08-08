@@ -32,6 +32,7 @@ import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
+import { safeClosePage, extractNewExpireDate } from './src/page-utils.mjs';
 
 // 页面流程（登录/同意页/到期检查/续期确认/验证码提交）
 import {
@@ -97,7 +98,6 @@ import {
 } from './src/notify.mjs';
 // 续期业务纯逻辑
 import {
-  extractExpireDateFromText,
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
 } from './src/renewal-logic.mjs';
@@ -188,6 +188,8 @@ const CONFIG = {
 
   // 日志级别：debug / info（默认）/ warn / error
   LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
+  // 强制保存 Turnstile 求解前后截图（默认仅 LOG_LEVEL=debug 时写盘；排查问题时可在 info 级别开启）
+  SAVE_TURNSTILE_SCREENSHOTS: parseEnvBool(process.env.SAVE_TURNSTILE_SCREENSHOTS, false),
 
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
@@ -440,7 +442,11 @@ async function main() {
     runOutcome = 'skip';
     runOutcomeLabel = runLabel || skipLabel;
     pushStep(`判定结果: ${skipLabel}`);
-    log(`${logText || skipLabel}（耗时 ${durationText()}）`);
+    // logText 与 skipLabel 相同时不再重复输出（pushStep 已记录进度），
+    // 仅在调用方提供了补充说明时追加；总耗时由流程结束行统一输出
+    if (logText && logText !== skipLabel) {
+      log(logText);
+    }
     // 记录跳过，避免「长期无写入」被误判为监控静默
     persistRenewalRecord(buildRenewalRecord({
       success: true,
@@ -465,7 +471,9 @@ async function main() {
       detail: CONFIG.TG_NOTIFY_DETAIL,
       durationMs: elapsedMs(),
     }), { kind: 'skip' });
-    await page.close();
+    // 安全关闭：close 抛错不误入 catch（否则会造成「已跳过 + 失败」双通知），
+    // 页面由 finally 中 browser.close() 兜底回收
+    await safeClosePage(page, LOGGER);
   };
 
   try {
@@ -665,17 +673,8 @@ async function main() {
     logDebug(`续期后页面 URL: ${page.url()}`);
 
     // 页面内优先读「更新後の利用期限」单元格；失败则回退纯文本日期解析
-    const pageDateSource = await page.evaluate(() => {
-      const allTds = Array.from(document.querySelectorAll('td'));
-      const expireTd = allTds.find((td) =>
-        td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'),
-      );
-      if (expireTd && expireTd.nextElementSibling) {
-        return expireTd.nextElementSibling.textContent.trim();
-      }
-      return document.body.textContent || '';
-    });
-    const newExpireDate = extractExpireDateFromText(pageDateSource);
+    // （TD 查找 + 回退逻辑收敛于 page-utils.extractNewExpireDate，可单测）
+    const newExpireDate = await extractNewExpireDate(page);
 
     if (newExpireDate) {
       log(`✅ 成功提取新到期日: ${newExpireDate}`);
@@ -727,7 +726,8 @@ async function main() {
       remainingHours: renewalData.remainingHours,
       consecutiveSuccesses,
     }), { kind: 'success' });
-    await page.close();
+    // 安全关闭：close 抛错不误入 catch（续期已成功且记录已持久化，误报失败会引发恐慌）
+    await safeClosePage(page, LOGGER);
   } catch (e) {
     // 失败分类只求值一次，outage 判定从分类结果派生（避免同一判定被重复求值）
     const failureMeta = classifyRenewalFailure({

@@ -457,6 +457,8 @@ describe('buildManualConfirmNotifyMessage', () => {
     expect(msg).toContain('需要人工确认');
     expect(msg).toContain('登录 Xserver 面板检查是否存在需要确认的新页面');
     expect(msg).toContain('docker exec xserver-vps-renew ./entrypoint.sh --once');
+    // 本地 Node 运行方式也一并提示（不局限于 Docker 部署）
+    expect(msg).toContain('node xserver-vps-renew.mjs');
     expect(msg).toContain('同意页未找到同意复选框');
     expect(msg).toContain('2026-08-05 13:00:00');
     expect(msg).toContain('2026-08-05 19:00:00');

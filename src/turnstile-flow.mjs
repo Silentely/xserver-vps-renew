@@ -8,7 +8,7 @@
  */
 
 import { setTimeout as sleep } from 'node:timers/promises';
-import { NOOP_LOGGER } from './utils.mjs';
+import { NOOP_LOGGER, shouldSaveTurnstileScreenshot } from './utils.mjs';
 import { waitForSelectorSoft } from './page-utils.mjs';
 import {
   listTurnstileProviders,
@@ -122,12 +122,18 @@ export async function getTurnstileToken(page, logger = NOOP_LOGGER) {
  * 轮询等待 Turnstile token 生成（降级模式专用）
  * 用于点击方式后等待 Turnstile 自行生成 token
  * @param {import('puppeteer').Page} page
- * @param {{ timeoutMs?: number, logger?: object }} [opts]
+ * @param {{ timeoutMs?: number, logger?: object, clickFn?: Function }} [opts]
+ *   clickFn 可注入（便于单测）；默认 clickTurnstileFallback
  * @returns {Promise<boolean>}
  */
-export async function waitForTurnstileToken(page, { timeoutMs, logger = NOOP_LOGGER } = {}) {
+export async function waitForTurnstileToken(
+  page,
+  { timeoutMs, logger = NOOP_LOGGER, clickFn = clickTurnstileFallback } = {},
+) {
   const startTime = Date.now();
-  let lastClickTime = Date.now();
+  // 进入降级模式立即尝试点击（lastClickTime 从 0 起算，首个轮询周期即触发），
+  // 避免前 10 秒纯轮询空等——Token 生成通常依赖对 checkbox 的点击
+  let lastClickTime = 0;
   while (Date.now() - startTime < timeoutMs) {
     // 读取所有 cf-turnstile-response 字段，返回第一个有值的
     const token = await getTurnstileToken(page, logger);
@@ -137,11 +143,11 @@ export async function waitForTurnstileToken(page, { timeoutMs, logger = NOOP_LOG
       return true;
     }
 
-    // 每 10 秒重试点击一次
+    // 每 10 秒重试点击一次（首次立即触发，无需等待首个间隔）
     const now = Date.now();
     if (now - lastClickTime >= 10000) {
-      logger.info('令牌未生成，重试点击...');
-      await clickTurnstileFallback(page, logger);
+      logger.info('令牌未生成，尝试点击 Turnstile checkbox...');
+      await clickFn(page, logger);
       lastClickTime = now;
     }
 
@@ -207,8 +213,12 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
   );
 
   try {
-    await page.screenshot({ path: '/tmp/turnstile-before-solve.png', fullPage: false });
-    logger.debug('已保存求解前截图: /tmp/turnstile-before-solve.png');
+    // 截图按需写入：仅 debug 级别（或显式 SAVE_TURNSTILE_SCREENSHOTS=true）时落盘，
+    // 避免默认 info 级别下每轮运行向 /tmp 累积无用截图
+    if (shouldSaveTurnstileScreenshot(config)) {
+      await page.screenshot({ path: '/tmp/turnstile-before-solve.png', fullPage: false });
+      logger.debug('已保存求解前截图: /tmp/turnstile-before-solve.png');
+    }
   } catch (e) {
     logger.debug(`截图失败: ${e.message}`);
   }
@@ -279,8 +289,11 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
       }
 
       try {
-        await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
-        logger.debug('已保存求解后截图: /tmp/turnstile-after-solve.png');
+        // 截图按需写入：仅 debug 级别（或显式 SAVE_TURNSTILE_SCREENSHOTS=true）时落盘
+        if (shouldSaveTurnstileScreenshot(config)) {
+          await page.screenshot({ path: '/tmp/turnstile-after-solve.png', fullPage: false });
+          logger.debug('已保存求解后截图: /tmp/turnstile-after-solve.png');
+        }
       } catch (e) {
         logger.debug(`截图失败: ${e.message}`);
       }

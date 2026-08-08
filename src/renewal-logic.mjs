@@ -441,3 +441,40 @@ export function normalizeCellText(text) {
   const cleaned = text.replace(/\s+/g, ' ').trim();
   return cleaned || null;
 }
+
+/**
+ * 从 VPS 行单元格文本解析服务器名与规格（纯函数）
+ *
+ * 判定规则（与页面结构核对）：
+ * - 规格单元格：含内存/核心/存储关键词（メモリ/コア/GB/NVMe）且长度 > 10
+ * - 服务器名单元格：含 host/vps- 关键词且长度较短（<30）
+ * 遍历顺序即表格 td 顺序，后匹配覆盖前者（与旧内联实现等价）。
+ *
+ * @param {string[]|null|undefined} cellTexts - 行内各单元格的文本（已去空白）
+ * @returns {{ serverName: string|null, plan: string|null }}
+ */
+export function extractVpsInfoFromCellTexts(cellTexts) {
+  let serverName = null;
+  let plan = null;
+  if (!Array.isArray(cellTexts)) return { serverName, plan };
+
+  for (const raw of cellTexts) {
+    const text = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+    if (!text) continue;
+
+    // 判断规格：包含内存/CPU/存储信息
+    if (
+      (text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe'))
+      && text.length > 10
+    ) {
+      plan = text;
+    }
+
+    // 判断服务器名：包含 host/vps 关键词，且长度较短
+    if ((text.includes('host') || text.includes('vps-')) && text.length < 30) {
+      serverName = text;
+    }
+  }
+
+  return { serverName, plan };
+}
