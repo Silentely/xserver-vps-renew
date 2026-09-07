@@ -226,7 +226,7 @@ npm run test:watch
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run，可自建覆盖） | `https://captcha-120546510085.asia-northeast1.run.app` |
+| `CAPTCHA_API` | Keras 验证码识别 API 地址（Cloud Run，可自建覆盖） | `https://captcha-api-216250547992.us-central1.run.app` |
 | `ANTICAPTCHA_API_KEY` | Anti-Captcha API 密钥（推荐异构备份，参与 failover） | 无 |
 | `ANTICAPTCHA_SOFT_ID` | Anti-Captcha 开发者 softId（可选） | 无 |
 | `YESCAPTCHA_API_KEY` | YesCaptcha API 密钥（参与 failover） | 无 |

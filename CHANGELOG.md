@@ -229,7 +229,7 @@
 ### 适配官方续期规则变更（2026-07-14）
 - **4GB 免费 VPS**：最长使用时间 48h → **24h**；可续期窗口 剩余 24h → **剩余 ≤12h**
 - `src/renewal-logic.mjs`：新增 `FREE_VPS_MAX_HOURS` / `RENEWAL_WINDOW_HOURS`；`isRenewalDue` 支持含时分的精确剩余小时判定
-- `CAPTCHA_API` 默认公共端点：`https://captcha-120546510085.asia-northeast1.run.app`（仍可用环境变量覆盖）
+- `CAPTCHA_API` 默认公共端点：`https://captcha-api-216250547992.us-central1.run.app`（仍可用环境变量覆盖）
 - `docker-compose.yml` 默认 `CRON_SCHEDULE` 改为每 6 小时（`0 */6 * * *`），避免 12h 续期窗口被错过
 - 文档同步：README / CLAUDE / RUNBOOK / `.env.example`
 

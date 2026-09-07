@@ -49,7 +49,7 @@ CAPSOLVER_API_KEY=你的CapSolver密钥
 # ANTICAPTCHA_API_KEY=你的AntiCaptcha密钥
 
 # 验证码识别（可选；不填则使用内置默认公共端点）
-# CAPTCHA_API=https://captcha-120546510085.asia-northeast1.run.app
+# CAPTCHA_API=https://captcha-api-216250547992.us-central1.run.app
 EOF
 
 # 4. 启动容器（默认每 4 小时错峰 27 分检查一次，见 docker-compose.yml 中 CRON_SCHEDULE）
@@ -102,7 +102,7 @@ node xserver-vps-renew.mjs --help
 - 成本：完全免费（Cloud Run 免费额度内）
 - 自动识别失败重试（最多 3 次）
 
-> `CAPTCHA_API` 可选。未设置时使用默认公共端点 `https://captcha-120546510085.asia-northeast1.run.app`；也可指向自建 Cloud Run。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。
+> `CAPTCHA_API` 可选。未设置时使用默认公共端点 `https://captcha-api-216250547992.us-central1.run.app`；也可指向自建 Cloud Run。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。
 
 ### Turnstile 求解策略
 
@@ -152,7 +152,7 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 
 | 变量 | 默认值 | 说明 | 费用 |
 |------|--------|------|------|
-| `CAPTCHA_API` | `https://captcha-120546510085.asia-northeast1.run.app` | Keras 模型 API（Cloud Run；可覆盖为自建端点） | 完全免费 |
+| `CAPTCHA_API` | `https://captcha-api-216250547992.us-central1.run.app` | Keras 模型 API（Cloud Run；可覆盖为自建端点） | 完全免费 |
 
 ### 可选 - Turnstile 多平台 failover
 

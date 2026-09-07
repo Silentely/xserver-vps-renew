@@ -109,7 +109,7 @@ import {
 } from './src/renewal-logic.mjs';
 
 /** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
-const DEFAULT_CAPTCHA_API = 'https://captcha-120546510085.asia-northeast1.run.app';
+const DEFAULT_CAPTCHA_API = 'https://captcha-api-216250547992.us-central1.run.app';
 
 // 运行时版本号（单一来源：package.json；启动横幅展示，便于核对运行的是哪个版本）
 const PROJECT_VERSION = JSON.parse(
