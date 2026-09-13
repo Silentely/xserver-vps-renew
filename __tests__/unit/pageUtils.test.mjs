@@ -1,10 +1,87 @@
 import { describe, it, expect, vi } from 'vitest';
-import { waitForNav, getText, getBodyText, waitForSelectorSoft, safeClosePage, extractNewExpireDate } from '../../src/page-utils.mjs';
+import {
+  waitForNav,
+  getText,
+  getBodyText,
+  waitForSelectorSoft,
+  safeClosePage,
+  extractNewExpireDate,
+  isFrameDetachError,
+  waitForPageReady,
+  safeEvaluate,
+} from '../../src/page-utils.mjs';
+
+describe('isFrameDetachError', () => {
+  it('识别各类 frame 脱离和执行上下文销毁错误', () => {
+    expect(isFrameDetachError(new Error("Attempted to use detached Frame '57A4FC5CF7AC46D1E98DE625C150AB55'"))).toBe(true);
+    expect(isFrameDetachError(new Error('Navigating frame was detached'))).toBe(true);
+    expect(isFrameDetachError(new Error('Execution context was destroyed, most likely because of a navigation.'))).toBe(true);
+    expect(isFrameDetachError(new Error('Cannot find context with specified id'))).toBe(true);
+    expect(isFrameDetachError(new Error('Navigation timeout of 30000 ms exceeded'))).toBe(false);
+    expect(isFrameDetachError(null)).toBe(false);
+  });
+});
+
+describe('waitForPageReady', () => {
+  it('页面 evaluate 正常时立即返回 true', async () => {
+    const page = { evaluate: vi.fn().mockResolvedValue('complete') };
+    const ok = await waitForPageReady(page, 2000);
+    expect(ok).toBe(true);
+    expect(page.evaluate).toHaveBeenCalledTimes(1);
+  });
+
+  it('遭遇 detached Frame 并在重试后成功', async () => {
+    const page = {
+      evaluate: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Attempted to use detached Frame '123'"))
+        .mockResolvedValueOnce('complete'),
+    };
+    const ok = await waitForPageReady(page, 2000);
+    expect(ok).toBe(true);
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it('page 不含 evaluate 方法时防御性返回 true', async () => {
+    expect(await waitForPageReady(null)).toBe(true);
+    expect(await waitForPageReady({})).toBe(true);
+  });
+});
+
+describe('safeEvaluate', () => {
+  it('正常执行 evaluate 并返回值', async () => {
+    const page = { evaluate: vi.fn().mockResolvedValue({ webdriver: false }) };
+    const res = await safeEvaluate(page, () => ({ webdriver: false }));
+    expect(res).toEqual({ webdriver: false });
+  });
+
+  it('遭遇 Frame detach 时原地重试并成功', async () => {
+    const page = {
+      evaluate: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Navigating frame was detached'))
+        .mockResolvedValueOnce({ ok: 1 }),
+    };
+    const res = await safeEvaluate(page, () => ({ ok: 1 }), null, 2, 10);
+    expect(res).toEqual({ ok: 1 });
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it('重试耗尽且提供了默认值时回退到默认值', async () => {
+    const page = {
+      evaluate: vi.fn().mockRejectedValue(new Error('detached Frame')),
+    };
+    const fallback = { webdriver: false };
+    const res = await safeEvaluate(page, () => 1, fallback, 1, 10);
+    expect(res).toEqual(fallback);
+  });
+});
 
 describe('waitForNav', () => {
   it('导航成功返回 true', async () => {
     const page = {
       waitForNavigation: vi.fn().mockResolvedValue(undefined),
+      evaluate: vi.fn().mockResolvedValue('complete'),
     };
     const ok = await waitForNav(page, 30000);
     expect(ok).toBe(true);
@@ -14,7 +91,19 @@ describe('waitForNav', () => {
     });
   });
 
-  it('导航失败返回 false 并记录 warn 日志', async () => {
+  it('遇到 Navigating frame was detached 时调用 waitForPageReady 恢复并返回 true', async () => {
+    const page = {
+      waitForNavigation: vi.fn().mockRejectedValue(new Error('Navigating frame was detached')),
+      evaluate: vi.fn().mockResolvedValue('complete'),
+    };
+    const logger = { warn: vi.fn(), info: vi.fn() };
+    const ok = await waitForNav(page, 5000, logger);
+    expect(ok).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('导航等待异常'));
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('检测到导航 Frame 脱离'));
+  });
+
+  it('普通超时返回 false 并记录 warn 日志', async () => {
     const page = {
       waitForNavigation: vi.fn().mockRejectedValue(new Error('Navigation timeout')),
     };

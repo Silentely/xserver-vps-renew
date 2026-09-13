@@ -10,7 +10,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NOOP_LOGGER, getTokyoDateString } from './utils.mjs';
-import { waitForNav, getText, getBodyText, waitForSelectorSoft } from './page-utils.mjs';
+import { waitForNav, getText, getBodyText, waitForSelectorSoft, waitForPageReady } from './page-utils.mjs';
 import {
   isRenewalDue,
   buildRenewUrl,
@@ -82,6 +82,9 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
     ]);
   }
 
+  // 提交后确保新页面上下文稳定挂载，防 detached Frame 瞬态报错
+  await waitForPageReady(page, 15_000, logger);
+
   if (page.url().includes('/login/')) {
     const pageHint = loginErrorText ? `（页面提示: ${loginErrorText}）` : '';
     throw new Error(`登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。${pageHint}`);
@@ -100,6 +103,7 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
  * @param {{ config?: object, logger?: object }} [ctx]
  */
 export async function ensureAgreementAccepted(page, { config, logger = NOOP_LOGGER } = {}) {
+  await waitForPageReady(page, 10_000, logger);
   if (!page.url().includes('/xapanel/myaccount/agreement')) {
     return;
   }
@@ -123,6 +127,7 @@ export async function ensureAgreementAccepted(page, { config, logger = NOOP_LOGG
     throw manualConfirmError('同意页未找到提交按钮（action_user_agreement_do），可能为官方改版，需人工确认。');
   }
   await Promise.all([waitForNav(page, config.NAVIGATION_TIMEOUT, logger), submitBtn.click()]);
+  await waitForPageReady(page, 15_000, logger);
 
   // 校验：提交后仍停留在同意页说明同意未生效，直接抛错避免后续误判
   if (page.url().includes('/xapanel/myaccount/agreement')) {

@@ -1,11 +1,92 @@
 /**
  * 页面通用工具
- * 浏览器交互共享原语：导航等待、元素文本、正文读取
+ * 浏览器交互共享原语：导航等待、元素文本、正文读取、Frame 脱离保护
  * （跨流程复用，避免在编排文件与各流程中重复实现）
  */
 
 import { NOOP_LOGGER } from './utils.mjs';
 import { extractExpireDateFromText } from './renewal-logic.mjs';
+
+/**
+ * 判断错误是否属于 Puppeteer Frame 脱离 / 上下文销毁类瞬态错误
+ * 页面重定向、刷新或 iframe 重建时，操作可能命中失效的旧执行上下文
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isFrameDetachError(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('detached frame')
+    || msg.includes('frame was detached')
+    || msg.includes('execution context was destroyed')
+    || msg.includes('cannot find context with specified id')
+    || msg.includes('frame is detached');
+}
+
+/**
+ * 等待页面上下文就绪（防止在 frame 替换/重定向瞬间调用 evaluate 崩溃）
+ * @param {import('puppeteer').Page} page
+ * @param {number} [timeout=10000]
+ * @param {object} [logger=NOOP_LOGGER]
+ * @returns {Promise<boolean>}
+ */
+export async function waitForPageReady(page, timeout = 10_000, logger = NOOP_LOGGER) {
+  if (typeof page?.evaluate !== 'function') return true;
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      await page.evaluate(() => document.readyState);
+      return true;
+    } catch (e) {
+      if (isFrameDetachError(e)) {
+        await new Promise((r) => setTimeout(r, 200));
+        continue;
+      }
+      logger.warn(`等待页面上下文就绪异常: ${e.message}`);
+      return false;
+    }
+  }
+  logger.warn(`等待页面上下文就绪超时（${timeout}ms）`);
+  return false;
+}
+
+/**
+ * 安全执行 evaluate，若遇 Frame detach 自动原地重试，支持缺省降级
+ * @param {import('puppeteer').Page} page
+ * @param {Function|string} pageFunction
+ * @param {any} [defaultValue=undefined]
+ * @param {number} [maxRetries=3]
+ * @param {number} [retryDelayMs=500]
+ * @param {object} [logger=NOOP_LOGGER]
+ */
+export async function safeEvaluate(
+  page,
+  pageFunction,
+  defaultValue = undefined,
+  maxRetries = 3,
+  retryDelayMs = 500,
+  logger = NOOP_LOGGER,
+) {
+  if (typeof page?.evaluate !== 'function') return defaultValue;
+  let lastError;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await page.evaluate(pageFunction);
+    } catch (e) {
+      lastError = e;
+      if (isFrameDetachError(e) && attempt < maxRetries) {
+        logger.debug?.(`safeEvaluate 遇到 Frame 脱离，第 ${attempt + 1}/${maxRetries} 次等待重试...`);
+        await new Promise((r) => setTimeout(r, retryDelayMs));
+        continue;
+      }
+      break;
+    }
+  }
+  if (defaultValue !== undefined) {
+    logger.warn?.(`safeEvaluate 失败，回退到默认值: ${lastError?.message}`);
+    return defaultValue;
+  }
+  throw lastError;
+}
 
 /**
  * 等待导航完成，返回布尔值表示导航是否成功
@@ -17,9 +98,14 @@ import { extractExpireDateFromText } from './renewal-logic.mjs';
 export async function waitForNav(page, timeout = 30_000, logger = NOOP_LOGGER) {
   try {
     await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout });
+    await waitForPageReady(page, 5000, logger);
     return true;
   } catch (e) {
     logger.warn(`⚠️ 导航等待异常（已忽略）: ${e.message}`);
+    if (isFrameDetachError(e)) {
+      logger.info?.('检测到导航 Frame 脱离（页面重定向中），等待新页面上下文就绪...');
+      return await waitForPageReady(page, Math.min(timeout, 10_000), logger);
+    }
     return false;
   }
 }

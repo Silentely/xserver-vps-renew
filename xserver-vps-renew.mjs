@@ -32,7 +32,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
-import { safeClosePage, extractNewExpireDate } from './src/page-utils.mjs';
+import { safeClosePage, extractNewExpireDate, safeEvaluate } from './src/page-utils.mjs';
 
 // 页面流程（登录/同意页/到期检查/续期确认/验证码提交）
 import {
@@ -621,13 +621,26 @@ async function main() {
     // 未同意时面板各页均被重定向回同意页，造成「未找到免费 VPS」）
     await ensureAgreementAccepted(page, { config: CONFIG, logger: LOGGER });
 
-    const fingerprint = await page.evaluate(() => ({
-      deviceMemory: navigator.deviceMemory || 'N/A',
-      hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
-      platform: navigator.platform,
-      language: navigator.language,
-      webdriver: navigator.webdriver || false,
-    }));
+    const fingerprint = await safeEvaluate(
+      page,
+      () => ({
+        deviceMemory: navigator.deviceMemory || 'N/A',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+        platform: navigator.platform,
+        language: navigator.language,
+        webdriver: navigator.webdriver || false,
+      }),
+      {
+        deviceMemory: 'N/A',
+        hardwareConcurrency: 'N/A',
+        platform: 'N/A',
+        language: 'N/A',
+        webdriver: false,
+      },
+      3,
+      500,
+      LOGGER,
+    );
     // 指纹体检：stealth 失效（webdriver=true）等高风险信号在启动时即告警
     for (const risk of analyzeFingerprintHealth(fingerprint)) {
       logWarn(`指纹体检: ${risk}`);
