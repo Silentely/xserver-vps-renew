@@ -19,7 +19,9 @@ export function isFrameDetachError(error) {
     || msg.includes('frame was detached')
     || msg.includes('execution context was destroyed')
     || msg.includes('cannot find context with specified id')
-    || msg.includes('frame is detached');
+    || msg.includes('frame is detached')
+    || msg.includes('target closed')
+    || msg.includes('session closed');
 }
 
 /**

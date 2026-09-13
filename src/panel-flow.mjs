@@ -10,7 +10,7 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NOOP_LOGGER, getTokyoDateString } from './utils.mjs';
-import { waitForNav, getText, getBodyText, waitForSelectorSoft, waitForPageReady } from './page-utils.mjs';
+import { waitForNav, getText, getBodyText, waitForSelectorSoft, waitForPageReady, safeEvaluate } from './page-utils.mjs';
 import {
   isRenewalDue,
   buildRenewUrl,
@@ -165,7 +165,7 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
     await page.waitForSelector('tr:has(.freeServerIco)', { timeout: 10000 });
   } catch {
     logger.warn('等待免费 VPS 表格超时（10s），正在采集页面诊断信息...');
-    const diag = await page.evaluate(() => {
+    const diag = await safeEvaluate(page, () => {
       const firstTable = document.querySelector('table');
       return {
         url: location.href,
@@ -175,7 +175,7 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
         tableHtml: firstTable ? firstTable.outerHTML.slice(0, 800) : null,
         bodyText: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
       };
-    }).catch(() => null);
+    }, null, 3, 500, logger);
     if (diag) {
       logger.warn(
         `诊断: url=${diag.url} | freeServerIco=${diag.freeIcoCount} | tr=${diag.trCount}`
@@ -196,7 +196,7 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
 
   // 页面端仅提取原始文本（DOM 上下文不做业务判定），
   // 服务器名/规格解析收敛到纯函数 extractVpsInfoFromCellTexts（可单测）
-  const result = await page.evaluate(() => {
+  const result = await safeEvaluate(page, () => {
     const row = document.querySelector('tr:has(.freeServerIco)');
     if (!row) {
       return null;
@@ -211,7 +211,7 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
       cellTexts: Array.from(row.querySelectorAll('td'))
         .map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
     };
-  });
+  }, null, 3, 500, logger);
 
   if (!result) {
     // 未停留在 VPS 面板页（URL 不含 /xvps/）说明被官方新增/变更的确认页拦截，
