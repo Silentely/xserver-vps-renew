@@ -217,6 +217,6 @@ describe('Supercronic PID 1 启动兼容性（#8）', () => {
     const [, minor, patch] = versionMatch;
     const includesReaperFix = Number(minor) > 2 || (Number(minor) === 2 && Number(patch) >= 36);
     expect(includesReaperFix, 'Supercronic v0.2.33-v0.2.35 存在 PID 1 ForkExec 缺陷').toBe(true);
-    expect(entrypoint).toMatch(/exec \/usr\/local\/bin\/supercronic \/app\/crontab/);
+    expect(entrypoint).toMatch(/exec \/usr\/local\/bin\/supercronic -passthrough-logs \/app\/crontab/);
   });
 });
