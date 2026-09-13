@@ -78,7 +78,8 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuse
 # 安装 supercronic（多阶段编译产物，Go 1.26.6+ 构建）
 COPY --from=supercronic-build /go/bin/supercronic /usr/local/bin/supercronic
 
-USER appuser
+# 保持 root 入口以便挂载卷权限自愈并降权至 appuser
+# USER appuser
 
 # 定时模式：supercronic；执行中：node 主脚本；均不在则视为不健康
 HEALTHCHECK --interval=30m --timeout=10s --retries=3 \
