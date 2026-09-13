@@ -11,6 +11,23 @@ ts() {
 }
 
 # ============================================================
+# 挂载卷权限自动修复与非 root 降权
+# 若以 root 启动（如 docker compose 挂载宿主机 ./data），自动修复挂载卷权限并降权至 appuser
+# ============================================================
+if [ "$(id -u)" = "0" ]; then
+    TARGET_DATA_DIR="${CHROME_USER_DATA:-/data/chrome-profile}"
+    mkdir -p "$TARGET_DATA_DIR" /var/log /tmp/.X11-unix
+    chown -R appuser:appuser /data /app /var/log /tmp/.X11-unix 2>/dev/null || true
+    chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+    chmod -R 777 "$TARGET_DATA_DIR" 2>/dev/null || true
+    if command -v gosu >/dev/null 2>&1; then
+        exec gosu appuser "$0" "$@"
+    else
+        exec su -p -s /bin/bash appuser -c 'exec "$@"' -- "$0" "$@"
+    fi
+fi
+
+# ============================================================
 # 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
 # ============================================================
 if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] && [ -x /app/diagnostics.sh ]; then

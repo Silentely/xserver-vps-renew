@@ -35,6 +35,7 @@ screenshots/
 
 # Chrome 用户数据
 chrome-profile/
+data/
 .full-review/
 
 # EvoMap / Evolver

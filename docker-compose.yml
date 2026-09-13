@@ -2,6 +2,8 @@ services:
   xserver-renew:
     image: ghcr.io/silentely/xserver-vps-renew:latest
     container_name: xserver-vps-renew
+    # 设为 root 启动，entrypoint 启动时会自动修复 ./data 挂载目录读写权限并安全降权至 appuser
+    user: "root"
     env_file: .env
     environment:
       - TZ=Asia/Tokyo
@@ -11,7 +13,8 @@ services:
       # 与 Chrome 用户数据同卷持久化，避免重启后丢失续期历史
       - RENEWAL_STATUS_FILE=/data/chrome-profile/renewal-status.json
     volumes:
-      - chrome-data:/data/chrome-profile
+      # 挂载到当前目录下的 ./data，便于随时查看 renewal-status.json 与状态
+      - ./data:/data/chrome-profile
     shm_size: "2gb"
     restart: unless-stopped
     logging:
@@ -25,6 +28,3 @@ services:
       interval: 30m
       timeout: 10s
       retries: 3
-
-volumes:
-  chrome-data:
