@@ -3,6 +3,8 @@
  * 负责验证码识别、标准化、平假名转换
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { fetchWithTimeout, NOOP_LOGGER } from './utils.mjs';
 
 /** 验证码标准长度 */
@@ -210,5 +212,47 @@ export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER) {
   } catch (error) {
     logger.warn(`❌ Keras 模型 API 识别失败: ${error.message}`);
     throw error;
+  }
+}
+
+/**
+ * 保存验证码样本到数据集目录（方案二：数据沉淀）
+ * @param {string} imgDataUri - Base64 格式图片 (data:image/...)
+ * @param {object} [options]
+ * @param {'verified'|'unlabeled'} [options.type='verified'] - verified: 100% 正确样本, unlabeled: 待打标错题样本
+ * @param {string} [options.label=''] - 预测值或标签
+ * @param {string} [options.baseDir='/data/captcha-dataset'] - 数据集根目录
+ * @param {Function} [options.logger] - 日志函数
+ * @returns {string|null} - 写入成功后的文件路径，失败返回 null
+ */
+export function saveCaptchaSample(imgDataUri, {
+  type = 'verified',
+  label = '',
+  baseDir = '/data/captcha-dataset',
+  logger = NOOP_LOGGER,
+} = {}) {
+  try {
+    if (!imgDataUri || typeof imgDataUri !== 'string') return null;
+    const match = imgDataUri.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+    if (!match) return null;
+
+    const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    const targetSubdir = type === 'verified' ? 'verified' : 'unlabeled';
+    const targetDir = path.resolve(baseDir, targetSubdir);
+
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const cleanLabel = (label || 'unknown').replace(/[^a-zA-Z0-9぀-ゟ゠-ヿ_-]/g, '');
+    const randSuffix = Math.random().toString(36).slice(2, 6);
+    const filename = `${cleanLabel}_${Date.now()}_${randSuffix}.${ext}`;
+    const filePath = path.join(targetDir, filename);
+
+    fs.writeFileSync(filePath, buffer);
+    logger.debug(`[captcha-dataset] 验证码样本已保存 (${type}): ${filePath}`);
+    return filePath;
+  } catch (err) {
+    logger.warn(`[captcha-dataset] 保存样本失败: ${err.message}`);
+    return null;
   }
 }

@@ -50,3 +50,7 @@ assets/gep/
 coding-trajectories.jsonl
 .env.evolver
 .env.evolver.local
+# Python
+__pycache__/
+*.py[cod]
+*.class

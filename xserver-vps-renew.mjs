@@ -206,6 +206,9 @@ const CONFIG = {
   LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
   // 强制保存 Turnstile 求解前后截图（默认仅 LOG_LEVEL=debug 时写盘；排查问题时可在 info 级别开启）
   SAVE_TURNSTILE_SCREENSHOTS: parseEnvBool(process.env.SAVE_TURNSTILE_SCREENSHOTS, false),
+  // 验证码数据集自动收集（用于重训模型，方案二）
+  SAVE_CAPTCHA_DATASET: parseEnvBool(process.env.SAVE_CAPTCHA_DATASET, false),
+  CAPTCHA_DATASET_DIR: process.env.CAPTCHA_DATASET_DIR || "/data/captcha-dataset",
 
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',

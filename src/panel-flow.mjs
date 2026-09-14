@@ -26,7 +26,7 @@ import {
 } from './renewal-logic.mjs';
 import { waitForTurnstile, getTurnstileToken } from './turnstile-flow.mjs';
 import { isTurnstileOutageError } from './turnstile.mjs';
-import { recognizeCaptcha } from './captcha.mjs';
+import { recognizeCaptcha, saveCaptchaSample } from './captcha.mjs';
 
 /** 构造「需要人工确认」错误：自动同意处理无效，需用户登录手动确认后重跑容器 */
 function manualConfirmError(message) {
@@ -575,12 +575,35 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       if (evaluation.status === 'success') {
         logger.info(`✅ 页面确认续期成功！检测到: "${evaluation.matched}"`);
+        if (config?.SAVE_CAPTCHA_DATASET && imgDataUri) {
+          const savedPath = saveCaptchaSample(imgDataUri, {
+            type: 'verified',
+            label: code,
+            baseDir: config.CAPTCHA_DATASET_DIR,
+            logger,
+          });
+          if (savedPath) {
+            logger.info(`📦 真实正样本已沉淀至数据集: ${savedPath}`);
+          }
+        }
         return lastTurnstileMeta;
       }
 
       if (evaluation.status === 'retry') {
-        if (lastTurnstileMeta.turnstileProvider && lastTurnstileMeta.turnstileProvider !== 'prefilled') {
+        const isAuthFailure = evaluation.reason.includes('認証に失敗') || evaluation.reason.includes('认证失败');
+        if (isAuthFailure && lastTurnstileMeta.turnstileProvider && lastTurnstileMeta.turnstileProvider !== 'prefilled') {
           rejectedProviders.add(lastTurnstileMeta.turnstileProvider);
+        }
+        if (config?.SAVE_CAPTCHA_DATASET && imgDataUri && isAuthFailure) {
+          const savedPath = saveCaptchaSample(imgDataUri, {
+            type: 'unlabeled',
+            label: `failed_${code}`,
+            baseDir: config.CAPTCHA_DATASET_DIR,
+            logger,
+          });
+          if (savedPath) {
+            logger.info(`📦 识别错误样本已存入待打标集: ${savedPath}`);
+          }
         }
         if (attempt < maxRetries) {
           logger.info(`❌ 第 ${attempt} 次尝试失败: ${evaluation.reason}`);

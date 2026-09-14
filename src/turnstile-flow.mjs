@@ -211,7 +211,7 @@ export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_L
  * @param {{ config?: object, logger?: object }} [opts] - config 为 CONFIG（含各超时与提供商配置）
  * @returns {Promise<{ ok: boolean, providerName?: string|null, attempts?: object[] }>}
  */
-export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, excludeProviders = [] } = {}) {
+export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, excludeProviders = [], solveFn = solveTurnstileWithFailover } = {}) {
   logger.info('正在处理 Cloudflare Turnstile...');
 
   const cfContainer = await page.$('.cf-turnstile');
@@ -301,7 +301,7 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
     }
 
     try {
-      const result = await solveTurnstileWithFailover(page.url(), params, config, logger, {
+      const result = await solveFn(page.url(), params, config, logger, {
         timeout: config.TURNSTILE_API_TIMEOUT,
         maxFailuresPerProvider: config.TURNSTILE_PROVIDER_MAX_FAILURES,
         providers,
@@ -343,6 +343,16 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
         logger.debug(`Turnstile token 已就绪，长度: ${verifyToken.length}`);
       } else {
         logger.debug('cf-turnstile-response 无值，callback 可能已处理 token');
+      }
+
+      const hasEffectiveToken = Boolean(injected.callbackCalled || injected.ok || verifyToken);
+      if (!hasEffectiveToken) {
+        logger.warn('Turnstile token 注入后未找到输入元素、未触发回调且无有效 token');
+        return {
+          ok: false,
+          reason: 'Turnstile token 注入失败（未找到输入字段且未触发回调）',
+          attempts: Array.isArray(result.attempts) ? result.attempts : [],
+        };
       }
 
       // UA 对齐尽力而为：失败只记 warn，不回滚已注入 token、不判求解失败
