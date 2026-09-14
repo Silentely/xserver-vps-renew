@@ -191,7 +191,8 @@ export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_L
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await injectFn(page, token, logger);
+      const res = await injectFn(page, token, logger, { returnDetails: true });
+      return typeof res === "boolean" ? { ok: res, callbackCalled: false } : res;
     } catch (error) {
       lastError = error;
       if (!isFrameDetachError(error)) throw error;
@@ -210,7 +211,7 @@ export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_L
  * @param {{ config?: object, logger?: object }} [opts] - config 为 CONFIG（含各超时与提供商配置）
  * @returns {Promise<{ ok: boolean, providerName?: string|null, attempts?: object[] }>}
  */
-export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = {}) {
+export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, excludeProviders = [] } = {}) {
   logger.info('正在处理 Cloudflare Turnstile...');
 
   const cfContainer = await page.$('.cf-turnstile');
@@ -248,13 +249,19 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
   logger.debug(`检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
 
   logger.debug('等待 Turnstile 渲染...');
-  // 软等待 iframe 出现替代固定 3s：渲染快时立即继续，慢时最坏仍等 3s（行为下限不变）
-  await waitForSelectorSoft(
+  const renderWaitMs = config?.TURNSTILE_RENDER_WAIT_MS || 8000;
+  // 软等待 iframe 出现替代固定时间：渲染快时立即继续，慢时最坏等 renderWaitMs
+  const iframeFound = await waitForSelectorSoft(
     page,
     'iframe[src*="challenges.cloudflare.com"], .cf-turnstile iframe',
-    3000,
+    renderWaitMs,
     logger,
   );
+  if (iframeFound) {
+    logger.debug(`Turnstile iframe 在 ${renderWaitMs}ms 内已渲染完成`);
+  } else {
+    logger.debug(`Turnstile iframe 未在 ${renderWaitMs}ms 内渲染，准备 API 求解`);
+  }
 
   try {
     // 截图按需写入：仅 debug 级别（或显式 SAVE_TURNSTILE_SCREENSHOTS=true）时落盘，
@@ -268,7 +275,20 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
   }
 
   // Docker 环境自然通过成功率极低；有 key 时直接走多平台 API failover
-  const providers = listTurnstileProviders(config);
+  const allProviders = listTurnstileProviders(config);
+  let providers = allProviders;
+
+  if (Array.isArray(excludeProviders) && excludeProviders.length > 0) {
+    const filtered = allProviders.filter((p) => !excludeProviders.includes(p.name));
+    if (filtered.length > 0) {
+      logger.info(
+        `Turnstile 排除曾失败平台 [${excludeProviders.join(', ')}]，本轮候选: [${filtered.map((p) => p.name).join(' → ')}]`,
+      );
+      providers = filtered;
+    } else {
+      logger.debug(`所有候选平台均在排除列表 [${excludeProviders.join(', ')}]，回退至完整候选列表`);
+    }
+  }
 
   if (providers.length > 0) {
     logger.info('Turnstile: 使用多平台 API failover 求解');
@@ -284,6 +304,7 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER } = 
       const result = await solveTurnstileWithFailover(page.url(), params, config, logger, {
         timeout: config.TURNSTILE_API_TIMEOUT,
         maxFailuresPerProvider: config.TURNSTILE_PROVIDER_MAX_FAILURES,
+        providers,
       });
       const providerLabel = resolveTurnstileProviderLabel(result.providerName) || result.providerName;
       // 求解成功摘要以主脚本 [步骤N] 日志行为准（info），此处 debug 保留同名信息避免重复输出

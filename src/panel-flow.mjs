@@ -495,6 +495,7 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
   let lastError = null;
   /** @type {{ turnstileProvider: string|null, turnstileAttempts: object[] }} */
   let lastTurnstileMeta = { turnstileProvider: null, turnstileAttempts: [] };
+  const rejectedProviders = new Set();
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -529,7 +530,11 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       logger.info('验证码已填入输入框。');
 
       // 等待 Turnstile（返回 { ok, providerName, attempts }）
-      const turnstileResult = await waitForTurnstile(page, { config, logger });
+      const turnstileResult = await waitForTurnstile(page, {
+        config,
+        logger,
+        excludeProviders: Array.from(rejectedProviders),
+      });
       lastTurnstileMeta = {
         turnstileProvider: turnstileResult?.providerName || (turnstileAlreadyPassed ? 'prefilled' : null),
         turnstileAttempts: Array.isArray(turnstileResult?.attempts) ? turnstileResult.attempts : [],
@@ -542,6 +547,14 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       // 提交表单
       logger.info('正在提交表单...');
+
+      // 提交前现场快照与诊断日志：记录关键要素，便于排查「認証に失敗しました」归因
+      const currentToken = await getTurnstileToken(page, logger).catch(() => '');
+      logger.info(
+        `🔍 提交诊断 | 验证码: "${code}" (长 ${code.length}) | `
+        + `Turnstile: 来源=${lastTurnstileMeta.turnstileProvider || 'none'}, Token长=${currentToken ? currentToken.length : 0} | `
+        + `URL: ${page.url()}`,
+      );
 
       const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
       if (!submitBtn) throw new Error('未找到提交按钮。');
@@ -566,8 +579,17 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       }
 
       if (evaluation.status === 'retry') {
+        if (lastTurnstileMeta.turnstileProvider && lastTurnstileMeta.turnstileProvider !== 'prefilled') {
+          rejectedProviders.add(lastTurnstileMeta.turnstileProvider);
+        }
         if (attempt < maxRetries) {
           logger.info(`❌ 第 ${attempt} 次尝试失败: ${evaluation.reason}`);
+          if (evaluation.reason.includes('認証に失敗') || evaluation.reason.includes('认证失败')) {
+            logger.warn(
+              `⚠️ 认证失败诊断: 本次提交验证码="${code}"，Turnstile平台=[${lastTurnstileMeta.turnstileProvider || '未知'}]。`
+              + (rejectedProviders.size > 0 ? ` 下一轮将优先切换其他打码平台。` : ''),
+            );
+          }
           logger.info(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
           await navigateForCaptchaRetry(page, currentUrl, renewUrl, { config, logger });
           continue;

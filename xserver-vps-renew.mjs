@@ -154,6 +154,8 @@ const CONFIG = {
   NAVIGATION_TIMEOUT: parsePositiveInt(process.env.NAVIGATION_TIMEOUT_MS, 30_000, { min: 5_000, max: 180_000 }),
   TURNSTILE_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_TIMEOUT_MS, 60_000, { min: 10_000, max: 300_000 }),
   TURNSTILE_API_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_API_TIMEOUT_MS, 120_000, { min: 15_000, max: 300_000 }),
+  // Turnstile iframe 渲染软等待时间（ms），容器环境建议 8000-15000
+  TURNSTILE_RENDER_WAIT_MS: parsePositiveInt(process.env.TURNSTILE_RENDER_WAIT_MS, 8_000, { min: 1_000, max: 30_000 }),
   CAPTCHA_MAX_RETRY: parsePositiveInt(process.env.CAPTCHA_MAX_RETRY, 3, { min: 1, max: 10 }),
   // 提交后等待服务端处理结果的轮询上限（官方 /extend/do 处理实测 60-90s；
   // 过早判定失败会中止在途 POST，需覆盖服务端处理时间）

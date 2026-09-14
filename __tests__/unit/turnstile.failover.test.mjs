@@ -271,6 +271,18 @@ describe('solveTurnstileWithFailover', () => {
     expect(solveFn).toHaveBeenCalledTimes(4); // 2 platforms × 2 failures
   });
 
+  it('支持传入 options.providers 覆盖默认配置列表', async () => {
+    const solveFn = vi.fn().mockResolvedValue({ token: 'tok-custom', userAgent: null });
+    const customList = [{ name: 'CustomProvider' }];
+    const result = await solveTurnstileWithFailover(
+      'https://ex.com', params, makeConfig(), logger,
+      { solveFn, providers: customList },
+    );
+    expect(result.token).toBe('tok-custom');
+    expect(result.providerName).toBe('CustomProvider');
+    expect(solveFn).toHaveBeenCalledWith('https://ex.com', params, expect.any(Object), logger, expect.any(Number), customList[0]);
+  });
+
   it('默认 maxFailures 为 3', () => {
     expect(DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES).toBe(3);
   });

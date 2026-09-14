@@ -18,7 +18,8 @@ if [ "$(id -u)" = "0" ]; then
     echo "$LOG_PREFIX 🔧 正在初始化挂载卷权限并降权至 appuser..."
     TARGET_DATA_DIR="${CHROME_USER_DATA:-/data/chrome-profile}"
     mkdir -p "$TARGET_DATA_DIR" /var/log /tmp/.X11-unix
-    chown -R appuser:appuser /data /var/log /tmp/.X11-unix 2>/dev/null || true
+    chown -R appuser:appuser /data /var/log 2>/dev/null || true
+    chown root:root /tmp/.X11-unix 2>/dev/null || true
     chmod 1777 /tmp/.X11-unix 2>/dev/null || true
     chmod -R 777 "$TARGET_DATA_DIR" 2>/dev/null || true
     if command -v gosu >/dev/null 2>&1; then
@@ -199,6 +200,7 @@ export TURNSTILE_TIMEOUT_MS="${TURNSTILE_TIMEOUT_MS:-}"
 export TURNSTILE_API_TIMEOUT_MS="${TURNSTILE_API_TIMEOUT_MS:-}"
 export CAPTCHA_MAX_RETRY="${CAPTCHA_MAX_RETRY:-}"
 export SUBMISSION_RESULT_TIMEOUT_MS="${SUBMISSION_RESULT_TIMEOUT_MS:-}"
+export TURNSTILE_RENDER_WAIT_MS="${TURNSTILE_RENDER_WAIT_MS:-}"
 
 echo "$LOG_PREFIX ====== 定时任务触发 $(ts) ======"
 

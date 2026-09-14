@@ -31,4 +31,17 @@ describe('injectTurnstileToken', () => {
     const ok = await injectTurnstileToken(page, 'token-abc', { info: vi.fn() });
     expect(ok).toBe(false);
   });
+
+  it('returnDetails 为 true 时返回详细对象', async () => {
+    const page = makePage(async () => ({ injectedCount: 2, callbackCalled: true }));
+    const logger = { info: vi.fn() };
+    const res = await injectTurnstileToken(page, 'token-abc', logger, { returnDetails: true });
+    expect(res).toEqual({ ok: true, injectedCount: 2, callbackCalled: true });
+  });
+
+  it('空 token 且 returnDetails 为 true 时返回 ok: false 对象', async () => {
+    const page = makePage(async () => ({ injectedCount: 1, callbackCalled: true }));
+    const res = await injectTurnstileToken(page, '', { info: vi.fn() }, { returnDetails: true });
+    expect(res).toEqual({ ok: false, injectedCount: 0, callbackCalled: false });
+  });
 });

@@ -707,7 +707,9 @@ export async function solveTurnstileWithFailover(
   );
   const solveFn = options.solveFn || solveTurnstileViaAPI;
 
-  const providers = listTurnstileProviders(config);
+  const providers = Array.isArray(options.providers) && options.providers.length > 0
+    ? options.providers
+    : listTurnstileProviders(config);
   if (providers.length === 0) {
     throw new Error('未配置 Turnstile 求解 API 密钥');
   }
@@ -804,10 +806,10 @@ export async function solveTurnstileWithFailover(
  * @param {Function} logger - 日志函数
  * @returns {Promise<boolean>} - 是否成功注入
  */
-export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER) {
+export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { returnDetails = false } = {}) {
   if (!token) {
     logger.info('Turnstile token 为空，跳过注入');
-    return false;
+    return returnDetails ? { ok: false, injectedCount: 0, callbackCalled: false } : false;
   }
 
   const injected = await page.evaluate((tkn) => {
@@ -850,5 +852,11 @@ export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER) {
   }, token);
 
   logger.info(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
-  return injected.injectedCount > 0;
+  return returnDetails
+    ? {
+      ok: injected.injectedCount > 0,
+      injectedCount: injected.injectedCount,
+      callbackCalled: Boolean(injected.callbackCalled),
+    }
+    : injected.injectedCount > 0;
 }
