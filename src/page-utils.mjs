@@ -106,7 +106,7 @@ export async function waitForNav(page, timeout = 30_000, logger = NOOP_LOGGER) {
     logger.warn(`⚠️ 导航等待异常（已忽略）: ${e.message}`);
     if (isFrameDetachError(e)) {
       logger.info?.('检测到导航 Frame 脱离（页面重定向中），等待新页面上下文就绪...');
-      return await waitForPageReady(page, Math.min(timeout, 10_000), logger);
+      return await waitForPageReady(page, timeout, logger);
     }
     return false;
   }

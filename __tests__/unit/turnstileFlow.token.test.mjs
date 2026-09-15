@@ -100,4 +100,80 @@ describe('waitForTurnstile token gate', () => {
     expect(result.reason).toContain('Turnstile token 注入失败');
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('未找到输入元素'));
   });
+
+  it('waitForTurnstile 求解成功后将页面上提取的 callbackName 透传给注入流程', async () => {
+    let capturedCallbackName = null;
+    const mockPage = {
+      url: vi.fn().mockReturnValue('https://example.com'),
+      evaluate: vi.fn().mockImplementation(async (fn, ...args) => {
+        if (Array.isArray(args[0])) {
+          return {
+            sitekey: '0x4AAAAAA',
+            action: '',
+            cData: '',
+            chlPageData: '',
+            callbackName: 'pageTurnstileCb',
+          };
+        }
+        if (args[1] === 'pageTurnstileCb') {
+          capturedCallbackName = args[1];
+          return { injectedCount: 1, callbackCalled: true };
+        }
+        return '';
+      }),
+      $: vi.fn().mockResolvedValue({ asElement: () => ({}) }),
+      $$: vi.fn().mockResolvedValue([]),
+    };
+
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = await waitForTurnstile(mockPage, {
+      config: { CAPSOLVER_API_KEY: 'mock-key', TURNSTILE_RENDER_WAIT_MS: 50 },
+      logger: mockLogger,
+      solveFn: vi.fn().mockResolvedValue({
+        token: 'tok-123',
+        providerName: 'CapSolver',
+        attempts: [],
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedCallbackName).toBe('pageTurnstileCb');
+  });
+
+  it('waitForTurnstile 当 API UA 不匹配且 UA 对齐失败时，返回 ok: false 阻断提交', async () => {
+    const mockPage = {
+      url: vi.fn().mockReturnValue('https://example.com'),
+      evaluate: vi.fn().mockImplementation(async (fn, ...args) => {
+        if (Array.isArray(args[0])) {
+          return { sitekey: '0x4AAAAAA', callbackName: '' };
+        }
+        if (fn.toString().includes('navigator.userAgent')) {
+          return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
+        }
+        if (typeof args[0] === 'string' && args[0].startsWith('tok-')) {
+          return { injectedCount: 1, callbackCalled: true };
+        }
+        return '';
+      }),
+      $: vi.fn().mockResolvedValue({ asElement: () => ({}) }),
+      $$: vi.fn().mockResolvedValue([]),
+      setUserAgent: vi.fn().mockRejectedValue(new Error('CDP protocol timeout')),
+    };
+
+    const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = await waitForTurnstile(mockPage, {
+      config: { CAPSOLVER_API_KEY: 'mock-key', TURNSTILE_RENDER_WAIT_MS: 50 },
+      logger: mockLogger,
+      solveFn: vi.fn().mockResolvedValue({
+        token: 'tok-mismatched',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        providerName: 'CapSolver',
+        attempts: [],
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('UA 对齐失败');
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('对齐 UA 失败'));
+  });
 });

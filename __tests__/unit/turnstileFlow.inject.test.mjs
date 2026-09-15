@@ -52,4 +52,21 @@ describe('injectTurnstileTokenWithRetry', () => {
     expect(injectFn).toHaveBeenCalledTimes(1);
     expect(logger.warn).not.toHaveBeenCalled();
   });
+  it('正确透传 callbackName 给底层 injectFn', async () => {
+    const injectFn = vi.fn().mockResolvedValue({ ok: true, callbackCalled: true });
+    const logger = { warn: vi.fn(), debug: vi.fn() };
+    await injectTurnstileTokenWithRetry({}, 'tok-123', logger, {
+      injectFn,
+      callbackName: 'myTurnstileCb',
+    });
+    expect(injectFn).toHaveBeenCalledWith(
+      {},
+      'tok-123',
+      logger,
+      expect.objectContaining({
+        returnDetails: true,
+        callbackName: 'myTurnstileCb',
+      }),
+    );
+  });
 });

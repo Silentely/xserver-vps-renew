@@ -28,6 +28,7 @@
 import { addExtra } from 'puppeteer-extra';
 import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -222,6 +223,7 @@ const CONFIG = {
   ),
 
   // 传给 Turnstile 求解模块，保证 token 与浏览器 UA 一致
+  userAgent: DEFAULT_UA,
   DEFAULT_UA,
 
   // 状态持久化
@@ -581,8 +583,22 @@ async function main() {
       log('浏览器代理认证已设置');
     }
 
-    await page.setUserAgent(DEFAULT_UA);
-    logDebug(`浏览器 UA: ${DEFAULT_UA.substring(0, 60)}...`);
+    let actualUA = DEFAULT_UA;
+    try {
+      await Promise.race([
+        page.setUserAgent(DEFAULT_UA),
+        sleep(5000).then(() => {
+          throw new Error('page.setUserAgent 初始化超时（5000ms）');
+        }),
+      ]);
+      actualUA = await page.evaluate(() => navigator.userAgent).catch(() => DEFAULT_UA);
+    } catch (e) {
+      logWarn(`设置初始 UA 告警: ${e.message}`);
+      actualUA = await page.evaluate(() => navigator.userAgent).catch(() => DEFAULT_UA);
+    }
+    // 将实际生效的浏览器 UA 反哺回 CONFIG.userAgent，确保打码平台任务与浏览器严格同源
+    CONFIG.userAgent = actualUA;
+    logDebug(`浏览器实际生效 UA: ${actualUA.substring(0, 60)}...`);
     page.setDefaultTimeout(CONFIG.NAVIGATION_TIMEOUT);
 
     // debug 级别监听浏览器 console / 页面 JS 异常 / 失败请求：

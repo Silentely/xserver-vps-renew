@@ -187,11 +187,11 @@ function isFrameDetachError(error) {
  * @returns {Promise<object|boolean>} 透传 injectTurnstileToken 的返回值
  */
 export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_LOGGER, opts = {}) {
-  const { maxRetries = 2, retryDelayMs = 1500, injectFn = injectTurnstileToken } = opts;
+  const { maxRetries = 2, retryDelayMs = 1500, injectFn = injectTurnstileToken, callbackName = '' } = opts;
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await injectFn(page, token, logger, { returnDetails: true });
+      const res = await injectFn(page, token, logger, { returnDetails: true, callbackName });
       return typeof res === "boolean" ? { ok: res, callbackCalled: false } : res;
     } catch (error) {
       lastError = error;
@@ -259,6 +259,11 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
   );
   if (iframeFound) {
     logger.debug(`Turnstile iframe 在 ${renderWaitMs}ms 内已渲染完成`);
+    const tokenAfterRender = await getTurnstileToken(page, logger);
+    if (tokenAfterRender) {
+      logger.info('✅ Turnstile 在 iframe 渲染后已自然验证通过！');
+      return { ok: true, providerName: 'prefilled', attempts: [] };
+    }
   } else {
     logger.debug(`Turnstile iframe 未在 ${renderWaitMs}ms 内渲染，准备 API 求解`);
   }
@@ -316,7 +321,9 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
       // detached frame 抛错；对这类错误原地重试，避免把「已解出 token」误判为求解失败
       let injected;
       try {
-        injected = await injectTurnstileTokenWithRetry(page, result.token, logger);
+        injected = await injectTurnstileTokenWithRetry(page, result.token, logger, {
+          callbackName: params.callbackName,
+        });
       } catch (injectError) {
         logger.error(`Turnstile token 注入失败: ${injectError.message}`);
         return {
@@ -355,7 +362,7 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
         };
       }
 
-      // UA 对齐尽力而为：失败只记 warn，不回滚已注入 token、不判求解失败
+      // UA 严格对齐：当 API 返回不同 UA 时必须同步更新浏览器，否则 Cloudflare 将因 UA 不匹配直接拒绝
       if (result.userAgent) {
         try {
           const currentUA = await page.evaluate(() => navigator.userAgent);
@@ -364,15 +371,29 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
               `UA 不匹配，更新浏览器 UA 以匹配 API`
               + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
             );
-            await page.setUserAgent(result.userAgent);
+            // 设定严格超时（3000ms），避免 CDP Network.setUserAgentOverride 挂起 180s 导致 token 过期
+            await Promise.race([
+              page.setUserAgent(result.userAgent),
+              sleep(3000).then(() => {
+                throw new Error('page.setUserAgent 超时（3000ms）');
+              }),
+            ]);
+            // 二次确认实际 UA 已生效
+            const verifiedUA = await page.evaluate(() => navigator.userAgent).catch(() => '');
+            if (verifiedUA && needsUserAgentAlignment(verifiedUA, result.userAgent)) {
+              throw new Error(`浏览器实际 UA 未成功更新为 API UA（当前仍为: ${verifiedUA}）`);
+            }
             logger.debug('浏览器 UA 已对齐到打码平台返回值');
           } else {
             logger.debug('浏览器 UA 与 API 返回值一致或无需对齐');
           }
         } catch (uaError) {
-          logger.warn(
-            `对齐 UA 失败（已保留已注入 token，继续提交）: ${uaError.message}`,
-          );
+          logger.error(`对齐 UA 失败: ${uaError.message}`);
+          return {
+            ok: false,
+            reason: `UA 对齐失败（${uaError.message}），放弃使用 UA 不匹配的 token`,
+            attempts: Array.isArray(result.attempts) ? result.attempts : [],
+          };
         }
       }
 

@@ -545,7 +545,7 @@ export async function solveTurnstileViaAPI(
     proxyPort: config.PROXY_PORT,
     proxyLogin: config.PROXY_LOGIN,
     proxyPassword: config.PROXY_PASSWORD,
-    userAgent: config.DEFAULT_UA || '',
+    userAgent: config.userAgent || config.DEFAULT_UA || '',
   };
 
   const task = buildTurnstileTask(provider, params, taskConfig, websiteURL);
@@ -806,13 +806,13 @@ export async function solveTurnstileWithFailover(
  * @param {Function} logger - 日志函数
  * @returns {Promise<boolean>} - 是否成功注入
  */
-export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { returnDetails = false } = {}) {
+export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { returnDetails = false, callbackName = '' } = {}) {
   if (!token) {
     logger.info('Turnstile token 为空，跳过注入');
     return returnDetails ? { ok: false, injectedCount: 0, callbackCalled: false } : false;
   }
 
-  const injected = await page.evaluate((tkn) => {
+  const evaluateFn = (tkn, explicitCallback) => {
     const selectors = [
       'input[name="cf-turnstile-response"]',
       'textarea[name="cf-turnstile-response"]',
@@ -831,16 +831,49 @@ export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { 
     }
 
     let callbackCalled = false;
-    try {
-      const cfDiv = document.querySelector('.cf-turnstile[data-callback]');
-      if (cfDiv) {
-        const callbackName = cfDiv.getAttribute('data-callback');
-        if (callbackName && typeof window[callbackName] === 'function') {
-          window[callbackName](tkn);
-          callbackCalled = true;
-        }
+    let callbackError = null;
+
+    // 安全解析 dotted-path 函数，保留 receiver (this) 绑定，严禁使用 eval
+    const resolveFunction = (path) => {
+      if (!path || typeof path !== 'string') return null;
+      const clean = path.trim();
+      if (!/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(clean)) {
+        return null;
       }
-    } catch { /* 忽略回调异常 */ }
+      const parts = clean.split('.');
+      let receiver = window;
+      let current = window;
+      if (parts[0] === 'window') {
+        parts.shift();
+      }
+      for (const part of parts) {
+        if (current == null) return null;
+        receiver = current;
+        current = current[part];
+      }
+      return typeof current === 'function' ? { fn: current, receiver } : null;
+    };
+
+    // 候选回调列表：优先 explicitCallback，再检查 DOM 中的 data-callback，最后降级到默认 callbackTurnstile
+    const candidates = [
+      explicitCallback,
+      document.querySelector('.cf-turnstile[data-callback]')?.getAttribute('data-callback'),
+      document.querySelector('[data-callback]')?.getAttribute('data-callback'),
+      'callbackTurnstile',
+    ].filter(Boolean);
+
+    for (const name of candidates) {
+      try {
+        const resolved = resolveFunction(name);
+        if (resolved) {
+          resolved.fn.call(resolved.receiver, tkn);
+          callbackCalled = true;
+          break;
+        }
+      } catch (e) {
+        callbackError = e.message;
+      }
+    }
 
     const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
     if (submitBtn && submitBtn.disabled) {
@@ -848,15 +881,23 @@ export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { 
       submitBtn.removeAttribute('disabled');
     }
 
-    return { injectedCount, callbackCalled };
-  }, token);
+    return { injectedCount, callbackCalled, callbackError };
+  };
 
+  const injected = callbackName
+    ? await page.evaluate(evaluateFn, token, callbackName)
+    : await page.evaluate(evaluateFn, token);
+
+  if (injected.callbackError) {
+    logger.warn?.(`Turnstile 回调执行异常: ${injected.callbackError}`);
+  }
   logger.info(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
   return returnDetails
     ? {
       ok: injected.injectedCount > 0,
       injectedCount: injected.injectedCount,
       callbackCalled: Boolean(injected.callbackCalled),
+      ...(injected.callbackError ? { callbackError: injected.callbackError } : {}),
     }
     : injected.injectedCount > 0;
 }

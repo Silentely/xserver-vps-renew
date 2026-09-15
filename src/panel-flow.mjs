@@ -345,13 +345,47 @@ export async function handleRenewalConfirm(page, renewUrl, { config, logger = NO
   }
 
   logger.info('正在点击续期确认...');
-  await Promise.all([waitForNav(page, config.NAVIGATION_TIMEOUT, logger), extendBtn.click()]);
+  const [navOk] = await Promise.all([
+    waitForNav(page, config.NAVIGATION_TIMEOUT, logger),
+    extendBtn.click(),
+  ]);
+
+  if (!navOk) {
+    logger.warn('⚠️ 确认进入续期页导航未能在预期时间内完成，尝试确保页面上下文就绪...');
+    await waitForPageReady(page, config.NAVIGATION_TIMEOUT, logger);
+  }
 
   // conf 页：#5 用户反馈的拦截 URL；也可能是真正的验证码页
   const confBlocked = await detectBlockedPage(page, logger);
   if (confBlocked) return confBlocked;
 
-  logger.info(`已进入验证码页面: ${page.url()}`);
+  let currentUrl = '';
+  try {
+    currentUrl = page.url();
+  } catch (e) {
+    logger.debug(`获取当前页面 URL 异常: ${e.message}`);
+  }
+
+  // 业务校验 Invariant Gate：必须确认离开 index 申请页，或确实进入了验证码/Turnstile 页面
+  const isConfUrl = currentUrl.includes('/extend/conf');
+  const hasCaptchaFeatures = await page.evaluate(() => {
+    return Boolean(
+      document.querySelector('img[src^="data:"]')
+      || document.querySelector('[placeholder*="上の画像"]')
+      || document.querySelector('.cf-turnstile')
+      || document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+      || document.querySelector('input[name="cf-turnstile-response"]')
+    );
+  }).catch(() => false);
+
+  if (!isConfUrl && !hasCaptchaFeatures) {
+    if (currentUrl.includes('/extend/index')) {
+      throw new Error(`点击续期确认后仍停留在申请首页（${currentUrl}），未成功跳转至验证码确认页`);
+    }
+    throw new Error(`进入续期确认页异常，未检测到验证码特征（当前 URL: ${currentUrl || 'unknown'}）`);
+  }
+
+  logger.info(`已进入验证码页面: ${currentUrl}`);
   return { status: 'ready' };
 }
 
@@ -364,7 +398,16 @@ export async function handleRenewalConfirm(page, renewUrl, { config, logger = NO
  * @param {{ config?: object, logger?: object }} [ctx]
  */
 async function navigateForCaptchaRetry(page, currentUrl, renewUrl, { config, logger = NOOP_LOGGER } = {}) {
-  const nav = resolveCaptchaRetryNavigation(currentUrl, { renewUrl });
+  await waitForPageReady(page, config?.NAVIGATION_TIMEOUT || 30_000, logger);
+  let safeCurrentUrl = currentUrl;
+  if (!safeCurrentUrl) {
+    try {
+      safeCurrentUrl = page.url();
+    } catch {
+      safeCurrentUrl = '';
+    }
+  }
+  const nav = resolveCaptchaRetryNavigation(safeCurrentUrl, { renewUrl });
 
   if (nav.mode === 'renew_index') {
     logger.info(`⏭️ 重试：回到续期申请页再进入验证码（${nav.url}）`);
@@ -490,6 +533,9 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
   logger.info('正在处理验证码页面...');
   const renewUrl = typeof options?.renewUrl === 'string' ? options.renewUrl : null;
 
+  // 确保页面上下文稳定就绪（防止在上一阶段导航或代理重定向的瞬间调用 DOM API 崩溃）
+  await waitForPageReady(page, config?.NAVIGATION_TIMEOUT || 30_000, logger);
+
   // 最多重试 3 次（验证码识别错误时刷新重试）；下限 1 保证循环至少执行一次
   const maxRetries = Math.max(1, Number(config.CAPTCHA_MAX_RETRY) || 3);
   let lastError = null;
@@ -522,11 +568,18 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
         logger.info('✅ Turnstile 在验证码识别期间已提前通过！');
       }
 
-      // 填入验证码（模拟人类输入）
+      // 填入验证码（模拟人类输入，先清空可能残留的旧值）
       const captchaInput = await page.$('[placeholder*="上の画像"]');
       if (!captchaInput) throw new Error('未找到验证码输入框。');
-      await captchaInput.click();
+      await captchaInput.click({ clickCount: 3 });
+      await captchaInput.evaluate((el) => {
+        el.value = '';
+      });
       await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
+      await captchaInput.evaluate((el) => {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
       logger.info('验证码已填入输入框。');
 
       // 等待 Turnstile（返回 { ok, providerName, attempts }）
@@ -642,7 +695,14 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
         logger.info(`⏭️ 准备第 ${attempt + 1} 次尝试...`);
 
         try {
-          await navigateForCaptchaRetry(page, page.url(), renewUrl, { config, logger });
+          let retryUrl = '';
+          try {
+            retryUrl = page.url();
+          } catch {
+            await waitForPageReady(page, 5000, logger);
+            try { retryUrl = page.url(); } catch {}
+          }
+          await navigateForCaptchaRetry(page, retryUrl, renewUrl, { config, logger });
         } catch (reloadError) {
           logger.warn(`⚠️ 页面刷新失败: ${reloadError.message}`);
           // 官方窗口关闭等业务错误优先于「原验证码错误」

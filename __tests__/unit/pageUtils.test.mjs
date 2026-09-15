@@ -119,6 +119,35 @@ describe('waitForNav', () => {
     };
     expect(() => waitForNav(page, 5000)).not.toThrow();
   });
+
+  it('遇到 Frame detach 时完整透传 timeout（慢代理 12 秒后恢复仍能成功，不被 10000ms 截断）', async () => {
+    let now = 1000;
+    const realDateNow = Date.now;
+    Date.now = () => now;
+
+    let calls = 0;
+    const page = {
+      waitForNavigation: vi.fn().mockRejectedValue(new Error('Navigating frame was detached')),
+      evaluate: vi.fn(async () => {
+        calls++;
+        now += 3000;
+        // 前 4 次调用（耗时 12000ms，已超过 10000ms 旧上限）均模拟 frame 仍在切换脱离
+        if (calls <= 4) {
+          throw new Error('Navigating frame was detached');
+        }
+        return 'complete';
+      }),
+    };
+
+    try {
+      // 传入 30_000ms 超时：若存在 10s 截断，耗时 12s 时会超时返回 false；完整透传则在第 5 次成功返回 true
+      const ok = await waitForNav(page, 30_000);
+      expect(ok).toBe(true);
+      expect(calls).toBeGreaterThan(4);
+    } finally {
+      Date.now = realDateNow;
+    }
+  });
 });
 
 describe('getText', () => {

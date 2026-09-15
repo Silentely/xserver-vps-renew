@@ -73,28 +73,10 @@ async function injectBrowserFingerprint(page) {
     }
 
     // ============================================================
-    // 4. 修复 Canvas 指纹
+    // 4. Canvas 指纹保护
+    // 注意：不注入随机噪点篡改 toDataURL。Cloudflare Turnstile 会对同一 Canvas
+    // 进行多次哈希比对与严格校验，随机噪点会导致哈希不一致直接触发 Bot 判定。
     // ============================================================
-    const toDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type) {
-      // 添加微小的随机噪声，避免 Canvas 指纹过于一致
-      if (this.width > 0 && this.height > 0) {
-        const ctx = this.getContext('2d');
-        if (ctx) {
-          const imageData = ctx.getImageData(0, 0, this.width, this.height);
-          for (let i = 0; i < imageData.data.length; i += 4) {
-            for (let c = 0; c < 3; c++) {
-              const val = imageData.data[i + c];
-              if (val > 0 && val < 255) {
-                imageData.data[i + c] += Math.random() > 0.5 ? 1 : -1;
-              }
-            }
-          }
-          ctx.putImageData(imageData, 0, 0);
-        }
-      }
-      return toDataURL.apply(this, arguments);
-    };
 
     // ============================================================
     // 5. 修复 navigator.plugins 和 mimeTypes
