@@ -107,8 +107,15 @@ run_renew() {
         sleep 1
     fi
 
-    # 兜底约束 Node 堆内存上限，避免在 512MB 等轻量容器中 OOM
-    export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=128 --expose-gc}"
+    # 兜底约束 Node 堆内存上限与 GC 暴露，避免在 512MB 等轻量容器中 OOM
+    case "${NODE_OPTIONS:-}" in
+        *--max-old-space-size*) ;;
+        *) export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=128" ;;
+    esac
+    case "${NODE_OPTIONS:-}" in
+        *--expose-gc*) ;;
+        *) export NODE_OPTIONS="${NODE_OPTIONS:-} --expose-gc" ;;
+    esac
 
     local EXIT_CODE=0
     node /app/xserver-vps-renew.mjs || EXIT_CODE=$?

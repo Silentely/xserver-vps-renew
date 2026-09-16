@@ -669,6 +669,7 @@ async function main() {
     // 官方 2026-08-05 上线「個人情報の取り扱いについて」同意页（登录后必经，
     // 未同意时面板各页均被重定向回同意页，造成「未找到免费 VPS」）
     await ensureAgreementAccepted(page, { config: CONFIG, logger: LOGGER });
+    await waitForPageReady(page, 5000, LOGGER);
 
     const fingerprint = await safeEvaluate(
       page,
@@ -686,8 +687,8 @@ async function main() {
         language: 'N/A',
         webdriver: false,
       },
-      3,
-      500,
+      5,
+      800,
       LOGGER,
     );
     // 指纹体检：stealth 失效（webdriver=true）等高风险信号在启动时即告警

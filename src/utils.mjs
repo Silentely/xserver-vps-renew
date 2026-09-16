@@ -388,6 +388,8 @@ export function cleanChromeCaches(userDataDir) {
     'Default/Code Cache',
     'Default/GPUCache',
     'Default/DawnWebGPUCache',
+    'Default/DawnGraphiteCache',
+    'Default/Service Worker/CacheStorage',
     'GrShaderCache',
     'ShaderCache',
     'Crashpad',

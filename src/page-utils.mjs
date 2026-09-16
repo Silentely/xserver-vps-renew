@@ -8,7 +8,7 @@ import { NOOP_LOGGER } from './utils.mjs';
 import { extractExpireDateFromText } from './renewal-logic.mjs';
 
 /**
- * 判断错误是否属于 Puppeteer Frame 脱离 / 上下文销毁类瞬态错误
+ * 判断错误是否属于 Puppeteer Frame 脱离 / 上下文销毁类暂态错误
  * 页面重定向、刷新或 iframe 重建时，操作可能命中失效的旧执行上下文
  * @param {unknown} error
  * @returns {boolean}
@@ -34,20 +34,26 @@ export function isFrameDetachError(error) {
 export async function waitForPageReady(page, timeout = 10_000, logger = NOOP_LOGGER) {
   if (typeof page?.evaluate !== 'function') return true;
   const start = Date.now();
+  let detachedCount = 0;
   while (Date.now() - start < timeout) {
     try {
       await page.evaluate(() => document.readyState);
       return true;
     } catch (e) {
       if (isFrameDetachError(e)) {
-        await new Promise((r) => setTimeout(r, 200));
+        detachedCount++;
+        await new Promise((r) => setTimeout(r, 250));
         continue;
       }
-      logger.warn(`等待页面上下文就绪异常: ${e.message}`);
+      logger.debug?.(`等待页面上下文就绪异常: ${e.message}`);
       return false;
     }
   }
-  logger.warn(`等待页面上下文就绪超时（${timeout}ms）`);
+  if (detachedCount > 0) {
+    logger.debug?.(`等待页面上下文就绪超时（${timeout}ms，页面正在导航或重定向中）`);
+  } else {
+    logger.debug?.(`等待页面上下文就绪超时（${timeout}ms）`);
+  }
   return false;
 }
 
@@ -84,7 +90,7 @@ export async function safeEvaluate(
     }
   }
   if (defaultValue !== undefined) {
-    logger.warn?.(`safeEvaluate 失败，回退到默认值: ${lastError?.message}`);
+    logger.debug?.(`safeEvaluate 暂态受阻，回退到默认值: ${lastError?.message}`);
     return defaultValue;
   }
   throw lastError;
