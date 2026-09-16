@@ -117,9 +117,13 @@ run_renew() {
     pkill -f "(chrome|chromium)" 2>/dev/null || true
 
     # 日志尺寸保护：若累计日志超过 5MB，保留最新 2000 行，避免长期驻留导致磁盘与 Page Cache 膨胀
-    if [ -f /var/log/xserver-renew.log ] && [ $(wc -c < /var/log/xserver-renew.log 2>/dev/null || echo 0) -gt 5242880 ]; then
-        tail -n 2000 /var/log/xserver-renew.log > /var/log/xserver-renew.log.tmp 2>/dev/null \
-            && mv /var/log/xserver-renew.log.tmp /var/log/xserver-renew.log 2>/dev/null || true
+    if [ -f /var/log/xserver-renew.log ]; then
+        local LOG_SIZE
+        LOG_SIZE=$(wc -c < /var/log/xserver-renew.log 2>/dev/null || echo 0)
+        if [ "$LOG_SIZE" -gt 5242880 ]; then
+            tail -n 2000 /var/log/xserver-renew.log > /var/log/xserver-renew.log.tmp 2>/dev/null \
+                && mv /var/log/xserver-renew.log.tmp /var/log/xserver-renew.log 2>/dev/null || true
+        fi
     fi
 
     # 执行完毕后若由本次启动 Xvfb，则立即回收，确保定时等待期间（数小时）容器零显示器开销
