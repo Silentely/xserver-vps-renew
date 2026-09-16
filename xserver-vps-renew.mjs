@@ -74,6 +74,7 @@ import {
   analyzeFingerprintHealth,
   findChromePath,
   cleanChromeLocks,
+  cleanChromeCaches,
   formatTokyoDateTime,
   isBenignRequestFailure,
   PROJECT_SOURCE_LINE,
@@ -370,6 +371,7 @@ async function main() {
     throw new Error(`配置校验失败: ${configErrors.join('；')}`);
   }
 
+  let prevLastRecord = null;
   // 上次运行结果摘要：每次 cron 触发第一眼看到上次结局与连续统计
   // （读取失败由 getRenewalStatus 内部 warn 记录，不阻断启动）
   {
@@ -378,6 +380,7 @@ async function main() {
       ALERT_AFTER_CONSECUTIVE_FAILURES,
       LOGGER,
     );
+    prevLastRecord = status.lastRecord || null;
     const last = status.lastRecord;
     if (last) {
       const outcome = last.skipped ? '跳过' : (last.success ? '成功' : '失败');
@@ -516,10 +519,14 @@ async function main() {
   };
 
   try {
-    // 清理锁文件
+    // 清理锁文件与临时缓存（防止磁盘及 Page Cache 累积膨胀）
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
+    cleanChromeCaches(CONFIG.CHROME_USER_DATA);
+    if (typeof global.gc === 'function') {
+      try { global.gc(); } catch { /* 忽略 */ }
+    }
 
-    // 构建 Chrome 启动参数
+    // 构建 Chrome 启动参数（针对 512MB 低内存容器深度压缩优化）
     const chromeArgs = [
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -532,6 +539,22 @@ async function main() {
       `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,  // 🔧 优化：使用真实浏览器调试的分辨率
       '--window-position=0,0',
       '--tz=Asia/Tokyo',         // 🔧 修正：Xserver 位于日本，使用东京时区
+      // ====== 512MB 低内存容器优化参数 ======
+      '--js-flags=--max-old-space-size=128',
+      '--renderer-process-limit=2',
+      '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process,Translate,BackForwardCache,MediaRouter,OptimizationHints',
+      '--disk-cache-size=10485760',
+      '--media-cache-size=10485760',
+      '--disable-component-update',
+      '--disable-domain-reliability',
+      '--disable-breakpad',
+      '--no-zygote',
+      '--mute-audio',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-default-apps',
+      '--password-store=basic',
+      '--use-mock-keychain',
     ];
 
     // 加载 turnstile-patch 扩展
@@ -568,7 +591,12 @@ async function main() {
     });
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
-    const page = await browser.newPage();
+    // 复用初始打开的空白标签页，关闭冗余标签，避免额外派生渲染进程浪费内存
+    const existingPages = await browser.pages();
+    const page = existingPages.length > 0 ? existingPages[0] : await browser.newPage();
+    for (let i = 1; i < existingPages.length; i++) {
+      await existingPages[i].close().catch(() => {});
+    }
 
     log('注入浏览器指纹补丁...');
     await injectBrowserFingerprint(page);
@@ -675,17 +703,25 @@ async function main() {
     // 步骤 2：检查续期
     pushStep('检查免费 VPS 到期状态');
     const renewalData = await checkRenewalNeeded(page, { config: CONFIG, logger: LOGGER });
-    if (renewalData.vpsInfo) {
+    if (renewalData.vpsInfo && (renewalData.vpsInfo.serverName || renewalData.vpsInfo.plan || renewalData.vpsInfo.expireDate)) {
       knownVps = {
         serverName: renewalData.vpsInfo.serverName || null,
         plan: renewalData.vpsInfo.plan || null,
         expireDate: renewalData.vpsInfo.expireDate || null,
         remainingHours: renewalData.remainingHours ?? null,
       };
+    } else if (prevLastRecord?.serverName) {
+      // 若当前未提取到 VPS 信息但历史有记录，兜底保留已知信息用于告警通知展示
+      knownVps = {
+        serverName: prevLastRecord.serverName,
+        plan: prevLastRecord.plan || null,
+        expireDate: prevLastRecord.newExpireDate || prevLastRecord.oldExpireDate || null,
+        remainingHours: null,
+      };
     }
     if (!renewalData.needed) {
       // 官方新增/变更确认页导致未进入 VPS 面板（URL 不含 /xvps/）时转人工确认，
-      // 发送提醒并置失败退出码，不当作普通「无免费 VPS」跳过
+      // 发送提醒并置失败退出码，不当显普通「无免费 VPS」跳过
       if (renewalData.reasonCode === 'no_free_vps' && renewalData.needsManualConfirmation) {
         runOutcome = 'failure';
         runOutcomeLabel = '需要人工确认';
@@ -693,9 +729,9 @@ async function main() {
         err(manualReason);
         persistRenewalRecord(buildRenewalRecord({
           success: false,
-          serverName: null,
-          plan: null,
-          oldExpireDate: null,
+          serverName: knownVps.serverName,
+          plan: knownVps.plan,
+          oldExpireDate: knownVps.expireDate,
           errorMessage: manualReason,
         }));
         await notify(buildManualConfirmNotifyMessage({
@@ -706,12 +742,25 @@ async function main() {
         process.exitCode = 1;
         return;
       }
+      if (renewalData.reasonCode === 'no_free_vps' && prevLastRecord?.serverName) {
+        const missingWarning = `⚠️ 历史记录中存在已知 VPS (${prevLastRecord.serverName})，但本次未检测到免费 VPS！请核实是否由于网络/渲染延迟、官方改版或机器已到期下线！`;
+        logWarn(missingWarning);
+        // 关键告警升级：即便配置了 TG_NOTIFY_SKIP=false 也通过 manual_confirm 渠道发送，杜绝静默漏报机器丢失
+        await notify(buildManualConfirmNotifyMessage({
+          executedAt: formatTokyoDateTime(),
+          reason: missingWarning,
+          nextRunAt: resolveNextRun(),
+        }), { kind: 'manual_confirm' });
+      }
       const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
+      const reasonDetail = (renewalData.reasonCode === 'no_free_vps' && prevLastRecord?.serverName)
+        ? `${renewalData.reasonDetail}（注意：历史记录曾存在 ${prevLastRecord.serverName}）`
+        : renewalData.reasonDetail;
       await finishWithSkip({
         page,
         reasonCode: renewalData.reasonCode,
         skipLabel,
-        reasonDetail: renewalData.reasonDetail,
+        reasonDetail,
         logText: skipLabel,
       });
       return;
@@ -919,6 +968,7 @@ async function main() {
         await browser.close();
       } catch { /* 忽略 */ }
     }
+    cleanChromeCaches(CONFIG.CHROME_USER_DATA);
     const outcomeIcon = runOutcome === 'success'
       ? '✅'
       : runOutcome === 'skip'

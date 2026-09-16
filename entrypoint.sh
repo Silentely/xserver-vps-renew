@@ -37,19 +37,10 @@ if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] && [ -x /app/diagnostics.sh ]; then
 fi
 
 # ============================================================
-# 启动虚拟显示器（Xvfb）
-# Xvfb 提供虚拟 X11 显示（headless:false 模式需要）
-# 🔧 修复：检测 Xvfb 是否已运行，避免 cron 触发时重复启动
+# Xvfb 虚拟显示器（按需启动）
+# 改由 run_renew() 在执行续期时按需启动并在结束后立即回收，
+# 彻底消除定时等待期间（99% 闲置时间）常驻的显存与进程开销
 # ============================================================
-if ! pgrep -f "Xvfb :99" > /dev/null; then
-    echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
-    rm -f /tmp/.X99-lock 2>/dev/null || true
-    Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
-    XVFB_PID=$!
-    sleep 1
-else
-    echo "$LOG_PREFIX Xvfb 已在运行，跳过启动"
-fi
 
 # ============================================================
 # 显示定时任务信息
@@ -92,13 +83,52 @@ show_cron_schedule() {
 # 🔧 修复：执行成功后显示下次续期时间
 # ============================================================
 run_renew() {
+    # 互斥保护：防止定时任务与手工 --once 并发执行冲突（避免抢占 Xvfb 与 Chrome profile）
+    exec 9>/tmp/xserver-renew.lock
+    if ! flock -n 9; then
+        echo "$LOG_PREFIX ⏩ 上一次续期仍在运行中，跳过本次执行"
+        return 0
+    fi
+
     echo "$LOG_PREFIX ====== 开始执行续期 $(ts) ======"
     if [ -n "${RENEWAL_STATUS_FILE:-}" ]; then
         echo "$LOG_PREFIX 状态文件: $RENEWAL_STATUS_FILE"
     fi
 
+    # 按需启动 Xvfb 虚拟显示器（仅在执行期间运行，闲置期自动释放，保持低内存）
+    local STARTED_XVFB=false
+    if ! pgrep -f "Xvfb :99" > /dev/null; then
+        echo "$LOG_PREFIX 启动 Xvfb 虚拟显示器..."
+        rm -f /tmp/.X99-lock 2>/dev/null || true
+        XVFB_RES="${XVFB_RESOLUTION:-1440x900x24}"
+        Xvfb :99 -screen 0 "$XVFB_RES" -nolisten tcp &
+        XVFB_PID=$!
+        STARTED_XVFB=true
+        sleep 1
+    fi
+
+    # 兜底约束 Node 堆内存上限，避免在 512MB 等轻量容器中 OOM
+    export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=128 --expose-gc}"
+
     local EXIT_CODE=0
     node /app/xserver-vps-renew.mjs || EXIT_CODE=$?
+
+    # 执行完毕后清理可能异常残留的 Chrome 子进程（防御性回收，杜绝僵尸进程常驻占用内存）
+    pkill -f "(chrome|chromium)" 2>/dev/null || true
+
+    # 日志尺寸保护：若累计日志超过 5MB，保留最新 2000 行，避免长期驻留导致磁盘与 Page Cache 膨胀
+    if [ -f /var/log/xserver-renew.log ] && [ $(wc -c < /var/log/xserver-renew.log 2>/dev/null || echo 0) -gt 5242880 ]; then
+        tail -n 2000 /var/log/xserver-renew.log > /var/log/xserver-renew.log.tmp 2>/dev/null \
+            && mv /var/log/xserver-renew.log.tmp /var/log/xserver-renew.log 2>/dev/null || true
+    fi
+
+    # 执行完毕后若由本次启动 Xvfb，则立即回收，确保定时等待期间（数小时）容器零显示器开销
+    if [ "$STARTED_XVFB" = "true" ] && [ -n "$XVFB_PID" ]; then
+        kill "$XVFB_PID" 2>/dev/null || true
+        wait "$XVFB_PID" 2>/dev/null || true
+        XVFB_PID=""
+        rm -f /tmp/.X99-lock 2>/dev/null || true
+    fi
 
     if [ $EXIT_CODE -eq 0 ]; then
         echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
@@ -120,6 +150,7 @@ run_renew() {
 cleanup() {
     echo "$LOG_PREFIX 收到退出信号，正在清理..."
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
+    pkill -f "Xvfb :99" 2>/dev/null || true
     exit 0
 }
 trap cleanup SIGTERM SIGINT

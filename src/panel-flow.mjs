@@ -151,20 +151,26 @@ export async function ensureAgreementAccepted(page, { config, logger = NOOP_LOGG
 export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } = {}) {
   logger.info('正在检查续期状态...');
 
+  // 确保进入状态检查前页面上下文稳定
+  await waitForPageReady(page, Math.min(config?.NAVIGATION_TIMEOUT || 15_000, 15_000), logger);
+
   if (!page.url().includes('/xvps/index')) {
     await page.goto(`${config.BASE_URL}/xapanel/xvps/index`, {
       waitUntil: 'domcontentloaded',
       timeout: config.NAVIGATION_TIMEOUT,
     });
+    await waitForPageReady(page, Math.min(config?.NAVIGATION_TIMEOUT || 15_000, 15_000), logger);
   }
 
   // 官方 xvps 列表表格为 JS 异步渲染，domcontentloaded 时行可能尚未插入 DOM；
   // 等待免费 VPS 行出现，避免在页面加载变慢时误判「未找到免费 VPS」。
   // 超时后先采集页面结构诊断（区分「官方改版」与「渲染时序」两类根因），再走原判定路径。
+  const tableWaitTimeout = Math.min(Math.max(config?.NAVIGATION_TIMEOUT || 30_000, 10_000), 30_000);
   try {
-    await page.waitForSelector('tr:has(.freeServerIco)', { timeout: 10000 });
+    await page.waitForSelector('tr:has(.freeServerIco)', { timeout: tableWaitTimeout });
   } catch {
-    logger.warn('等待免费 VPS 表格超时（10s），正在采集页面诊断信息...');
+    logger.warn(`等待免费 VPS 表格超时（${Math.round(tableWaitTimeout / 1000)}s），正在采集页面诊断信息...`);
+    await waitForPageReady(page, 10_000, logger);
     const diag = await safeEvaluate(page, () => {
       const firstTable = document.querySelector('table');
       return {
@@ -187,6 +193,21 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
         logger.warn(`诊断-正文片段: ${diag.bodyText}`);
       }
     }
+
+    // 若诊断显示页面完全没有表格或 tr 行（可能因慢网络导致渲染尚未完成或页面加载中断），尝试重新加载 VPS 列表页
+    if (!diag || diag.trCount === 0) {
+      logger.warn('未在页面中检测到有效表格，可能因慢网络加载中断，尝试重新加载 VPS 列表页...');
+      try {
+        await page.goto(`${config.BASE_URL}/xapanel/xvps/index`, {
+          waitUntil: 'domcontentloaded',
+          timeout: config.NAVIGATION_TIMEOUT,
+        });
+        await waitForPageReady(page, 15_000, logger);
+        await page.waitForSelector('tr:has(.freeServerIco)', { timeout: Math.min(tableWaitTimeout, 15_000) });
+      } catch (retryErr) {
+        logger.warn(`重新加载 VPS 列表页后仍未捕获到免费 VPS 行: ${retryErr.message}`);
+      }
+    }
   }
 
   // 计算今天和明天的日期（东京时区，yyyy-mm-dd 格式）
@@ -196,6 +217,8 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
 
   // 页面端仅提取原始文本（DOM 上下文不做业务判定），
   // 服务器名/规格解析收敛到纯函数 extractVpsInfoFromCellTexts（可单测）
+  // 注意：此处 defaultValue 为 undefined，若 evaluate 因 Frame 销毁/崩溃报错则直接抛出，
+  // 严禁回退为 null 误判为业务上的「未找到免费 VPS」导致静默跳过！
   const result = await safeEvaluate(page, () => {
     const row = document.querySelector('tr:has(.freeServerIco)');
     if (!row) {
@@ -211,12 +234,13 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
       cellTexts: Array.from(row.querySelectorAll('td'))
         .map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
     };
-  }, null, 3, 500, logger);
+  }, undefined, 5, 800, logger);
 
   if (!result) {
     // 未停留在 VPS 面板页（URL 不含 /xvps/）说明被官方新增/变更的确认页拦截，
     // 标记需人工确认，由 main() 发送提醒而不是当作普通「无免费 VPS」跳过
-    const needsManualConfirmation = !page.url().includes('/xvps/');
+    const onVpsPanel = page.url().includes('/xvps/');
+    const needsManualConfirmation = !onVpsPanel;
     logger.info(needsManualConfirmation
       ? `未找到免费 VPS 条目（当前页面: ${page.url()}，疑似被官方确认页拦截）。`
       : '未找到免费 VPS 条目。');
@@ -229,7 +253,9 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
         expireDate: null,
       },
       remainingHours: null,
-      reasonDetail: '面板中未找到带免费标识的 VPS 条目',
+      reasonDetail: needsManualConfirmation
+        ? `未停留在 VPS 列表页（当前: ${page.url()}），疑似被官方新增/变更的确认页拦截，需人工登录确认`
+        : '面板中未找到带免费标识的 VPS 条目',
       needsManualConfirmation,
     };
   }
@@ -681,6 +707,9 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       // 关键修复：同步表单中所有 auth_code 字段（消除顶部 hidden 字段与可见输入框的值不一致隐患）
       const authSync = await syncRenewalFormFields(page, { code }, logger);
       logger.info(`验证码已填入输入框，已同步 ${authSync.authCodeCount} 处 auth_code 字段。`);
+
+      // 主动回收 Base64 图片与局部变量，降低内存压力
+      if (typeof global.gc === 'function') { try { global.gc(); } catch { /* 忽略 */ } }
 
       // 等待 Turnstile（返回 { ok, providerName, attempts }）
       const turnstileResult = await waitForTurnstile(page, {

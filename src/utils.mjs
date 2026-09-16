@@ -376,6 +376,30 @@ export function cleanChromeLocks(userDataDir) {
   }
 }
 
+/**
+ * 清理 Chrome 用户数据目录中的临时缓存与崩溃转储文件
+ * 仅清理易产生大文件占用的临时缓存，严格保留 Cookies / Local Storage / Preferences 等会话数据
+ * @param {string} userDataDir
+ */
+export function cleanChromeCaches(userDataDir) {
+  if (!userDataDir) return;
+  const ephemeralDirs = [
+    'Default/Cache',
+    'Default/Code Cache',
+    'Default/GPUCache',
+    'Default/DawnWebGPUCache',
+    'GrShaderCache',
+    'ShaderCache',
+    'Crashpad',
+  ];
+  for (const dir of ephemeralDirs) {
+    const p = join(userDataDir, dir);
+    try {
+      rmSync(p, { recursive: true, force: true });
+    } catch { /* 忽略 */ }
+  }
+}
+
 /** 已知埋点/统计域名：请求被页面导航中止属正常现象，debug 日志降噪用 */
 const BENIGN_TRACKING_HOSTS = [
   'google-analytics.com',

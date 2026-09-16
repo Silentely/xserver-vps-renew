@@ -65,7 +65,9 @@ ENV TZ=Asia/Tokyo \
     PROXY_PORT= \
     PROXY_LOGIN= \
     DISPLAY=:99 \
-    ENABLE_DIAGNOSTICS=
+    ENABLE_DIAGNOSTICS= \
+    NODE_OPTIONS="--max-old-space-size=128 --expose-gc" \
+    XVFB_RESOLUTION="1440x900x24"
 
 # 创建非 root 用户（Chrome 在容器内以非 root 运行更安全）
 # /data/ 目录需要 appuser 可写（renewal-status.json 持久化）
