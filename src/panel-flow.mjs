@@ -523,6 +523,104 @@ export async function waitForSubmissionResult(
 }
 
 /**
+ * 同步续期确认页表单字段（auth_code 与 cf-turnstile-response）
+ * 解决页面同时存在顶部隐藏域与可见输入框时的空值覆盖或多字段解析不一致问题
+ *
+ * @param {import('puppeteer').Page} page
+ * @param {{ code?: string, token?: string }} [fields]
+ * @param {object} [logger=NOOP_LOGGER]
+ * @returns {Promise<{
+ *   authCodeCount: number,
+ *   authCodeUpdated: number,
+ *   turnstileCount: number,
+ *   turnstileUpdated: number,
+ *   formFields: Array<{ name: string, type: string, valLen: number, preview: string }>
+ * }>}
+ */
+export async function syncRenewalFormFields(page, { code = '', token = '' } = {}, logger = NOOP_LOGGER) {
+  try {
+    const result = await page.evaluate(
+      ({ codeVal, tokenVal }) => {
+        let authCodeCount = 0;
+        let authCodeUpdated = 0;
+        let turnstileCount = 0;
+        let turnstileUpdated = 0;
+
+        if (codeVal && typeof codeVal === 'string') {
+          const authInputs = document.querySelectorAll('input[name="auth_code"]');
+          authCodeCount = authInputs.length;
+          authInputs.forEach((el) => {
+            if (el.value !== codeVal) {
+              el.value = codeVal;
+              authCodeUpdated++;
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        }
+
+        if (tokenVal && typeof tokenVal === 'string') {
+          const tsInputs = document.querySelectorAll(
+            'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"]'
+          );
+          turnstileCount = tsInputs.length;
+          tsInputs.forEach((el) => {
+            if (el.value !== tokenVal) {
+              el.value = tokenVal;
+              turnstileUpdated++;
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        }
+
+        const form = document.querySelector('form');
+        const formFields = [];
+        if (form && form.elements) {
+          for (const el of form.elements) {
+            if (!el || !el.name) continue;
+            const val = el.value || '';
+            const isSensitive = el.name.includes('turnstile') || el.name.includes('uniqid');
+            formFields.push({
+              name: el.name,
+              type: el.type || (el.tagName ? el.tagName.toLowerCase() : 'unknown'),
+              valLen: val.length,
+              preview: isSensitive && val.length > 10 ? `${val.substring(0, 10)}...` : val,
+            });
+          }
+        }
+
+        return {
+          authCodeCount,
+          authCodeUpdated,
+          turnstileCount,
+          turnstileUpdated,
+          formFields,
+        };
+      },
+      { codeVal: code, tokenVal: token },
+    );
+
+    return result || {
+      authCodeCount: 0,
+      authCodeUpdated: 0,
+      turnstileCount: 0,
+      turnstileUpdated: 0,
+      formFields: [],
+    };
+  } catch (error) {
+    logger?.debug?.(`syncRenewalFormFields 执行异常（可能处于导航中间态）: ${error?.message || error}`);
+    return {
+      authCodeCount: 0,
+      authCodeUpdated: 0,
+      turnstileCount: 0,
+      turnstileUpdated: 0,
+      formFields: [],
+    };
+  }
+}
+
+/**
  * 验证码页面完整流程
  * @param {import('puppeteer').Page} page
  * @param {{ renewUrl?: string|null }} [options] - renewUrl 用于失败后回到 index?id_vps=
@@ -569,18 +667,20 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       }
 
       // 填入验证码（模拟人类输入，先清空可能残留的旧值）
-      const captchaInput = await page.$('[placeholder*="上の画像"]');
+      const captchaInput = await page.$('[placeholder*="上の画像"], input[name="auth_code"]:not([type="hidden"])');
       if (!captchaInput) throw new Error('未找到验证码输入框。');
       await captchaInput.click({ clickCount: 3 });
       await captchaInput.evaluate((el) => {
         el.value = '';
       });
-      await page.type('[placeholder*="上の画像"]', code, { delay: 80 });
+      await page.type('[placeholder*="上の画像"], input[name="auth_code"]:not([type="hidden"])', code, { delay: 80 });
       await captchaInput.evaluate((el) => {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       });
-      logger.info('验证码已填入输入框。');
+      // 关键修复：同步表单中所有 auth_code 字段（消除顶部 hidden 字段与可见输入框的值不一致隐患）
+      const authSync = await syncRenewalFormFields(page, { code }, logger);
+      logger.info(`验证码已填入输入框，已同步 ${authSync.authCodeCount} 处 auth_code 字段。`);
 
       // 等待 Turnstile（返回 { ok, providerName, attempts }）
       const turnstileResult = await waitForTurnstile(page, {
@@ -601,11 +701,19 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       // 提交表单
       logger.info('正在提交表单...');
 
-      // 提交前现场快照与诊断日志：记录关键要素，便于排查「認証に失敗しました」归因
+      // 提交前现场快照与字段终态同步：
+      // 1. 同步所有 cf-turnstile-response（覆盖天然验证通过时顶部 hidden 字段遗留的空值）
+      // 2. 再次确保所有 auth_code 保持一致
       const currentToken = await getTurnstileToken(page, logger).catch(() => '');
+      const finalSync = await syncRenewalFormFields(page, { code, token: currentToken }, logger);
+
+      const formFieldsSummary = finalSync.formFields
+        .map((f) => `${f.name}(${f.type},长${f.valLen},值=${f.preview})`)
+        .join(', ');
       logger.info(
-        `🔍 提交诊断 | 验证码: "${code}" (长 ${code.length}) | `
-        + `Turnstile: 来源=${lastTurnstileMeta.turnstileProvider || 'none'}, Token长=${currentToken ? currentToken.length : 0} | `
+        `🔍 提交诊断 | 验证码: "${code}" (长 ${code.length}, 同步 ${finalSync.authCodeCount} 处) | `
+        + `Turnstile: 来源=${lastTurnstileMeta.turnstileProvider || 'none'}, Token长=${currentToken ? currentToken.length : 0} (同步 ${finalSync.turnstileCount} 处) | `
+        + `表单字段(${finalSync.formFields.length}): [${formFieldsSummary}] | `
         + `URL: ${page.url()}`,
       );
 
