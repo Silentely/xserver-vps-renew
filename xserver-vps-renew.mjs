@@ -33,7 +33,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
-import { safeClosePage, extractNewExpireDate, safeEvaluate } from './src/page-utils.mjs';
+import {
+  safeClosePage,
+  extractNewExpireDate,
+  safeEvaluate,
+  waitForPageReady,
+} from './src/page-utils.mjs';
 
 // 页面流程（登录/同意页/到期检查/续期确认/验证码提交）
 import {
