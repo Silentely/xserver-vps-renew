@@ -22,6 +22,8 @@ screenshots/
 *.png
 *.jpg
 *.jpeg
+!assets/
+!assets/captcha-warmup.png
 
 # IDE
 .vscode/

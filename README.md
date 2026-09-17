@@ -102,7 +102,7 @@ node xserver-vps-renew.mjs --help
 - 成本：完全免费（Cloud Run 免费额度内）
 - 自动识别失败重试（最多 3 次）
 
-> `CAPTCHA_API` 可选。未设置时使用默认公共端点 `https://captcha-api-216250547992.us-central1.run.app`；也可指向自建 Cloud Run。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。
+> `CAPTCHA_API` 可选。未设置时使用默认公共端点 `https://captcha-api-216250547992.us-central1.run.app`；也可指向自建 Cloud Run。格式：POST 请求，body = 原始 base64 图片，response = 纯文本 6 位验证码。启动诊断会使用镜像内 `assets/captcha-warmup.png`（预期结果 `078293`）进行真实 POST 预热，校验成功后才启动续期流程；真实验证码请求也会针对冷启动与暂态网络错误自动等待并重试。
 
 ### Turnstile 求解策略
 

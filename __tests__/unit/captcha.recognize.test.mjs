@@ -155,8 +155,29 @@ describe('recognizeCaptcha', () => {
     expect(result).toBe('654321');
   });
 
+  it('Cloud Run 冷启动网络异常时使用同一张图片重试，成功后才返回验证码', async () => {
+    mockFetch
+      .mockRejectedValueOnce(new Error('fetch failed'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('654321'),
+      });
+
+    const result = await recognizeCaptcha(
+      'data:image/png;base64,abc',
+      'https://api.example.com',
+      mockLogger,
+      { maxAttempts: 2, retryDelayMs: 0 },
+    );
+
+    expect(result).toBe('654321');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('冷启动/网络异常'));
+  });
+
   it('底层失败时记录日志并重抛', async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockFetch.mockResolvedValue({
       ok: false,
       status: 503,
       text: () => Promise.resolve('Service Unavailable'),

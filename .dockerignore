@@ -9,6 +9,8 @@ screenshots/
 *.png
 *.jpg
 *.jpeg
+!assets/
+!assets/captcha-warmup.png
 test-results-*/
 .docs/
 .claude/

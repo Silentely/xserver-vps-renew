@@ -51,6 +51,7 @@ COPY xserver-vps-renew.mjs .
 COPY src/ src/
 COPY browser-fingerprint-patch.js .
 COPY turnstile-patch/ turnstile-patch/
+COPY assets/ assets/
 COPY entrypoint.sh .
 COPY diagnostics.sh .
 RUN chmod +x entrypoint.sh diagnostics.sh

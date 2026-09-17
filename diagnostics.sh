@@ -93,13 +93,52 @@ echo "💾 状态持久化:"
 check_status_file_writability
 
 echo "🎯 关键 API 连通性:"
-# Keras 验证码识别（Cloud Run）：冷启动/不可达是续期失败高频根因。
-# GET 可能返回 405（端点仅接受 POST），有 HTTP 响应即视为可达。
-if [ -n "${CAPTCHA_API:-}" ]; then
-  curl -s -o /dev/null -w "  CAPTCHA_API (Keras): HTTP %{http_code} (%{time_total}s)\n" \
-    "$CAPTCHA_API" --connect-timeout 5 --max-time 8 || echo "  CAPTCHA_API (Keras): 失败"
-else
-  echo "  CAPTCHA_API (Keras): 未设置（使用内置默认端点）"
+# Keras 验证码识别（Cloud Run）：使用已知答案图片进行真实 POST 预热。
+# 只有返回预期验证码时才算模型就绪，避免仅 GET 可达但模型仍在冷启动的假成功。
+warmup_keras_captcha() {
+  local api_url="${CAPTCHA_API:-https://captcha-api-216250547992.us-central1.run.app}"
+  local image_path="${CAPTCHA_WARMUP_IMAGE:-/app/assets/captcha-warmup.png}"
+  local expected="${CAPTCHA_WARMUP_EXPECTED:-078293}"
+  local payload_file response_file http_code response attempt
+
+  if [ ! -f "$image_path" ]; then
+    echo "  CAPTCHA_API (Keras): 预热图片不存在: $image_path"
+    return 1
+  fi
+
+  payload_file=$(mktemp)
+  response_file=$(mktemp)
+  trap 'rm -f "$payload_file" "$response_file"' RETURN
+  {
+    printf 'data:image/png;base64,'
+    base64 -w0 "$image_path"
+  } > "$payload_file"
+
+  for attempt in 1 2 3; do
+    : > "$response_file"
+    http_code=$(curl -sS -o "$response_file" -w '%{http_code}' \
+      "$api_url" \
+      --connect-timeout 10 \
+      --max-time 35 \
+      -H 'Content-Type: text/plain' \
+      --data-binary "@$payload_file" || true)
+    response=$(tr -d '[:space:]' < "$response_file")
+    if [ "$http_code" = "200" ] && [ "$response" = "$expected" ]; then
+      echo "  CAPTCHA_API (Keras): 预热成功（HTTP 200，结果校验通过，第 ${attempt}/3 次）"
+      return 0
+    fi
+    echo "  CAPTCHA_API (Keras): 预热第 ${attempt}/3 次失败（HTTP ${http_code:-000}，结果长度 ${#response}）"
+    if [ "$attempt" -lt 3 ]; then
+      sleep 2
+    fi
+  done
+
+  echo "  CAPTCHA_API (Keras): 预热失败，停止后续续期流程"
+  return 1
+}
+
+if ! warmup_keras_captcha; then
+  exit 1
 fi
 
 # Turnstile 打码平台：按已配置 key 探测对应 API 基址可达性

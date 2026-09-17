@@ -33,7 +33,10 @@ fi
 # 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
 # ============================================================
 if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] && [ -x /app/diagnostics.sh ]; then
-    /app/diagnostics.sh
+    if ! /app/diagnostics.sh; then
+        echo "$LOG_PREFIX ❌ 启动诊断/验证码 API 预热失败，停止续期流程"
+        exit 1
+    fi
 fi
 
 # ============================================================
@@ -208,6 +211,8 @@ fi
 export XSERVER_MEMBER_ID="${XSERVER_MEMBER_ID:-}"
 export XSERVER_PASSWORD="${XSERVER_PASSWORD:-}"
 export CAPTCHA_API="${CAPTCHA_API:-}"
+export CAPTCHA_WARMUP_IMAGE="${CAPTCHA_WARMUP_IMAGE:-}"
+export CAPTCHA_WARMUP_EXPECTED="${CAPTCHA_WARMUP_EXPECTED:-}"
 export CAPSOLVER_API_KEY="${CAPSOLVER_API_KEY:-}"
 export ANTICAPTCHA_API_KEY="${ANTICAPTCHA_API_KEY:-}"
 export ANTICAPTCHA_SOFT_ID="${ANTICAPTCHA_SOFT_ID:-}"

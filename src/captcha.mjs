@@ -12,6 +12,10 @@ const CAPTCHA_LENGTH = 6;
 
 /** Keras API 请求超时（毫秒） */
 const CAPTCHA_API_TIMEOUT_MS = 30_000;
+/** Cloud Run 冷启动/暂态网络错误的重试次数（包含首次请求） */
+const CAPTCHA_API_MAX_ATTEMPTS = 3;
+/** 冷启动重试间隔（毫秒） */
+const CAPTCHA_API_RETRY_DELAY_MS = 2_000;
 
 /** 预编译的验证码格式正则（避免运行时重复编译） */
 const CAPTCHA_PATTERN = new RegExp(`^\\d{${CAPTCHA_LENGTH}}$`);
@@ -136,6 +140,7 @@ export function normalizeCaptchaCode(rawText) {
  * @param {string} imgBase64 - Base64 编码的图片数据
  * @param {string} apiUrl - Keras API 地址
  * @param {Function} logger - 日志函数
+ * @param {{ maxAttempts?: number, retryDelayMs?: number }} [options]
  * @returns {Promise<string>} - 识别的验证码
  */
 export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = NOOP_LOGGER) {
@@ -195,7 +200,7 @@ export async function recognizeCaptchaWithKerasAPI(imgBase64, apiUrl, logger = N
  * @param {Function} logger - 日志函数
  * @returns {Promise<string>} - 识别的 6 位数字验证码
  */
-export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER) {
+export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER, options = {}) {
   if (!imgSrc || typeof imgSrc !== 'string') {
     throw new Error('imgSrc 必须是非空字符串');
   }
@@ -207,12 +212,28 @@ export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER) {
     throw new Error('未配置 Keras 模型 API（需要 CAPTCHA_API）');
   }
 
-  try {
-    return await recognizeCaptchaWithKerasAPI(imgSrc, apiUrl, logger);
-  } catch (error) {
-    logger.warn(`❌ Keras 模型 API 识别失败: ${error.message}`);
-    throw error;
+  const maxAttempts = Math.max(1, Number(options.maxAttempts) || CAPTCHA_API_MAX_ATTEMPTS);
+  const retryDelayValue = options.retryDelayMs ?? CAPTCHA_API_RETRY_DELAY_MS;
+  const retryDelayMs = Math.max(0, Number(retryDelayValue) || 0);
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await recognizeCaptchaWithKerasAPI(imgSrc, apiUrl, logger);
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || '');
+      const retryable = /请求超时|网络异常|响应 (408|425|429|500|502|503|504)/.test(message);
+      if (!retryable || attempt >= maxAttempts) break;
+      logger.warn(
+        `Keras 模型 API 冷启动/网络异常，第 ${attempt}/${maxAttempts - 1} 次重试前等待 ${retryDelayMs}ms: ${message}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
   }
+
+  logger.warn(`❌ Keras 模型 API 识别失败: ${lastError.message}`);
+  throw lastError;
 }
 
 /**

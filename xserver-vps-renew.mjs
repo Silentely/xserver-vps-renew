@@ -153,6 +153,8 @@ const CONFIG = {
 
   // 验证码识别服务（OCR）；未配置时使用公共默认端点
   CAPTCHA_API: process.env.CAPTCHA_API || DEFAULT_CAPTCHA_API,
+  CAPTCHA_WARMUP_IMAGE: process.env.CAPTCHA_WARMUP_IMAGE || '/app/assets/captcha-warmup.png',
+  CAPTCHA_WARMUP_EXPECTED: process.env.CAPTCHA_WARMUP_EXPECTED || '078293',
 
   BASE_URL: 'https://secure.xserver.ne.jp',
   LOGIN_PATH: '/xapanel/login/xvps/',
