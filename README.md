@@ -221,6 +221,8 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 | `CHROME_PATH` | 自动检测 | Chrome 可执行文件路径（本地运行）；macOS / Linux 路径示例见 `.env.example` |
 | `CHROME_USER_DATA` | `/data/chrome-profile` | Chrome 用户数据目录（本地运行） |
 | `NAVIGATION_TIMEOUT_MS` | `30000` | 页面导航超时（毫秒） |
+| `LOGIN_NAVIGATION_RETRIES` | `2` | 登录页网络导航最大尝试次数（包含首次访问） |
+| `LOGIN_NAVIGATION_RETRY_DELAY_MS` | `2000` | 登录页网络导航重试间隔（毫秒） |
 | `TURNSTILE_TIMEOUT_MS` | `60000` | Turnstile 自然通过等待超时（毫秒） |
 | `TURNSTILE_API_TIMEOUT_MS` | `120000` | Turnstile API 求解轮询超时（毫秒） |
 | `TURNSTILE_RENDER_WAIT_MS` | `8000` | Turnstile iframe 渲染软等待时间（毫秒，建议 8000-15000） |

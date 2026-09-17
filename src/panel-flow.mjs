@@ -28,6 +28,51 @@ import { waitForTurnstile, getTurnstileToken } from './turnstile-flow.mjs';
 import { isTurnstileOutageError } from './turnstile.mjs';
 import { recognizeCaptcha, saveCaptchaSample } from './captcha.mjs';
 
+const RETRYABLE_LOGIN_NAVIGATION_ERRORS = [
+  'net::err_timed_out',
+  'navigation timeout',
+  'net::err_connection_reset',
+  'net::err_connection_closed',
+  'net::err_network_changed',
+  'net::err_proxy_connection_failed',
+];
+
+function isRetryableLoginNavigationError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return RETRYABLE_LOGIN_NAVIGATION_ERRORS.some((pattern) => message.includes(pattern));
+}
+
+/**
+ * 访问登录页；代理偶发超时只在登录初始导航阶段有限重试，避免重复提交凭据。
+ * @param {import('puppeteer').Page} page
+ * @param {object} config
+ * @param {object} logger
+ * @returns {Promise<void>}
+ */
+export async function navigateToLoginPage(page, config, logger = NOOP_LOGGER) {
+  const maxAttempts = Math.max(1, Number(config?.LOGIN_NAVIGATION_RETRIES) || 1);
+  const retryDelayMs = Math.max(0, Number(config?.LOGIN_NAVIGATION_RETRY_DELAY_MS) || 0);
+  const loginUrl = `${config.BASE_URL}${config.LOGIN_PATH}`;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await page.goto(loginUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: config.NAVIGATION_TIMEOUT,
+      });
+      return;
+    } catch (error) {
+      if (!isRetryableLoginNavigationError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+      logger.warn?.(
+        `登录页导航网络异常，将重试（${attempt}/${maxAttempts - 1}）: ${error.message}`,
+      );
+      await sleep(retryDelayMs);
+    }
+  }
+}
+
 /** 构造「需要人工确认」错误：自动同意处理无效，需用户登录手动确认后重跑容器 */
 function manualConfirmError(message) {
   const error = new Error(message);
@@ -43,10 +88,7 @@ function manualConfirmError(message) {
  */
 export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
   logger.info('正在导航到登录页面...');
-  await page.goto(`${config.BASE_URL}${config.LOGIN_PATH}`, {
-    waitUntil: 'domcontentloaded',
-    timeout: config.NAVIGATION_TIMEOUT,
-  });
+  await navigateToLoginPage(page, config, logger);
 
   // 若已登录（被重定向到面板），直接返回
   if (page.url().includes('/xvps/index')) {

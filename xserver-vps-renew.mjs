@@ -159,6 +159,12 @@ const CONFIG = {
 
   // 超时/重试可通过环境变量覆盖
   NAVIGATION_TIMEOUT: parsePositiveInt(process.env.NAVIGATION_TIMEOUT_MS, 30_000, { min: 5_000, max: 180_000 }),
+  LOGIN_NAVIGATION_RETRIES: parsePositiveInt(process.env.LOGIN_NAVIGATION_RETRIES, 2, { min: 1, max: 5 }),
+  LOGIN_NAVIGATION_RETRY_DELAY_MS: parsePositiveInt(
+    process.env.LOGIN_NAVIGATION_RETRY_DELAY_MS,
+    2_000,
+    { min: 0, max: 30_000 },
+  ),
   TURNSTILE_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_TIMEOUT_MS, 60_000, { min: 10_000, max: 300_000 }),
   TURNSTILE_API_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_API_TIMEOUT_MS, 120_000, { min: 15_000, max: 300_000 }),
   // Turnstile iframe 渲染软等待时间（ms），容器环境建议 8000-15000
