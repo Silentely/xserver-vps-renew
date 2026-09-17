@@ -608,6 +608,8 @@ async function main() {
     for (let i = 1; i < existingPages.length; i++) {
       await existingPages[i].close().catch(() => {});
     }
+    page.on('close', () => logWarn('浏览器页面目标已关闭'));
+    browser.on('disconnected', () => logWarn('Chrome 浏览器连接已断开'));
 
     log('注入浏览器指纹补丁...');
     await injectBrowserFingerprint(page);

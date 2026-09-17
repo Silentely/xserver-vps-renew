@@ -7,6 +7,7 @@ import {
   safeClosePage,
   extractNewExpireDate,
   isFrameDetachError,
+  isTargetClosedError,
   waitForPageReady,
   safeEvaluate,
 } from '../../src/page-utils.mjs';
@@ -18,7 +19,16 @@ describe('isFrameDetachError', () => {
     expect(isFrameDetachError(new Error('Execution context was destroyed, most likely because of a navigation.'))).toBe(true);
     expect(isFrameDetachError(new Error('Cannot find context with specified id'))).toBe(true);
     expect(isFrameDetachError(new Error('Navigation timeout of 30000 ms exceeded'))).toBe(false);
+    expect(isFrameDetachError(new Error('Protocol error (Input.dispatchKeyEvent): Target closed'))).toBe(false);
     expect(isFrameDetachError(null)).toBe(false);
+  });
+});
+
+describe('isTargetClosedError', () => {
+  it('识别浏览器目标或会话已关闭错误', () => {
+    expect(isTargetClosedError(new Error('Protocol error (Input.dispatchKeyEvent): Target closed'))).toBe(true);
+    expect(isTargetClosedError(new Error('Session closed'))).toBe(true);
+    expect(isTargetClosedError(new Error('Navigating frame was detached'))).toBe(false);
   });
 });
 
@@ -111,6 +121,15 @@ describe('waitForNav', () => {
     const ok = await waitForNav(page, 5000, logger);
     expect(ok).toBe(false);
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('导航等待异常'));
+  });
+
+  it('目标已关闭时立即抛出，不等待整个导航超时', async () => {
+    const error = new Error('Protocol error (Input.dispatchKeyEvent): Target closed');
+    const page = { waitForNavigation: vi.fn().mockRejectedValue(error) };
+    const logger = { warn: vi.fn(), error: vi.fn() };
+
+    await expect(waitForNav(page, 120_000, logger)).rejects.toBe(error);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('浏览器目标已关闭'));
   });
 
   it('无 logger 时不报错（默认 NOOP_LOGGER）', async () => {

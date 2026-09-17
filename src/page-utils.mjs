@@ -19,9 +19,17 @@ export function isFrameDetachError(error) {
     || msg.includes('frame was detached')
     || msg.includes('execution context was destroyed')
     || msg.includes('cannot find context with specified id')
-    || msg.includes('frame is detached')
-    || msg.includes('target closed')
-    || msg.includes('session closed');
+    || msg.includes('frame is detached');
+}
+
+/**
+ * 判断浏览器目标/会话是否已经终止；这是终态错误，不能按导航竞态重试。
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+export function isTargetClosedError(error) {
+  const msg = String(error?.message || '').toLowerCase();
+  return msg.includes('target closed') || msg.includes('session closed');
 }
 
 /**
@@ -110,6 +118,10 @@ export async function waitForNav(page, timeout = 30_000, logger = NOOP_LOGGER) {
     return true;
   } catch (e) {
     logger.warn(`⚠️ 导航等待异常（已忽略）: ${e.message}`);
+    if (isTargetClosedError(e)) {
+      logger.error?.(`浏览器目标已关闭，停止导航重试: ${e.message}`);
+      throw e;
+    }
     if (isFrameDetachError(e)) {
       logger.info?.('检测到导航 Frame 脱离（页面重定向中），等待新页面上下文就绪...');
       return await waitForPageReady(page, timeout, logger);
