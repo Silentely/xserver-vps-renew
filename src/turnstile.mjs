@@ -665,7 +665,7 @@ async function pollTurnstileTaskResult(provider, taskId, logger, timeout) {
       }
       const userAgent = resultData.solution.userAgent || null;
       logger.info(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
-        (userAgent ? `，UA: ${userAgent.substring(0, 50)}...` : ''));
+        (userAgent ? `，完整 UA: ${userAgent}` : ''));
       return { token, userAgent };
     }
 

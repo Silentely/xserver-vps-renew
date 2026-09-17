@@ -315,6 +315,41 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
       // 求解成功摘要以主脚本 [步骤N] 日志行为准（info），此处 debug 保留同名信息避免重复输出
       logger.debug(`Turnstile 由 ${providerLabel} 求解成功`);
 
+      // API 返回的 UA 是本次 token 的运行时协商值：先同步浏览器，再注入 token，
+      // 避免 token 注入瞬间仍使用旧 UA。API 未返回 UA 时沿用当前浏览器 UA。
+      if (result.userAgent) {
+        try {
+          const currentUA = await page.evaluate(() => navigator.userAgent);
+          if (needsUserAgentAlignment(currentUA, result.userAgent)) {
+            logger.warn(
+              `UA 不匹配，更新浏览器 UA 以匹配 API`
+              + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
+            );
+            // 设定严格超时，避免 CDP Network.setUserAgentOverride 挂起导致 token 过期。
+            await Promise.race([
+              page.setUserAgent(result.userAgent),
+              sleep(3000).then(() => {
+                throw new Error('page.setUserAgent 超时（3000ms）');
+              }),
+            ]);
+            const verifiedUA = await page.evaluate(() => navigator.userAgent).catch(() => '');
+            if (verifiedUA && needsUserAgentAlignment(verifiedUA, result.userAgent)) {
+              throw new Error(`浏览器实际 UA 未成功更新为 API UA（当前仍为: ${verifiedUA}）`);
+            }
+            logger.debug('浏览器 UA 已对齐到打码平台返回值');
+          } else {
+            logger.debug('浏览器 UA 与 API 返回值一致或无需对齐');
+          }
+        } catch (uaError) {
+          logger.error(`对齐 UA 失败: ${uaError.message}`);
+          return {
+            ok: false,
+            reason: `UA 对齐失败（${uaError.message}），放弃使用 UA 不匹配的 token`,
+            attempts: Array.isArray(result.attempts) ? result.attempts : [],
+          };
+        }
+      }
+
       // 注入 token（含回调触发）——单次调用即完成「写字段 + 触发 data-callback」，
       // 避免回调被重复触发（注入逻辑见 src/turnstile.mjs 的 injectTurnstileToken）。
       // API 求解期间页面可能发生导航（Cloudflare 挑战重载等），evaluate 会命中
@@ -360,41 +395,6 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
           reason: 'Turnstile token 注入失败（未找到输入字段且未触发回调）',
           attempts: Array.isArray(result.attempts) ? result.attempts : [],
         };
-      }
-
-      // UA 严格对齐：当 API 返回不同 UA 时必须同步更新浏览器，否则 Cloudflare 将因 UA 不匹配直接拒绝
-      if (result.userAgent) {
-        try {
-          const currentUA = await page.evaluate(() => navigator.userAgent);
-          if (needsUserAgentAlignment(currentUA, result.userAgent)) {
-            logger.warn(
-              `UA 不匹配，更新浏览器 UA 以匹配 API`
-              + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
-            );
-            // 设定严格超时（3000ms），避免 CDP Network.setUserAgentOverride 挂起 180s 导致 token 过期
-            await Promise.race([
-              page.setUserAgent(result.userAgent),
-              sleep(3000).then(() => {
-                throw new Error('page.setUserAgent 超时（3000ms）');
-              }),
-            ]);
-            // 二次确认实际 UA 已生效
-            const verifiedUA = await page.evaluate(() => navigator.userAgent).catch(() => '');
-            if (verifiedUA && needsUserAgentAlignment(verifiedUA, result.userAgent)) {
-              throw new Error(`浏览器实际 UA 未成功更新为 API UA（当前仍为: ${verifiedUA}）`);
-            }
-            logger.debug('浏览器 UA 已对齐到打码平台返回值');
-          } else {
-            logger.debug('浏览器 UA 与 API 返回值一致或无需对齐');
-          }
-        } catch (uaError) {
-          logger.error(`对齐 UA 失败: ${uaError.message}`);
-          return {
-            ok: false,
-            reason: `UA 对齐失败（${uaError.message}），放弃使用 UA 不匹配的 token`,
-            attempts: Array.isArray(result.attempts) ? result.attempts : [],
-          };
-        }
       }
 
       try {
