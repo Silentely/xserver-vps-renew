@@ -138,4 +138,32 @@ describe('checkRenewalNeeded', () => {
     expect(reloadAttempted).toBe(true);
     expect(result.reasonCode).toBe('no_free_vps');
   });
+
+  it('重载后页面上下文仍未就绪时抛出明确网络错误，不再继续使用失效 Frame', async () => {
+    const mockPage = {
+      url: vi.fn().mockReturnValue('https://secure.xserver.ne.jp/xapanel/xvps/index'),
+      goto: vi.fn().mockImplementation(async (url) => {
+        if (url.includes('/xvps/index')) {
+          throw new Error("Attempted to use detached Frame 'RELOAD_FRAME'");
+        }
+        return null;
+      }),
+      waitForSelector: vi.fn().mockRejectedValue(new Error('timeout exceeded')),
+      evaluate: vi.fn().mockImplementation(async (fn) => {
+        if (typeof fn === 'function') {
+          const fnStr = fn.toString();
+          if (fnStr.includes('readyState')) return 'complete';
+          if (fnStr.includes('firstTable')) return { trCount: 0 };
+          if (fnStr.includes('freeServerIco')) {
+            throw new Error("Attempted to use detached Frame 'RELOAD_FRAME'");
+          }
+        }
+        return null;
+      }),
+    };
+
+    await expect(
+      checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER }),
+    ).rejects.toThrow('页面上下文未就绪');
+  });
 });

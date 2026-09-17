@@ -42,6 +42,41 @@ function isRetryableLoginNavigationError(error) {
   return RETRYABLE_LOGIN_NAVIGATION_ERRORS.some((pattern) => message.includes(pattern));
 }
 
+async function reloadVpsIndex(page, config, logger) {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await page.goto(`${config.BASE_URL}/xapanel/xvps/index`, {
+        waitUntil: 'domcontentloaded',
+        timeout: config.NAVIGATION_TIMEOUT,
+      });
+      const ready = await waitForPageReady(
+        page,
+        Math.min(config?.NAVIGATION_TIMEOUT || 15_000, 15_000),
+        logger,
+      );
+      if (!ready) {
+        throw new Error('VPS 列表页页面上下文未就绪');
+      }
+      try {
+        await page.waitForSelector('tr:has(.freeServerIco)', { timeout: 15_000 });
+      } catch {
+        // 页面已稳定但没有免费 VPS 行，交由调用方按业务规则处理。
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        logger.warn?.(`VPS 列表页上下文未就绪，将重载重试（${attempt}/1）: ${error.message}`);
+        await sleep(1_000);
+      }
+    }
+  }
+  throw new Error(`VPS 列表页页面上下文未就绪: ${lastError?.message || '未知导航错误'}`, {
+    cause: lastError,
+  });
+}
+
 /**
  * 访问登录页；代理偶发超时只在登录初始导航阶段有限重试，避免重复提交凭据。
  * @param {import('puppeteer').Page} page
@@ -240,14 +275,10 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
     if (!diag || diag.trCount === 0) {
       logger.warn('未在页面中检测到有效表格，可能因慢网络加载中断，尝试重新加载 VPS 列表页...');
       try {
-        await page.goto(`${config.BASE_URL}/xapanel/xvps/index`, {
-          waitUntil: 'domcontentloaded',
-          timeout: config.NAVIGATION_TIMEOUT,
-        });
-        await waitForPageReady(page, 15_000, logger);
-        await page.waitForSelector('tr:has(.freeServerIco)', { timeout: Math.min(tableWaitTimeout, 15_000) });
+        await reloadVpsIndex(page, config, logger);
       } catch (retryErr) {
-        logger.warn(`重新加载 VPS 列表页后仍未捕获到免费 VPS 行: ${retryErr.message}`);
+        logger.error(`重新加载 VPS 列表页失败，停止使用当前页面上下文: ${retryErr.message}`);
+        throw retryErr;
       }
     }
   }

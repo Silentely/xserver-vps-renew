@@ -159,10 +159,11 @@ run_renew() {
 # 信号处理（优雅退出）
 # ============================================================
 cleanup() {
+    local EXIT_CODE="${1:-0}"
     echo "$LOG_PREFIX 收到退出信号，正在清理..."
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null || true
     pkill -f "Xvfb :99" 2>/dev/null || true
-    exit 0
+    exit "$EXIT_CODE"
 }
 trap cleanup SIGTERM SIGINT
 
@@ -304,6 +305,7 @@ CRONSCRIPT
 else
     # 单次模式：执行完毕后退出
     echo "$LOG_PREFIX 单次执行模式"
-    run_renew
-    cleanup
+    RUN_EXIT_CODE=0
+    run_renew || RUN_EXIT_CODE=$?
+    cleanup "$RUN_EXIT_CODE"
 fi
