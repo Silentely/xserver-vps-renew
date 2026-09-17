@@ -159,8 +159,11 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
     ]);
   }
 
-  // 提交后确保新页面上下文稳定挂载，防 detached Frame 瞬态报错
-  await waitForPageReady(page, 15_000, logger);
+  // 提交后必须确认新页面上下文稳定挂载；浏览器断开时不能继续伪报登录成功。
+  const pageReady = await waitForPageReady(page, 15_000, logger);
+  if (!pageReady) {
+    throw new Error('登录提交后页面上下文未就绪，浏览器连接可能已断开。');
+  }
 
   if (page.url().includes('/login/')) {
     const pageHint = loginErrorText ? `（页面提示: ${loginErrorText}）` : '';
