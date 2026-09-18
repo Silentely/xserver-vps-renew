@@ -180,6 +180,12 @@ describe('entrypoint.sh --once 优先于 CRON_SCHEDULE（#7）', () => {
     expect(cronBody).not.toMatch(/exec 9>\/tmp\/xserver-renew\.lock/);
     expect(cronBody).not.toMatch(/flock -n 9/);
   });
+
+  it('源码：cron-run 子进程应跳过重复环境诊断', () => {
+    const src = readFileSync(ENTRYPOINT_SRC, 'utf8');
+    expect(src).toMatch(/CRON_SCHEDULE=""\s+SKIP_DIAGNOSTICS=true\s+\.\/entrypoint\.sh --once/);
+    expect(src).toMatch(/SKIP_DIAGNOSTICS:-.*true/);
+  });
 });
 
 describe('show_cron_schedule 易读文案', () => {

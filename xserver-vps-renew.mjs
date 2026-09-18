@@ -132,8 +132,8 @@ puppeteer.use(StealthPlugin());
 // 配置
 // ============================================================
 
-// 真实浏览器调试收集的 UA (Chrome 149 Edge on macOS)
-const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
+// 与当前 CapSolver 返回值对齐的默认 UA；API 后续返回新 UA 时仍会动态同步浏览器。
+const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
 
 /** 浏览器窗口/视口尺寸（与真实调试分辨率一致；启动参数与 defaultViewport 共用） */
 const VIEWPORT = { width: 1440, height: 900 };

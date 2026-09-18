@@ -32,7 +32,9 @@ fi
 # ============================================================
 # 容器环境诊断（通过 ENABLE_DIAGNOSTICS=true 启用）
 # ============================================================
-if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] && [ -x /app/diagnostics.sh ]; then
+if [ "${ENABLE_DIAGNOSTICS:-}" = "true" ] \
+    && [ "${SKIP_DIAGNOSTICS:-}" != "true" ] \
+    && [ -x /app/diagnostics.sh ]; then
     if ! /app/diagnostics.sh; then
         echo "$LOG_PREFIX ❌ 启动诊断/验证码 API 预热失败，停止续期流程"
         exit 1
@@ -254,7 +256,7 @@ MAX_RETRIES=3
 for i in $(seq 1 $MAX_RETRIES); do
     # 防御纵深：调用时清空 CRON_SCHEDULE，配合上方 --once 优先，杜绝嵌套 supercronic（#7）
     # 通知「下次执行」经 CRON_SCHEDULE_DISPLAY 按真实 cron 估算；外部调度场景回退 NOTIFY_NEXT_RUN_HOURS
-    if cd /app && CRON_SCHEDULE="" ./entrypoint.sh --once; then
+    if cd /app && CRON_SCHEDULE="" SKIP_DIAGNOSTICS=true ./entrypoint.sh --once; then
         echo "$LOG_PREFIX ✅ 续期成功"
         exit 0
     fi
