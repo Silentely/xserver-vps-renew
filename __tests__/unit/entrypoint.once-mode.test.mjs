@@ -170,6 +170,16 @@ describe('entrypoint.sh --once 优先于 CRON_SCHEDULE（#7）', () => {
       'cron-run.sh 调用 entrypoint --once 时应 CRON_SCHEDULE=""（或 env -u），切断嵌套定时模式',
     ).toBe(true);
   });
+
+  it('源码：cron-run 不应提前持有续期锁，锁由 --once 子进程统一管理', () => {
+    const src = readFileSync(ENTRYPOINT_SRC, 'utf8');
+    const cronRunMatch = src.match(/cat > \/app\/cron-run\.sh <<'CRONSCRIPT'([\s\S]*?)CRONSCRIPT/);
+    expect(cronRunMatch, '应生成 cron-run.sh').toBeTruthy();
+    const cronBody = cronRunMatch[1];
+
+    expect(cronBody).not.toMatch(/exec 9>\/tmp\/xserver-renew\.lock/);
+    expect(cronBody).not.toMatch(/flock -n 9/);
+  });
 });
 
 describe('show_cron_schedule 易读文案', () => {

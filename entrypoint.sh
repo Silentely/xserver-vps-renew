@@ -201,12 +201,6 @@ ts() {
     TZ="${TZ:-Asia/Tokyo}" date -Iseconds
 }
 
-exec 9>/tmp/xserver-renew.lock
-if ! flock -n 9; then
-    echo "$LOG_PREFIX ⏭️ 上一次执行仍在运行，跳过"
-    exit 0
-fi
-
 # 从父进程环境继承所需变量（白名单内联导出，避免凭据落盘）
 export XSERVER_MEMBER_ID="${XSERVER_MEMBER_ID:-}"
 export XSERVER_PASSWORD="${XSERVER_PASSWORD:-}"
