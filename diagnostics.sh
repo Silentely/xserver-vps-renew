@@ -46,10 +46,15 @@ curl -s -o /dev/null -w "  直连外网: %{http_code} (%{time_total}s)\n" https:
 if [ -n "$PROXY_ADDRESS" ] && [ -n "$PROXY_PORT" ]; then
   PROXY_SCHEME="${PROXY_TYPE:-http}"
   if [ -n "$PROXY_LOGIN" ] && [ -n "$PROXY_PASSWORD" ]; then
+    PROXY_CFG=$(mktemp)
+    chmod 600 "$PROXY_CFG"
+    # 使用配置文件传递凭据，避免在 ps 进程树中明文暴露
+    printf 'proxy-user = "%s:%s"\n' "$PROXY_LOGIN" "$PROXY_PASSWORD" > "$PROXY_CFG"
     curl -s -o /dev/null -w "  代理连通: %{http_code} (%{time_total}s)\n" \
+      --config "$PROXY_CFG" \
       -x "${PROXY_SCHEME}://${PROXY_ADDRESS}:${PROXY_PORT}" \
-      --proxy-user "${PROXY_LOGIN}:${PROXY_PASSWORD}" \
       https://secure.xserver.ne.jp --connect-timeout 8 --max-time 12 || echo "  代理连通: 失败"
+    rm -f "$PROXY_CFG"
   else
     curl -s -o /dev/null -w "  代理连通: %{http_code} (%{time_total}s)\n" \
       -x "${PROXY_SCHEME}://${PROXY_ADDRESS}:${PROXY_PORT}" \

@@ -21,7 +21,7 @@ if [ "$(id -u)" = "0" ]; then
     chown -R appuser:appuser /data /var/log 2>/dev/null || true
     chown root:root /tmp/.X11-unix 2>/dev/null || true
     chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-    chmod -R 777 "$TARGET_DATA_DIR" 2>/dev/null || true
+    chmod -R 700 "$TARGET_DATA_DIR" 2>/dev/null || true
     if command -v gosu >/dev/null 2>&1; then
         exec gosu appuser "$0" "$@"
     else
@@ -185,8 +185,14 @@ if [ "${1:-}" = "--once" ]; then
     # 不进入定时模式；CRON_SCHEDULE 仅用于日志「下次检查」提示（可为空）
     run_renew
 elif [ -n "${CRON_SCHEDULE:-}" ]; then
+    # 校验 CRON_SCHEDULE 白名单字符，防止命令注入与格式异常
+    if [[ ! "$CRON_SCHEDULE" =~ ^[0-9a-zA-Z\ \*\/,-]+$ ]]; then
+        echo "$LOG_PREFIX ❌ 错误: CRON_SCHEDULE 包含非法字符: $CRON_SCHEDULE"
+        exit 1
+    fi
+
     # 定时模式：先立即执行一次，然后定时调度
-    echo "$LOG_PREFIX 🕐 定时模式: $CRON_SCHEDULE"
+    echo "$LOG_PREFIX 🕒 定时模式: $CRON_SCHEDULE"
 
     # 显示定时任务信息
     SCHEDULE_INFO=$(show_cron_schedule "$CRON_SCHEDULE")
@@ -233,7 +239,7 @@ export PROXY_PASSWORD="${PROXY_PASSWORD:-}"
 export CHROME_PATH="${CHROME_PATH:-}"
 export CHROME_USER_DATA="${CHROME_USER_DATA:-}"
 export TZ="${TZ:-Asia/Tokyo}"
-# 不向 --once 子进程导出 CRON_SCHEDULE 作模式开关；调用处显式 CRON_SCHEDULE=""（#7）
+# 不向 --once 子进程导出 CRON_SCHEDULE 作为模式开关；调用处显式 CRON_SCHEDULE=""（#7）
 # 仅展示用：透传真实调度表达式，供通知「下次执行」按 cron 间隔估算，不作模式开关（#10）
 export CRON_SCHEDULE_DISPLAY="${CRON_SCHEDULE:-}"
 export RENEWAL_STATUS_FILE="${RENEWAL_STATUS_FILE:-}"
