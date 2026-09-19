@@ -485,9 +485,13 @@ export function extractVpsInfoFromCellTexts(cellTexts) {
       plan = text;
     }
 
-    // 判断服务器名：包含 host/vps 关键词，且长度较短
-    if ((text.includes('host') || text.includes('vps-')) && text.length < 30) {
-      serverName = text;
+    // XServer 可能把宿主机名拼在长规格单元格末尾，不能按整格长度判断。
+    const hostMatch = text.match(/\b(host\d+(?:-\d+)*)\b/i);
+    const vpsMatch = text.match(/\b(vps-[a-z0-9-]+)\b/i);
+    if (hostMatch) {
+      serverName = hostMatch[1];
+    } else if (!serverName && vpsMatch) {
+      serverName = vpsMatch[1];
     }
   }
 

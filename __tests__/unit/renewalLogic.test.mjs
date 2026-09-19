@@ -429,6 +429,21 @@ describe('extractVpsInfoFromCellTexts', () => {
     });
   });
 
+  it('从 XServer 实际免费 VPS 行的长规格单元格中提取宿主机名', () => {
+    const cells = [
+      '210.131.217.163 vps-2025-07-12-12-07-55',
+      '4GBメモリ 仮想3コア NVMe 30GB 収容 host02-23',
+      '無料VPS Debian 12',
+      '2026-09-19',
+      '稼働中',
+    ];
+
+    expect(extractVpsInfoFromCellTexts(cells)).toEqual({
+      serverName: 'host02-23',
+      plan: '4GBメモリ 仮想3コア NVMe 30GB 収容 host02-23',
+    });
+  });
+
   it('无匹配单元格时返回 null（不清空已匹配项）', () => {
     expect(extractVpsInfoFromCellTexts(['2026-08-09', '通常表示'])).toEqual({
       serverName: null,
@@ -464,4 +479,3 @@ describe('extractVpsInfoFromCellTexts', () => {
     });
   });
 });
-
