@@ -23,16 +23,27 @@ CVE-2026-42499
 CVE-2026-42504
 
 # ============================================================
-# Debian bookworm 系统包（curl / Mesa / libxfont2）
+# Debian bookworm 系统包（curl / Mesa / libxfont2 / expat）
 # Dockerfile 已 apt-get upgrade，但构建时仓库仍无更高版本可升
 # Chrome/Xvfb 依赖链引入；容器内无对外暴露对应攻击面
 # 待 bookworm 安全更新进入基础镜像后移除
+#
+# 其中 libexpat1 一组：已核对 security.debian.org 的 bookworm-security
+# 索引与 pool，当前最高仅到 2.5.0-1+deb12u3（镜像内即此版本），
+# Trivy 依据安全通告标注的修复版 2.5.0-1+deb12u4 尚未入库，
+# apt 无从升级；待 u4 发布后可一并移除此段忽略
 # ============================================================
 CVE-2026-5773
 CVE-2026-40393
 CVE-2026-56001
 CVE-2026-56002
 CVE-2026-56003
+CVE-2024-28757
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2026-66046
+CVE-2026-93990
 
 # ============================================================
 # brace-expansion DoS 漏洞 — puppeteer-extra 传递依赖

@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 
 describe('依赖安全回归', () => {
-  it('brace-expansion 使用 CVE-2026-14257 的 1.x 修复版且保持 CommonJS 兼容', () => {
+  it('brace-expansion 使用 CVE-2026-102276/102278 的 1.x 修复版且保持 CommonJS 兼容', () => {
     const { version } = require('brace-expansion/package.json');
     const expand = require('brace-expansion');
 
-    expect(version).toBe('1.1.18');
+    expect(version).toBe('1.1.20');
     expect(typeof expand).toBe('function');
     expect(expand('file{1,2}.txt')).toEqual(['file1.txt', 'file2.txt']);
   });

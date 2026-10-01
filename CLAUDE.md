@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-10-01 | CI：修复镜像构建 Trivy 门禁失败（HIGH×8）——Node `brace-expansion` CVE-2026-102276/102278 overrides 1.1.18→1.1.20；Debian `libexpat1` 6 个 HIGH 已核对 security 索引与 pool 仅到 u3（修复 u4 未入库、apt 无从升），按规范记入 `.trivyignore`（本地 trivy A/B 验证新锁 0 HIGH / 忽略项逐一核对） |
 | 2026-10-01 | 修复「已连续成功 N 次」被记录窗口截断封顶：状态文件仅保留最近 30 条记录，而「每 4h 检查、每天 1 次真续期 + 5 次跳过」的部署 30 条 ≈ 5 天，计数数到 5 后进一出一恒为 5；改为持久化独立 `successStreak`（成功 +1 / 失败清零 / 跳过不变，`nextSuccessStreak` 纯函数），与 sliding window 解耦，旧格式文件按记录回退并在首次写入补齐（32 文件 / 545 用例） |
 | 2026-08-27 | 十轮迭代打磨：日志时间戳 `Intl.DateTimeFormat` 按 tz 缓存（每条日志不再新建 Intl 对象）；轮询路径日志降噪（`getTurnstileToken` 读取失败 error→debug；求解成功/链路/域名代理提示去重降 debug）；提交结果轮询自适应退避 `resolveSubmissionPollIntervalMs`（10s/30s 两段，120s 窗口 CDP 往返 ≈300→≈90）；`TURNSTILE_PROVIDER_ORDER` 拼写错误启动 warn（`listUnknownTurnstileProviderNames`）；entrypoint `show_cron_schedule` 支持「27 */4」错峰文案；diagnostics.sh 状态文件可写性探测；用户脚本到期判定对齐主脚本 #5（仅今天到期进续期页）+ 面板关闭按钮键盘可达（1.0.7）；通知 `<strong>`→`<b>` 统一 + `handleCaptchaPage` 边界防御；启动日志新增运行环境行（25 文件 / 479 用例） |
 | 2026-08-22 | 任务 41：收尾任务 40——npm 纯构建期工具，`npm ci` 后整体从运行时镜像移除（含 npx/corepack/yarn，node 基础镜像自带的包管理器全清），根治 npm 捆绑运行期依赖的 CVE 打地鼠（picomatch/sigstore→升 npm、tar→显式升级均为该类别）；运行时仅依赖 node，entrypoint 直接执行主脚本；镜像体积略减，Trivy 无 HIGH/CRITICAL |
