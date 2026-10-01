@@ -25,28 +25,43 @@ const CONSOLE_LOGGER = {
 };
 
 /**
+ * 解析状态文件中持久化的连续成功次数
+ * 旧格式文件（或字段被破坏）无有效值时返回 null，由调用方回退到按记录统计
+ * @param {unknown} value - 状态文件中的 successStreak 字段
+ * @returns {number|null} - 非负整数，无法识别时为 null
+ */
+function parsePersistedStreak(value) {
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/**
  * 读取续期状态历史
  * @param {string} filePath - 状态文件路径
  * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
- * @returns {object} - { records: [...], lastRecord: object|null }
+ * @returns {object} - { records: [...], lastRecord: object|null, successStreak: number }
  */
 export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE, logger = CONSOLE_LOGGER) {
   try {
     const data = readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(data);
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.records)) {
-      return { records: [], lastRecord: null };
+      return { records: [], lastRecord: null, successStreak: 0 };
     }
+    // 连续成功次数是独立持久化字段，与 records 的 30 条滚动窗口解耦，
+    // 否则「每日 1 次成功 + 5 次跳过」的部署会把计数封顶在窗口内的成功条数；
+    // 旧格式文件缺失该字段时按现有记录回退统计，升级后首次写入即补齐
+    const persistedStreak = parsePersistedStreak(parsed.successStreak);
     return {
       records: parsed.records,
       lastRecord: parsed.records.length > 0 ? parsed.records[parsed.records.length - 1] : null,
+      successStreak: persistedStreak ?? countConsecutiveSuccesses(parsed.records),
     };
   } catch (error) {
     // 文件不存在属于正常冷启动，静默返回空状态
     if (error.code !== 'ENOENT') {
       logger.warn(`读取状态文件异常: ${error.message}，重置为空记录`);
     }
-    return { records: [], lastRecord: null };
+    return { records: [], lastRecord: null, successStreak: 0 };
   }
 }
 
@@ -59,9 +74,10 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE, logger = CONSO
  * @throws {Error} 目录不可写或写入失败时抛出
  */
 export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRecords = DEFAULT_MAX_RECORDS, logger = CONSOLE_LOGGER) {
-  const { records } = readRenewalStatus(filePath, logger);
+  const { records, successStreak } = readRenewalStatus(filePath, logger);
   records.push(record);
   const trimmed = records.slice(-Math.max(1, maxRecords));
+  const nextStreak = nextSuccessStreak(successStreak, record);
   const dir = dirname(filePath);
 
   try {
@@ -83,7 +99,7 @@ export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRe
 
   const tmpPath = `${filePath}.tmp`;
   try {
-    writeFileSync(tmpPath, JSON.stringify({ records: trimmed }, null, 2), {
+    writeFileSync(tmpPath, JSON.stringify({ successStreak: nextStreak, records: trimmed }, null, 2), {
       encoding: 'utf8',
       mode: 0o600,
     });
@@ -158,6 +174,19 @@ export function countConsecutiveSuccesses(records) {
 }
 
 /**
+ * 计算追加本条记录后的连续成功次数（纯函数）
+ * 成功 +1、失败清零、跳过记录不变（不计入也不中断）
+ * @param {number} currentStreak - 当前连续成功次数
+ * @param {object} record - 即将追加的续期记录
+ * @returns {number} - 追加后的连续成功次数
+ */
+export function nextSuccessStreak(currentStreak, record) {
+  const base = Number.isInteger(currentStreak) && currentStreak >= 0 ? currentStreak : 0;
+  if (!record || record.skipped) return base;
+  return record.success ? base + 1 : 0;
+}
+
+/**
  * 获取续期健康状态
  * @param {string} filePath - 状态文件路径
  * @param {number} alertThreshold - 连续失败告警阈值
@@ -165,9 +194,10 @@ export function countConsecutiveSuccesses(records) {
  * @returns {object} - { healthy, lastRecord, lastSuccess, consecutiveFailures, consecutiveSuccesses, totalRuns }
  */
 export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold = DEFAULT_ALERT_AFTER_FAILURES, logger = CONSOLE_LOGGER) {
-  const { records, lastRecord } = readRenewalStatus(filePath, logger);
+  const { records, lastRecord, successStreak } = readRenewalStatus(filePath, logger);
   const consecutiveFailures = countConsecutiveFailures(records);
-  const consecutiveSuccesses = countConsecutiveSuccesses(records);
+  // 连续成功次数取持久化字段（不受 30 条记录窗口截断影响），连败仍按窗口内记录统计
+  const consecutiveSuccesses = successStreak;
   const lastSuccess = [...records].reverse().find((r) => r && r.success && !r.skipped) || null;
   const threshold = Number.isFinite(alertThreshold) && alertThreshold > 0
     ? alertThreshold

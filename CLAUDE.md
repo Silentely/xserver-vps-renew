@@ -6,6 +6,7 @@
 
 | 日期 | 变更内容 |
 |------|----------|
+| 2026-10-01 | 修复「已连续成功 N 次」被记录窗口截断封顶：状态文件仅保留最近 30 条记录，而「每 4h 检查、每天 1 次真续期 + 5 次跳过」的部署 30 条 ≈ 5 天，计数数到 5 后进一出一恒为 5；改为持久化独立 `successStreak`（成功 +1 / 失败清零 / 跳过不变，`nextSuccessStreak` 纯函数），与 sliding window 解耦，旧格式文件按记录回退并在首次写入补齐（32 文件 / 545 用例） |
 | 2026-08-27 | 十轮迭代打磨：日志时间戳 `Intl.DateTimeFormat` 按 tz 缓存（每条日志不再新建 Intl 对象）；轮询路径日志降噪（`getTurnstileToken` 读取失败 error→debug；求解成功/链路/域名代理提示去重降 debug）；提交结果轮询自适应退避 `resolveSubmissionPollIntervalMs`（10s/30s 两段，120s 窗口 CDP 往返 ≈300→≈90）；`TURNSTILE_PROVIDER_ORDER` 拼写错误启动 warn（`listUnknownTurnstileProviderNames`）；entrypoint `show_cron_schedule` 支持「27 */4」错峰文案；diagnostics.sh 状态文件可写性探测；用户脚本到期判定对齐主脚本 #5（仅今天到期进续期页）+ 面板关闭按钮键盘可达（1.0.7）；通知 `<strong>`→`<b>` 统一 + `handleCaptchaPage` 边界防御；启动日志新增运行环境行（25 文件 / 479 用例） |
 | 2026-08-22 | 任务 41：收尾任务 40——npm 纯构建期工具，`npm ci` 后整体从运行时镜像移除（含 npx/corepack/yarn，node 基础镜像自带的包管理器全清），根治 npm 捆绑运行期依赖的 CVE 打地鼠（picomatch/sigstore→升 npm、tar→显式升级均为该类别）；运行时仅依赖 node，entrypoint 直接执行主脚本；镜像体积略减，Trivy 无 HIGH/CRITICAL |
 | 2026-08-22 | 任务 40：修复 CI Trivy 门禁（CVE-2026-73566 node-tar DoS，HIGH）：npm 官方 tarball 捆绑的运行期依赖 tar 7.5.19 落后于修复版 7.5.21，`npm install -g npm@latest` 直接解包捆绑依赖、不会按 semver 重新解析（第三次 npm 内嵌依赖漏洞：picomatch/sigstore→升 npm、本次 tar→显式升级），Dockerfile 在 npm 升级后显式 `npm install -g tar@7.5.22` 并覆盖进 `/usr/local/lib/node_modules/npm/node_modules/tar`（7.5.19 与 7.5.22 包结构一致，main/exports/dist 兼容；本地已下载 tarball + trivy 复现确认） |
@@ -93,15 +94,18 @@ xserver-vps-renew/
 ├── README.md / CHANGELOG.md / RUNBOOK.md
 ├── .github/workflows/          # CI/CD
 │   └── docker-publish.yml
-└── __tests__/unit/             # 单元测试（25 个文件，479 个用例）
+└── __tests__/unit/             # 单元测试（32 个文件，545 个用例）
     ├── buildTurnstileTask.test.mjs
     ├── captcha.recognize.test.mjs
+    ├── captcha.sample.test.mjs
+    ├── cleanChromeCaches.test.mjs
     ├── cleanChromeLocks.test.mjs
     ├── convertHiraganaToNumber.test.mjs
     ├── cronScheduleDisplay.test.mjs
     ├── dependency-security.test.mjs
     ├── diagnostics.statusFile.test.mjs
     ├── entrypoint.once-mode.test.mjs
+    ├── env-whitelist.test.mjs
     ├── findChromePath.test.mjs
     ├── getTurnstileProvider.test.mjs
     ├── injectTurnstileToken.test.mjs
@@ -109,10 +113,14 @@ xserver-vps-renew/
     ├── normalizeCaptchaCode.edge.test.mjs
     ├── notify.test.mjs
     ├── pageUtils.test.mjs
+    ├── panelFlow.checkRenewal.test.mjs
+    ├── panelFlow.confirm.test.mjs
+    ├── panelFlow.login.test.mjs
     ├── panelFlow.submission.test.mjs
+    ├── panelFlow.syncFormFields.test.mjs
     ├── renewalLogic.test.mjs
     ├── renewalStatus.test.mjs
-    ├── env-whitelist.test.mjs
+    ├── security-audit-hardening.test.mjs
     ├── turnstile.extract.test.mjs
     ├── turnstile.failover.test.mjs
     ├── turnstile.solve.test.mjs
@@ -154,7 +162,7 @@ graph TD
 | `src/page-utils.mjs` | 页面通用工具 | `waitForNav()`, `getText()`, `getBodyText()` |
 | `src/captcha.mjs` | 验证码处理（纯函数） | `normalizeCaptchaCode()`, `convertHiraganaToNumber()`, `recognizeCaptchaWithKerasAPI()`, `recognizeCaptcha()` |
 | `src/turnstile.mjs` | Turnstile 求解（参数构建/API 调用/token 注入/多平台 failover） | `listTurnstileProviders()`, `listUnknownTurnstileProviderNames()`, `getTurnstileProvider()`, `solveTurnstileWithFailover()`, `solveTurnstileViaAPI()`, `buildTurnstileTask()`, `injectTurnstileToken()`, `readTurnstileWidgetParams()`, `isTurnstileOutageError()` |
-| `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `getRenewalStatus()` |
+| `src/renewal-status.mjs` | 续期持久化（纯函数） | `readRenewalStatus()`, `writeRenewalStatus()`, `buildRenewalRecord()`, `countConsecutiveFailures()`, `countConsecutiveSuccesses()`, `nextSuccessStreak()`, `getRenewalStatus()` |
 | `src/utils.mjs` | 通用纯工具 | `maskProxyAddress()`, `getTokyoDateString()`, `fetchWithTimeout()`, `validateRequiredConfig()`, `parsePositiveInt()`, `escapeHtml()`, `formatTokyoDateTime()`, `findChromePath()`, `cleanChromeLocks()`, `NOOP_LOGGER` |
 | `src/renewal-logic.mjs` | 续期业务纯逻辑（含 24h/12h 政策常量） | `isRenewalDue()`, `parseExpireTimestamp()`, `getRemainingHours()`, `detectRenewalWindowBlocked()`, `extractRetryAfterFromText()`, `buildRenewUrl()`, `resolveCaptchaRetryNavigation()`, `needsUserAgentAlignment()`, `shouldSubmitAfterTurnstile()`, `evaluateSubmissionResult()`, `extractExpireDateFromText()` |
 | `src/notify.mjs` | Telegram 通知构建（纯函数） | `buildSuccessNotifyMessage` / `buildSkipNotifyMessage` / `buildFailureNotifyMessage`, `classifyRenewalFailure()`, `buildFailureHints()`, `buildProxyHint()`, `resolveNextRunAt()`, `parseNotifyDetail()`, `clampTelegramMessage()`, `formatProcessSteps()`, `listFailedTurnstileProviders()`, `FAILURE_CATEGORY_LABELS` |
@@ -311,14 +319,14 @@ npm run test:watch
 
 - **框架**：Vitest + v8 覆盖率
 - **覆盖范围**：`src/**/*.mjs` + `xserver-vps-renew.mjs`
-- **已测试模块**（25 个测试文件，479 个用例）：
+- **已测试模块**（32 个测试文件，545 个用例）：
   - `src/captcha.mjs` — `normalizeCaptchaCode`（含边界）、`convertHiraganaToNumber`、`recognizeCaptcha` / `recognizeCaptchaWithKerasAPI`
   - `src/turnstile.mjs` — `listTurnstileProviders` / failover、`getTurnstileProvider`（含 AntiCaptcha/YesCaptcha）、`buildTurnstileTask`、`buildCreateTaskPayload`、`solveTurnstileViaAPI`、`solveTurnstileWithFailover`、`injectTurnstileToken`、`extractTurnstileParams` / `readTurnstileWidgetParams`（属性名双名兼容）
   - `src/page-utils.mjs` — `waitForNav`（成功/失败/默认 logger）、`getText`、`getBodyText`（含 evaluate 异常容错）、`waitForSelectorSoft`（软等待替代固定 sleep）
   - `src/panel-flow.mjs` — `waitForSubmissionResult`（提交后轮询成功信号提前返回 / 未命中等待至超时 / 失败同样等待避免过早误判 / 默认 logger）、`resolveSubmissionPollIntervalMs`（10s/30s 自适应退避）
   - `src/turnstile-flow.mjs`（部分） — `waitForTurnstileToken`（降级模式立即点击 / 10s 间隔重试）、`injectTurnstileTokenWithRetry`（frame 脱离重试）、`getTurnstileToken`（读取失败降 debug 并回退空串）
   - `diagnostics.sh` — `check_status_file_writability`（状态文件目录/文件可写性四态探测，bash 运行时求值真实函数）
-  - `src/renewal-status.mjs` — `readRenewalStatus`（含 logger 注入）、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`countConsecutiveSuccesses`、`getRenewalStatus`
+  - `src/renewal-status.mjs` — `readRenewalStatus`（含 logger 注入 + successStreak 解析/旧格式回退）、`writeRenewalStatus`、`buildRenewalRecord`、`countConsecutiveFailures`、`countConsecutiveSuccesses`、`nextSuccessStreak`（成功 +1 / 失败清零 / 跳过不变）、`getRenewalStatus`、跨 30 条记录窗口连续成功不再封顶回归用例
   - `src/renewal-logic.mjs` — 到期判定（含 24h/12h 规则与时分解析）、URL 构建、提交结果、到期日提取
   - `src/notify.mjs` — 通知文案（成功/跳过/失败 + 过程摘要 + 连续成功）、失败分类与处置建议、下次执行估算、详情模式解析、消息截断、`parseTelegramSendResult`（200+ok:false 逻辑错误识别）
   - `src/utils.mjs` — `maskProxyAddress`、`getTokyoDateString`、`fetchWithTimeout`、`validateRequiredConfig`、`parsePositiveInt`、`escapeHtml`、`formatTokyoDateTime`、`formatLogTimestamp`、`formatLogLine`（级别标签）、`analyzeFingerprintHealth`、`findChromePath`、`cleanChromeLocks`、`NOOP_LOGGER`
