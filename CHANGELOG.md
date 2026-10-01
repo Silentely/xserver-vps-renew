@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### 修复（2026-10-01）
+- **Dependabot 告警 #20（medium）：`brace-expansion` CVE-2026-102277**（`{a},b}` 重写导致二次方时间展开的 CPU DoS，`< 1.1.21` 受影响）：overrides 由 `1.1.20` 升至 `1.1.21` 并同步 package-lock.json 与依赖安全回归断言；1.1.21 仍为 1.x 线，依赖集（`balanced-match` / `concat-map`）与 CommonJS 导出不变，满足 minimatch@3.x 的 `^1.1.7` 约束
+- 验证：本地 Trivy 0.74.0 A/B（severity medium 起）——1.1.20 树报 `brace-expansion` CVE-2026-102277（与 Dependabot 报告一致），1.1.21 树 0 命中；`npm test` 32 文件 / 545 用例全绿
+
+### 修复（2026-10-01）
 - **CI：修复镜像构建 Trivy 门禁失败（HIGH ×8）**：① Node.js 侧 `brace-expansion` 传递依赖报 CVE-2026-102276/CVE-2026-102278（stack exhaustion / 嵌套花括号递归 DoS），`package.json` overrides 由 `1.1.18` 升至 `1.1.20`（两漏洞分别要求 ≥1.1.19 与 ≥1.1.20，1.x 线满足 minimatch@3.x 的 `^1.1.7` 约束）并同步 package-lock.json；② Debian 侧 `libexpat1` 报 6 个 HIGH（CVE-2024-28757/2025-59375/2026-25210/2026-45186/2026-66046/2026-93990），Trivy 依据安全通告标注修复版 `2.5.0-1+deb12u4`，但已核对 security.debian.org 的 bookworm-security 索引与 pool，实际最高仅到 `2.5.0-1+deb12u3`（镜像内即此版本），u4 尚未入库、apt 无从升级，故按既有惯例记入 `.trivyignore`（含移除条件：待 u4 发布）；expat 属 Chrome/Xvfb 字体依赖链，容器内无对外暴露的 XML 输入攻击面
 - 验证：本地 Trivy 0.74.0 A/B 对比——旧锁生产依赖树报 `brace-expansion` 2 HIGH（与 CI 完全一致），新锁生产依赖树 0 HIGH/CRITICAL；`.trivyignore` 新增段与失败报告六个 CVE 逐一对应（逐条核对命中）；`npm test` 32 文件 / 545 用例全绿
 
