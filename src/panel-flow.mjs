@@ -143,6 +143,17 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
   await page.type('#memberid', config.MEMBER_ID, { delay: 50 });
   await page.type('#user_password', config.PASSWORD, { delay: 50 });
 
+  // solve ts before login
+  const loginTurnstileResult = await waitForTurnstile(page, {
+    config,
+    logger,
+  });
+  if (!loginTurnstileResult?.ok) {
+    throw new Error(
+      loginTurnstileResult?.reason || 'login ts failed',
+    );
+  }
+
   // 点击提交并等待导航
   const submitBtn = await page.$('input[name="action_user_login"]')
     || await page.$('#login_area input[type="submit"]');
