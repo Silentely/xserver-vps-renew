@@ -139,10 +139,27 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
     logger.error(`登录页存在错误信息: ${errorText}`);
   }
 
-  logger.info('正在填充凭据并提交...');
+  logger.info('正在填充凭据...');
   await page.type('#memberid', config.MEMBER_ID, { delay: 50 });
   await page.type('#user_password', config.PASSWORD, { delay: 50 });
 
+  // 检查并处理登录页 Cloudflare Turnstile 人机验证（官方 2026 最新加入）
+  const hasTurnstile = await page.$('.cf-turnstile, [data-sitekey]').catch(() => null);
+  if (hasTurnstile) {
+    logger.info('检测到登录页包含 Cloudflare Turnstile 验证码，正在求解...');
+    const turnstileResult = await waitForTurnstile(page, {
+      config,
+      logger,
+    });
+    if (!shouldSubmitAfterTurnstile(turnstileResult)) {
+      throw new Error(turnstileResult?.reason || '登录页 Turnstile 求解未通过，跳过提交');
+    }
+    const loginToken = await getTurnstileToken(page, logger).catch(() => '');
+    await syncRenewalFormFields(page, { token: loginToken }, logger);
+    logger.info(`登录页 Turnstile 验证通过 (Token长度: ${loginToken ? loginToken.length : 0})`);
+  }
+
+  logger.info('正在提交登录表单...');
   // 点击提交并等待导航
   const submitBtn = await page.$('input[name="action_user_login"]')
     || await page.$('#login_area input[type="submit"]');
@@ -166,7 +183,9 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
   }
 
   if (page.url().includes('/login/')) {
-    const pageHint = loginErrorText ? `（页面提示: ${loginErrorText}）` : '';
+    const latestError = await getText(page, '.errorMessage').catch(() => null);
+    const finalErrorText = latestError || loginErrorText;
+    const pageHint = finalErrorText ? `（页面提示: ${finalErrorText}）` : '';
     throw new Error(`登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。${pageHint}`);
   }
 
