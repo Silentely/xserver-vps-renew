@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### 修复（2026-10-11）
+- **CI：解除镜像构建阻断（续期判定用例的时刻依赖）**：`panelFlow.checkRenewal` 的「成功找到今天到期的免费 VPS 时返回 needed: true」用例用真实时钟（`new Intl.DateTimeFormat(...).format(new Date())`）推导当天日期，而 `isRenewalDue` 对纯日期到期文案按东京日末 23:59:59 估算剩余小时——该断言只在东京 12:00 之后成立，东京上午运行的 CI 必然失败。修复：用例改为 `vi.spyOn(Date, 'now')` 固定时钟至东京 20:00（UTC 11:00）并由该时刻推导日期，另补「东京 09:00、到期日为当天 → `not_due`」边界用例覆盖 12h 续期窗口两侧；影响面：`docker-publish` 的 `Run unit tests` 位于构建推送之前，自 PR #16 合并（01:41 UTC = 东京 10:41）起连续 5 次 run 全部失败，`latest` 镜像停留在 10-07 版本
+- 验证：受控时钟复现东京 09:00 / 12:00 / 20:00 三点 needed 分别为 false / true / true；修复前本地 `npm test` 1 failed、修复后 546/547 全绿；推送后 CI run 38103695850 的 unit tests、coverage gate、build & push、supercronic 冒烟、Trivy 扫描全部 success，发布 `latest` 与 `sha-b076be4`
+
+### 迭代（2026-10-11）
+- **CI：新增 PR 测试关卡 + 严格按 lock 安装**：新增 `.github/workflows/pr-tests.yml`（`pull_request`，仅跑 `npm ci` + `npm test`），依赖升级类 PR 在合并前即可暴露测试失败，不再等 push 到 main 由 docker-publish 暴露；`docker-publish.yml` 安装步骤由 `npm install` 改为 `npm ci`，严格按 package-lock.json 安装
+- **测试：时钟卫生守卫与覆盖率门槛收紧**：新增 `testClockHygiene` 元测试，剥离注释后扫描全部测试文件，禁止裸 `new Date()` / `Date.now()` / `performance.now()`，放行固定时刻入参（`Date.parse` / `Date.UTC` / `new Date(ms)`）、假时钟（`vi.useFakeTimers`）与确定性替身（`vi.spyOn(Date, 'now')`、`Date.now = () => 固定值`）；vitest 覆盖率门槛由 25/28/28/28 提升至 60/65/60/60（当前水位约 68%），并断言扫描到 20 个以上测试文件防止守卫空转
+- **重构：主脚本决策逻辑抽出为纯函数模块**：新增 `src/main-logic.mjs`——`buildKnownVpsInfo`（本轮 VPS 上下文与历史兜底合并）、`resolveSkipOutcome`（跳过/人工确认出口与文案）、`buildMissingVpsWarning`、`resolveEscalation`（连续失败达阈值或 Turnstile 全平台熔断）、`resolveOutcomeIcon`；主脚本仅保留编排与副作用，判定行为不变（新增 16 用例，模块行覆盖 100%）
+- **依赖机器人收敛**：`renovate.json` 增加非大版本升级分组（minor/patch/pin/digest 合为一个 PR）与 `lockFileMaintenance`，并声明依赖升级统一由 Renovate 管理——Dependabot 版本更新只能在仓库设置中关闭（REST API 无对应端点，仅安全更新存在 `automated-security-fixes` 端点）
+- **.trivyignore 复扫清理（失效条目 19 条）**：① Go stdlib 15 条——条目登记的是官方 supercronic release 内嵌的 Go 1.24.4 标准库，而镜像自 2971a7e 起改为多阶段从源码重建、今日升至 `golang:1.27`，经 OSV 版本查询（package `stdlib` / ecosystem `Go` / version `1.27.0`）确认这 15 个 CVE 均不影响 Go 1.27.0，即不适用于任何 1.27.x；② npm 内嵌依赖 4 条——命中路径为 `/usr/local/lib/node_modules/npm/node_modules/**`，npm/npx/corepack/yarn 自 1226e55 起已从运行镜像整体移除；③ 保留 Debian 系统包段（apt 仓库暂无修复版本）与 brace-expansion 段（minimatch@3.x 约束下无法升到 5.x），并在文件头补充复核方法（在仓库外目录执行 `trivy image` 得到未过滤命中列表）与「失效条目会静默真实漏洞」的提示
+- 验证：`node --check` 全仓通过；34 文件 / 565 用例全绿（净增 18）；`npm run test:coverage` 通过收紧后的门槛（68.0%）；`pr-tests.yml` 与 `docker-publish.yml` 经 YAML 解析校验，`renovate.json` 经 JSON 解析校验；Go 段判定依据 OSV 逐条比对（15/15 不在受影响集合）；待办：镜像端到端复核依赖 CI 的 Trivy 门禁（本地 `trivy image` 因网络代理三次重置层拉取未能完成）
+
 ### 修复（2026-10-01）
 - **Dependabot 告警 #20（medium）：`brace-expansion` CVE-2026-102277**（`{a},b}` 重写导致二次方时间展开的 CPU DoS，`< 1.1.21` 受影响）：overrides 由 `1.1.20` 升至 `1.1.21` 并同步 package-lock.json 与依赖安全回归断言；1.1.21 仍为 1.x 线，依赖集（`balanced-match` / `concat-map`）与 CommonJS 导出不变，满足 minimatch@3.x 的 `^1.1.7` 约束
 - 验证：本地 Trivy 0.74.0 A/B（severity medium 起）——1.1.20 树报 `brace-expansion` CVE-2026-102277（与 Dependabot 报告一致），1.1.21 树 0 命中；`npm test` 32 文件 / 545 用例全绿

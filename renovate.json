@@ -2,5 +2,25 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "description": [
+    "依赖升级统一由 Renovate 管理（npm 依赖与 Docker 镜像标签）",
+    "Dependabot version updates 在仓库设置中关闭，避免两个机器人重复开 PR"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "非大版本升级合并为一个 PR，减少 PR 数量与 rebase 成本",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "非大版本依赖升级",
+      "groupSlug": "non-major"
+    }
   ]
 }

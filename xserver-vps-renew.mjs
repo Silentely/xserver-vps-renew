@@ -114,6 +114,14 @@ import {
   FREE_VPS_MAX_HOURS,
   RENEWAL_WINDOW_HOURS,
 } from './src/renewal-logic.mjs';
+// 主流程决策纯逻辑（上下文回退/跳过判定/告警升级/结果图标）
+import {
+  buildKnownVpsInfo,
+  resolveSkipOutcome,
+  buildMissingVpsWarning,
+  resolveEscalation,
+  resolveOutcomeIcon,
+} from './src/main-logic.mjs';
 
 /** 默认 Keras 验证码识别 API（Cloud Run，可被 CAPTCHA_API 覆盖） */
 const DEFAULT_CAPTCHA_API = 'https://captcha-api-216250547992.us-central1.run.app';
@@ -719,26 +727,21 @@ async function main() {
     // 步骤 2：检查续期
     pushStep('检查免费 VPS 到期状态');
     const renewalData = await checkRenewalNeeded(page, { config: CONFIG, logger: LOGGER });
-    if (renewalData.vpsInfo && (renewalData.vpsInfo.serverName || renewalData.vpsInfo.plan || renewalData.vpsInfo.expireDate)) {
-      knownVps = {
-        serverName: renewalData.vpsInfo.serverName || null,
-        plan: renewalData.vpsInfo.plan || null,
-        expireDate: renewalData.vpsInfo.expireDate || null,
-        remainingHours: renewalData.remainingHours ?? null,
-      };
-    } else if (prevLastRecord?.serverName) {
-      // 若当前未提取到 VPS 信息但历史有记录，兜底保留已知信息用于告警通知展示
-      knownVps = {
-        serverName: prevLastRecord.serverName,
-        plan: prevLastRecord.plan || null,
-        expireDate: prevLastRecord.newExpireDate || prevLastRecord.oldExpireDate || null,
-        remainingHours: null,
-      };
-    }
+    // 本轮提取结果优先，缺失时回退历史记录兜底保留已知信息用于告警通知展示
+    // （字段归一化与回退判定收敛于 main-logic.buildKnownVpsInfo，可单测）
+    knownVps = buildKnownVpsInfo(renewalData, prevLastRecord);
     if (!renewalData.needed) {
+      // 出口类型与文案判定收敛于 main-logic.resolveSkipOutcome（可单测）
+      const skipOutcome = resolveSkipOutcome({
+        reasonCode: renewalData.reasonCode,
+        needsManualConfirmation: renewalData.needsManualConfirmation,
+        prevLastRecord,
+        baseReasonDetail: renewalData.reasonDetail,
+      });
+
       // 官方新增/变更确认页导致未进入 VPS 面板（URL 不含 /xvps/）时转人工确认，
       // 发送提醒并置失败退出码，不当显普通「无免费 VPS」跳过
-      if (renewalData.reasonCode === 'no_free_vps' && renewalData.needsManualConfirmation) {
+      if (skipOutcome.kind === 'manual_confirm') {
         runOutcome = 'failure';
         runOutcomeLabel = '需要人工确认';
         const manualReason = `当前停留在 ${page.url()}，未进入 VPS 面板，疑似官方新增确认页面`;
@@ -758,8 +761,9 @@ async function main() {
         process.exitCode = 1;
         return;
       }
-      if (renewalData.reasonCode === 'no_free_vps' && prevLastRecord?.serverName) {
-        const missingWarning = `⚠️ 历史记录中存在已知 VPS (${prevLastRecord.serverName})，但本次未检测到免费 VPS！请核实是否由于网络/渲染延迟、官方改版或机器已到期下线！`;
+
+      if (skipOutcome.missingKnownVps) {
+        const missingWarning = buildMissingVpsWarning(prevLastRecord.serverName);
         logWarn(missingWarning);
         // 关键告警升级：即便配置了 TG_NOTIFY_SKIP=false 也通过 manual_confirm 渠道发送，杜绝静默漏报机器丢失
         await notify(buildManualConfirmNotifyMessage({
@@ -768,16 +772,13 @@ async function main() {
           nextRunAt: resolveNextRun(),
         }), { kind: 'manual_confirm' });
       }
-      const skipLabel = renewalData.reasonCode === 'no_free_vps' ? '未找到免费 VPS' : '无需续期';
-      const reasonDetail = (renewalData.reasonCode === 'no_free_vps' && prevLastRecord?.serverName)
-        ? `${renewalData.reasonDetail}（注意：历史记录曾存在 ${prevLastRecord.serverName}）`
-        : renewalData.reasonDetail;
+
       await finishWithSkip({
         page,
         reasonCode: renewalData.reasonCode,
-        skipLabel,
-        reasonDetail,
-        logText: skipLabel,
+        skipLabel: skipOutcome.skipLabel,
+        reasonDetail: skipOutcome.reasonDetail,
+        logText: skipOutcome.skipLabel,
       });
       return;
     }
@@ -919,13 +920,17 @@ async function main() {
       errorMessage: e.message,
     }));
 
-    // 告警升级：连续失败达到阈值时发送升级告警
+    // 告警升级：连续失败达到阈值，或 Turnstile 全平台熔断（判定收敛于 main-logic.resolveEscalation）
     const { consecutiveFailures } = getRenewalStatus(
       RENEWAL_STATUS_FILE,
       ALERT_AFTER_CONSECUTIVE_FAILURES,
       LOGGER,
     );
-    const isEscalation = consecutiveFailures >= ALERT_AFTER_CONSECUTIVE_FAILURES;
+    const isEscalation = resolveEscalation({
+      consecutiveFailures,
+      threshold: ALERT_AFTER_CONSECUTIVE_FAILURES,
+      turnstileAllProvidersFailed,
+    });
 
     const antiProxyMode = resolveAntiCaptchaProxyMode(CONFIG);
     const proxyHint = buildProxyHint({
@@ -958,7 +963,7 @@ async function main() {
       await notify(buildFailureNotifyMessage({
         errorMessage: e.message,
         consecutiveFailures,
-        isEscalation: isEscalation || turnstileAllProvidersFailed,
+        isEscalation,
         proxyHint,
         captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
         executedAt: formatTokyoDateTime(),
@@ -986,13 +991,8 @@ async function main() {
       } catch { /* 忽略 */ }
     }
     cleanChromeCaches(CONFIG.CHROME_USER_DATA);
-    const outcomeIcon = runOutcome === 'success'
-      ? '✅'
-      : runOutcome === 'skip'
-        ? 'ℹ️'
-        : runOutcome === 'failure'
-          ? '❌'
-          : '⚠️';
+    // 结局图标映射收敛于 main-logic.resolveOutcomeIcon（可单测）
+    const outcomeIcon = resolveOutcomeIcon(runOutcome);
     log(
       `========== 流程结束 · ${outcomeIcon} ${runOutcomeLabel}`
       + `（总耗时 ${durationText()}）==========`,
