@@ -26,7 +26,7 @@ async function injectBrowserFingerprint(page) {
       Object.defineProperty(navigator, 'deviceMemory', {
         get: () => 8,
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
 
@@ -38,7 +38,7 @@ async function injectBrowserFingerprint(page) {
       Object.defineProperty(navigator, 'hardwareConcurrency', {
         get: () => 8,
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
 
@@ -46,7 +46,7 @@ async function injectBrowserFingerprint(page) {
     // 3. 修复 WebGL 渲染器信息
     // ============================================================
     const getParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    WebGLRenderingContext.prototype.getParameter = function (parameter) {
       // 37445 = UNMASKED_RENDERER_WEBGL
       if (parameter === 37445) {
         return 'Intel Inc. ~ Intel(R) Iris(TM) Plus Graphics 640';
@@ -61,7 +61,7 @@ async function injectBrowserFingerprint(page) {
     // WebGL2 同样处理
     if (typeof WebGL2RenderingContext !== 'undefined') {
       const getParameter2 = WebGL2RenderingContext.prototype.getParameter;
-      WebGL2RenderingContext.prototype.getParameter = function(parameter) {
+      WebGL2RenderingContext.prototype.getParameter = function (parameter) {
         if (parameter === 37445) {
           return 'Intel Inc. ~ Intel(R) Iris(TM) Plus Graphics 640';
         }
@@ -90,7 +90,7 @@ async function injectBrowserFingerprint(page) {
           description: 'Portable Document Format',
           length: 1,
           item: () => null,
-          namedItem: () => null
+          namedItem: () => null,
         },
         {
           name: 'Chrome PDF Viewer',
@@ -98,14 +98,14 @@ async function injectBrowserFingerprint(page) {
           description: '',
           length: 1,
           item: () => null,
-          namedItem: () => null
-        }
+          namedItem: () => null,
+        },
       ];
 
       Object.defineProperty(navigator, 'plugins', {
         get: () => mockPlugins,
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
 
@@ -115,7 +115,7 @@ async function injectBrowserFingerprint(page) {
     Object.defineProperty(navigator, 'languages', {
       get: () => ['ja-JP', 'ja', 'en-US', 'en'],
       configurable: true,
-      enumerable: true
+      enumerable: true,
     });
 
     // ============================================================
@@ -126,7 +126,7 @@ async function injectBrowserFingerprint(page) {
       Object.defineProperty(screen, 'colorDepth', {
         get: () => 24,
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
 
@@ -139,10 +139,10 @@ async function injectBrowserFingerprint(page) {
           effectiveType: '4g',
           downlink: 10,
           rtt: 50,
-          saveData: false
+          saveData: false,
         }),
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
 
@@ -152,7 +152,7 @@ async function injectBrowserFingerprint(page) {
     // 确保 Permissions API 正常工作
     if (navigator.permissions && navigator.permissions.query) {
       const originalQuery = navigator.permissions.query;
-      navigator.permissions.query = function(parameters) {
+      navigator.permissions.query = function (parameters) {
         // 对于某些权限，返回合理的默认值
         if (parameters.name === 'notifications') {
           return Promise.resolve({ state: 'prompt' });

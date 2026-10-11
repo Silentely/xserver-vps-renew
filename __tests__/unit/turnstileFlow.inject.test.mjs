@@ -3,7 +3,8 @@ import { injectTurnstileTokenWithRetry } from '../../src/turnstile-flow.mjs';
 
 describe('injectTurnstileTokenWithRetry', () => {
   it('frame 脱离错误时原地重试，恢复后返回注入结果', async () => {
-    const injectFn = vi.fn()
+    const injectFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error("Attempted to use detached Frame '6E6E82FD89AC2AA0F0C8FFACD111B2C9'"))
       .mockResolvedValueOnce({ callbackCalled: true });
     const logger = { warn: vi.fn(), debug: vi.fn() };
@@ -20,9 +21,9 @@ describe('injectTurnstileTokenWithRetry', () => {
   it('非 frame 脱离错误立即上抛，不重试', async () => {
     const injectFn = vi.fn().mockRejectedValue(new Error('timeout of 10000 ms exceeded'));
     const logger = { warn: vi.fn() };
-    await expect(
-      injectTurnstileTokenWithRetry({}, 'tok', logger, { retryDelayMs: 0, injectFn }),
-    ).rejects.toThrow('timeout of 10000 ms exceeded');
+    await expect(injectTurnstileTokenWithRetry({}, 'tok', logger, { retryDelayMs: 0, injectFn })).rejects.toThrow(
+      'timeout of 10000 ms exceeded',
+    );
     expect(injectFn).toHaveBeenCalledTimes(1);
     expect(logger.warn).not.toHaveBeenCalled();
   });
@@ -31,11 +32,16 @@ describe('injectTurnstileTokenWithRetry', () => {
     const err = new Error('Attempted to use detached Frame');
     const injectFn = vi.fn().mockRejectedValue(err);
     await expect(
-      injectTurnstileTokenWithRetry({}, 'tok', { warn: vi.fn() }, {
-        maxRetries: 2,
-        retryDelayMs: 0,
-        injectFn,
-      }),
+      injectTurnstileTokenWithRetry(
+        {},
+        'tok',
+        { warn: vi.fn() },
+        {
+          maxRetries: 2,
+          retryDelayMs: 0,
+          injectFn,
+        },
+      ),
     ).rejects.toBe(err);
     // 初始 1 次 + 2 次重试
     expect(injectFn).toHaveBeenCalledTimes(3);

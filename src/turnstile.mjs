@@ -40,12 +40,7 @@ export const ANTICAPTCHA_API_BASE = 'https://api.anti-captcha.com';
  * 默认提供商顺序（多 key 同时配置时按此链 failover）
  * CapSolver（AI）→ Anti-Captcha（真人/混合，CF 大更新时异构备份）→ YesCaptcha → 2Captcha
  */
-export const DEFAULT_TURNSTILE_PROVIDER_ORDER = [
-  'CapSolver',
-  'AntiCaptcha',
-  'YesCaptcha',
-  '2Captcha',
-];
+export const DEFAULT_TURNSTILE_PROVIDER_ORDER = ['CapSolver', 'AntiCaptcha', 'YesCaptcha', '2Captcha'];
 
 /** 单平台连续失败达到此次数后切换下一平台 */
 export const DEFAULT_TURNSTILE_PROVIDER_MAX_FAILURES = 3;
@@ -96,7 +91,10 @@ export function resolveYesCaptchaTaskType(taskType) {
  */
 export function normalizeProviderName(raw) {
   if (!raw || typeof raw !== 'string') return null;
-  const key = raw.trim().toLowerCase().replace(/[-_\s]/g, '');
+  const key = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]/g, '');
   const map = {
     capsolver: 'CapSolver',
     anticaptcha: 'AntiCaptcha',
@@ -227,9 +225,7 @@ function buildProviderByName(name, config) {
       // 文档：https://anti-captcha.com/apidoc/task-types/TurnstileTaskProxyless
       //      https://anti-captcha.com/apidoc/task-types/TurnstileTask
       const softIdRaw = config.ANTICAPTCHA_SOFT_ID;
-      const softIdNum = softIdRaw === '' || softIdRaw == null
-        ? NaN
-        : Number(softIdRaw);
+      const softIdNum = softIdRaw === '' || softIdRaw == null ? NaN : Number(softIdRaw);
       const proxyMode = resolveAntiCaptchaProxyMode(config);
       return {
         name: 'AntiCaptcha',
@@ -338,30 +334,34 @@ export function readTurnstileWidgetParams(el) {
  * @returns {Promise<object|null>} - { sitekey, action, cData, chlPageData, callbackName }
  */
 export async function extractTurnstileParams(page, logger = NOOP_LOGGER) {
-  const params = await page.evaluate((attrLists) => {
-    const el = document.querySelector('.cf-turnstile[data-sitekey]')
-      || document.querySelector('[data-sitekey]');
-    if (!el) return null;
-    const [cDataAttrs, chlPageDataAttrs] = attrLists;
-    const firstAttr = (names) => {
-      for (const n of names) {
-        const v = el.getAttribute(n);
-        if (v) return v;
-      }
-      return '';
-    };
-    return {
-      sitekey: el.getAttribute('data-sitekey') || '',
-      action: el.getAttribute('data-action') || '',
-      cData: firstAttr(cDataAttrs),
-      chlPageData: firstAttr(chlPageDataAttrs),
-      callbackName: el.getAttribute('data-callback') || '',
-    };
-  }, [TURNSTILE_C_DATA_ATTRS, TURNSTILE_CHL_PAGE_DATA_ATTRS]);
+  const params = await page.evaluate(
+    (attrLists) => {
+      const el = document.querySelector('.cf-turnstile[data-sitekey]') || document.querySelector('[data-sitekey]');
+      if (!el) return null;
+      const [cDataAttrs, chlPageDataAttrs] = attrLists;
+      const firstAttr = (names) => {
+        for (const n of names) {
+          const v = el.getAttribute(n);
+          if (v) return v;
+        }
+        return '';
+      };
+      return {
+        sitekey: el.getAttribute('data-sitekey') || '',
+        action: el.getAttribute('data-action') || '',
+        cData: firstAttr(cDataAttrs),
+        chlPageData: firstAttr(chlPageDataAttrs),
+        callbackName: el.getAttribute('data-callback') || '',
+      };
+    },
+    [TURNSTILE_C_DATA_ATTRS, TURNSTILE_CHL_PAGE_DATA_ATTRS],
+  );
 
   if (params && params.sitekey) {
-    logger.info(`Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
-      `action=${params.action || '(空)'}, callback=${params.callbackName || '(空)'}`);
+    logger.info(
+      `Turnstile 参数提取成功（data-* 属性）: sitekey=${params.sitekey}, ` +
+        `action=${params.action || '(空)'}, callback=${params.callbackName || '(空)'}`,
+    );
     return params;
   }
 
@@ -493,14 +493,12 @@ export function truncateErrorSummary(text, maxLen = TURNSTILE_ERROR_SUMMARY_MAX_
 export function isTurnstileOutageError(error) {
   if (!error || typeof error !== 'object') {
     const msg = String(error || '');
-    return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED)
-      || msg.includes('Turnstile 多平台均失败');
+    return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED) || msg.includes('Turnstile 多平台均失败');
   }
   const err = /** @type {{ code?: string, message?: string }} */ (error);
   if (err.code === TURNSTILE_ALL_PROVIDERS_FAILED) return true;
   const msg = String(err.message || '');
-  return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED)
-    || msg.includes('Turnstile 多平台均失败');
+  return msg.includes(TURNSTILE_ALL_PROVIDERS_FAILED) || msg.includes('Turnstile 多平台均失败');
 }
 
 /**
@@ -525,17 +523,15 @@ export async function solveTurnstileViaAPI(
   if (!provider) throw new Error('未配置 Turnstile 求解 API 密钥');
   if (!params?.sitekey) throw new Error('Turnstile sitekey 为空，无法求解');
 
-  const sitekeyPreview = params.sitekey.length > 12
-    ? `${params.sitekey.substring(0, 12)}...`
-    : params.sitekey;
+  const sitekeyPreview = params.sitekey.length > 12 ? `${params.sitekey.substring(0, 12)}...` : params.sitekey;
   logger.info(`使用 ${provider.name} 求解 Turnstile (sitekey=${sitekeyPreview})`);
 
   // Anti-Captcha：域名代理无法提交，已自动改走 Proxyless
   if (provider.name === 'AntiCaptcha' && provider.proxyMode === 'hostname_skipped') {
     const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
     logger.info(
-      `ℹ️ AntiCaptcha 代理地址为域名（${masked || '***'}），官方仅支持 IP；`
-      + '本次自动改用 TurnstileTaskProxyless（浏览器侧 PROXY_* 仍生效）',
+      `ℹ️ AntiCaptcha 代理地址为域名（${masked || '***'}），官方仅支持 IP；` +
+        '本次自动改用 TurnstileTaskProxyless（浏览器侧 PROXY_* 仍生效）',
     );
   }
 
@@ -583,7 +579,9 @@ export async function solveTurnstileViaAPI(
 
   const createData = await createRes.json();
   if (createData.errorId && createData.errorId !== 0) {
-    throw new Error(`${provider.name} createTask 错误: ${createData.errorDescription || createData.errorCode || JSON.stringify(createData)}`);
+    throw new Error(
+      `${provider.name} createTask 错误: ${createData.errorDescription || createData.errorCode || JSON.stringify(createData)}`,
+    );
   }
 
   const taskId = createData.taskId;
@@ -664,8 +662,10 @@ async function pollTurnstileTaskResult(provider, taskId, logger, timeout) {
         throw new Error(`${provider.name} 返回 ready 但 solution.token 为空`);
       }
       const userAgent = resultData.solution.userAgent || null;
-      logger.info(`${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
-        (userAgent ? `，完整 UA: ${userAgent}` : ''));
+      logger.info(
+        `${provider.name} 求解成功！耗时 ${Date.now() - startTime}ms，token 长度: ${token.length}` +
+          (userAgent ? `，完整 UA: ${userAgent}` : ''),
+      );
       return { token, userAgent };
     }
 
@@ -693,13 +693,7 @@ async function pollTurnstileTaskResult(provider, taskId, logger, timeout) {
  * @param {Function} [options.solveFn] - 可注入，便于单测
  * @returns {Promise<{ token: string, userAgent: string|null, providerName: string, attempts: object[] }>}
  */
-export async function solveTurnstileWithFailover(
-  websiteURL,
-  params,
-  config,
-  logger = NOOP_LOGGER,
-  options = {},
-) {
+export async function solveTurnstileWithFailover(websiteURL, params, config, logger = NOOP_LOGGER, options = {}) {
   const timeout = options.timeout ?? 120_000;
   const maxFailuresPerProvider = Math.max(
     1,
@@ -707,9 +701,10 @@ export async function solveTurnstileWithFailover(
   );
   const solveFn = options.solveFn || solveTurnstileViaAPI;
 
-  const providers = Array.isArray(options.providers) && options.providers.length > 0
-    ? options.providers
-    : listTurnstileProviders(config);
+  const providers =
+    Array.isArray(options.providers) && options.providers.length > 0
+      ? options.providers
+      : listTurnstileProviders(config);
   if (providers.length === 0) {
     throw new Error('未配置 Turnstile 求解 API 密钥');
   }
@@ -723,9 +718,7 @@ export async function solveTurnstileWithFailover(
   for (const p of providers) {
     if (p.name === 'AntiCaptcha' && p.proxyMode === 'hostname_skipped') {
       const masked = maskProxyAddress(config.PROXY_ADDRESS || '');
-      logger.debug(
-        `ℹ️ AntiCaptcha 检测到域名代理 ${masked || ''}，将使用 Proxyless（官方 TurnstileTask 仅支持 IP）`,
-      );
+      logger.debug(`ℹ️ AntiCaptcha 检测到域名代理 ${masked || ''}，将使用 Proxyless（官方 TurnstileTask 仅支持 IP）`);
     }
   }
 
@@ -780,14 +773,8 @@ export async function solveTurnstileWithFailover(
     }
   }
 
-  const summary = truncateErrorSummary(
-    allErrors
-      .map((e) => `${e.provider}#${e.attempt}: ${e.error}`)
-      .join('; '),
-  );
-  const err = new Error(
-    `Turnstile 多平台均失败（链路: ${chain}）: ${summary}`,
-  );
+  const summary = truncateErrorSummary(allErrors.map((e) => `${e.provider}#${e.attempt}: ${e.error}`).join('; '));
+  const err = new Error(`Turnstile 多平台均失败（链路: ${chain}）: ${summary}`);
   err.code = TURNSTILE_ALL_PROVIDERS_FAILED;
   err.attempts = attempts;
   err.errors = allErrors;
@@ -806,7 +793,12 @@ export async function solveTurnstileWithFailover(
  * @param {Function} logger - 日志函数
  * @returns {Promise<boolean>} - 是否成功注入
  */
-export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { returnDetails = false, callbackName = '' } = {}) {
+export async function injectTurnstileToken(
+  page,
+  token,
+  logger = NOOP_LOGGER,
+  { returnDetails = false, callbackName = '' } = {},
+) {
   if (!token) {
     logger.info('Turnstile token 为空，跳过注入');
     return returnDetails ? { ok: false, injectedCount: 0, callbackCalled: false } : false;
@@ -894,10 +886,10 @@ export async function injectTurnstileToken(page, token, logger = NOOP_LOGGER, { 
   logger.info(`Turnstile token 已注入: ${injected.injectedCount} 个元素, 回调触发: ${injected.callbackCalled}`);
   return returnDetails
     ? {
-      ok: injected.injectedCount > 0,
-      injectedCount: injected.injectedCount,
-      callbackCalled: Boolean(injected.callbackCalled),
-      ...(injected.callbackError ? { callbackError: injected.callbackError } : {}),
-    }
+        ok: injected.injectedCount > 0,
+        injectedCount: injected.injectedCount,
+        callbackCalled: Boolean(injected.callbackCalled),
+        ...(injected.callbackError ? { callbackError: injected.callbackError } : {}),
+      }
     : injected.injectedCount > 0;
 }

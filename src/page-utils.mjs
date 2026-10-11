@@ -15,11 +15,13 @@ import { extractExpireDateFromText } from './renewal-logic.mjs';
  */
 export function isFrameDetachError(error) {
   const msg = String(error?.message || '').toLowerCase();
-  return msg.includes('detached frame')
-    || msg.includes('frame was detached')
-    || msg.includes('execution context was destroyed')
-    || msg.includes('cannot find context with specified id')
-    || msg.includes('frame is detached');
+  return (
+    msg.includes('detached frame') ||
+    msg.includes('frame was detached') ||
+    msg.includes('execution context was destroyed') ||
+    msg.includes('cannot find context with specified id') ||
+    msg.includes('frame is detached')
+  );
 }
 
 /**
@@ -182,16 +184,18 @@ export async function waitForSelectorSoft(page, selector, timeoutMs = 3000, logg
  * @returns {Promise<string|null>} 新到期日（YYYY-MM-DD 或 null）
  */
 export async function extractNewExpireDate(page) {
-  const source = await page.evaluate(() => {
-    const allTds = Array.from(document.querySelectorAll('td'));
-    const expireTd = allTds.find((td) =>
-      td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'),
-    );
-    if (expireTd && expireTd.nextElementSibling) {
-      return expireTd.nextElementSibling.textContent.trim();
-    }
-    return document.body.textContent || '';
-  }).catch(() => '');
+  const source = await page
+    .evaluate(() => {
+      const allTds = Array.from(document.querySelectorAll('td'));
+      const expireTd = allTds.find(
+        (td) => td.textContent.includes('更新後の利用期限') || td.textContent.includes('更新后的利用期限'),
+      );
+      if (expireTd && expireTd.nextElementSibling) {
+        return expireTd.nextElementSibling.textContent.trim();
+      }
+      return document.body.textContent || '';
+    })
+    .catch(() => '');
   return extractExpireDateFromText(source);
 }
 

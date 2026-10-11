@@ -30,7 +30,9 @@ describe('安全审计加固回归测试', () => {
     expect(content).toMatch(/CRON_SCHEDULE 包含非法字符/);
 
     // 运行测试：传入含注入字符的表达式应被拦截
-    const res = spawnSync('bash', ['-c', `
+    const res = spawnSync('bash', [
+      '-c',
+      `
       source <(grep -B 9999 'elif \\[ -n "\\\${CRON_SCHEDULE:-}" \\]; then' "${entrypointPath}" | head -n 15)
       LOG_PREFIX="[test]"
       CRON_SCHEDULE="* * * * *; rm -rf /"
@@ -38,7 +40,8 @@ describe('安全审计加固回归测试', () => {
         echo "rejected"
         exit 1
       fi
-    `]);
+    `,
+    ]);
     expect(res.status).toBe(1);
     expect(res.stdout.toString()).toContain('rejected');
   });

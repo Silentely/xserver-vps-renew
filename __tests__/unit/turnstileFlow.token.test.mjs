@@ -72,12 +72,14 @@ describe('waitForTurnstile token gate', () => {
         // getTurnstileToken 返回空
         return Promise.resolve('');
       }),
-      url: vi.fn().mockReturnValue("https://example.com"),
-      content: vi.fn().mockResolvedValue('<div class="cf-turnstile" data-sitekey="0x4AAAAAA" data-callback="tsCallback"></div>'),
+      url: vi.fn().mockReturnValue('https://example.com'),
+      content: vi
+        .fn()
+        .mockResolvedValue('<div class="cf-turnstile" data-sitekey="0x4AAAAAA" data-callback="tsCallback"></div>'),
       setUserAgent: vi.fn().mockResolvedValue(),
       $$eval: vi.fn().mockResolvedValue([]),
       $: vi.fn().mockImplementation((sel) => {
-        if (sel === ".cf-turnstile") return Promise.resolve({ asElement: () => ({}) });
+        if (sel === '.cf-turnstile') return Promise.resolve({ asElement: () => ({}) });
         return Promise.resolve(null);
       }),
     };

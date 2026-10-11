@@ -32,26 +32,40 @@ function setupHarness() {
   const supercronicMarker = writeMarker('supercronic-called');
   const pgrepMarker = writeMarker('pgrep-called');
 
-  writeFileSync(join(bin, 'node'), `#!/bin/bash
+  writeFileSync(
+    join(bin, 'node'),
+    `#!/bin/bash
 echo "mock-node $*" >> "${nodeMarker}"
 # 模拟主脚本成功
 exit 0
-`);
-  writeFileSync(join(bin, 'supercronic'), `#!/bin/bash
+`,
+  );
+  writeFileSync(
+    join(bin, 'supercronic'),
+    `#!/bin/bash
 echo "mock-supercronic $*" >> "${supercronicMarker}"
 # 若被错误拉起会挂起，用短 sleep 便于超时检测
 sleep 60
-`);
-  writeFileSync(join(bin, 'pgrep'), `#!/bin/bash
+`,
+  );
+  writeFileSync(
+    join(bin, 'pgrep'),
+    `#!/bin/bash
 echo "pgrep $*" >> "${pgrepMarker}"
 # 假装 Xvfb 已在运行，跳过启动
 exit 0
-`);
-  writeFileSync(join(bin, 'Xvfb'), `#!/bin/bash
+`,
+  );
+  writeFileSync(
+    join(bin, 'Xvfb'),
+    `#!/bin/bash
 exit 0
-`);
+`,
+  );
   // flock：macOS 常无；提供兼容实现（仅支持 flock -n FD）
-  writeFileSync(join(bin, 'flock'), `#!/bin/bash
+  writeFileSync(
+    join(bin, 'flock'),
+    `#!/bin/bash
 # 简易非阻塞锁：成功则持有到进程结束
 mode="$1"
 fd="$2"
@@ -65,7 +79,8 @@ if [ "$mode" = "-n" ]; then
   exit 0
 fi
 exit 0
-`);
+`,
+  );
 
   for (const name of ['node', 'supercronic', 'pgrep', 'Xvfb', 'flock']) {
     chmodSync(join(bin, name), 0o755);
@@ -159,9 +174,10 @@ describe('entrypoint.sh --once 优先于 CRON_SCHEDULE（#7）', () => {
     const cronBody = cronRunMatch[1];
 
     // 调用处清空：CRON_SCHEDULE="" … ./entrypoint.sh --once（中间可夹其他 env 赋值）
-    const clearsOnInvoke = /CRON_SCHEDULE=(?:""|'')(?:\s+\w+=\S+)*\s+\.\/entrypoint\.sh\s+--once/.test(cronBody)
-      || /env\s+-u\s+CRON_SCHEDULE\s+\.\/entrypoint\.sh\s+--once/.test(cronBody)
-      || /CRON_SCHEDULE=\s+\.\/entrypoint\.sh\s+--once/.test(cronBody);
+    const clearsOnInvoke =
+      /CRON_SCHEDULE=(?:""|'')(?:\s+\w+=\S+)*\s+\.\/entrypoint\.sh\s+--once/.test(cronBody) ||
+      /env\s+-u\s+CRON_SCHEDULE\s+\.\/entrypoint\.sh\s+--once/.test(cronBody) ||
+      /CRON_SCHEDULE=\s+\.\/entrypoint\.sh\s+--once/.test(cronBody);
 
     // 若顶层已保证 --once 优先，调用处清空为加分项；至少不能只依赖错误的嵌套路径
     // 本用例要求调用处也清空，形成双保险

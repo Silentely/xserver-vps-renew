@@ -10,7 +10,14 @@
 
 import { setTimeout as sleep } from 'node:timers/promises';
 import { NOOP_LOGGER, getTokyoDateString } from './utils.mjs';
-import { waitForNav, getText, getBodyText, waitForSelectorSoft, waitForPageReady, safeEvaluate } from './page-utils.mjs';
+import {
+  waitForNav,
+  getText,
+  getBodyText,
+  waitForSelectorSoft,
+  waitForPageReady,
+  safeEvaluate,
+} from './page-utils.mjs';
 import {
   isRenewalDue,
   buildRenewUrl,
@@ -50,11 +57,7 @@ async function reloadVpsIndex(page, config, logger) {
         waitUntil: 'domcontentloaded',
         timeout: config.NAVIGATION_TIMEOUT,
       });
-      const ready = await waitForPageReady(
-        page,
-        Math.min(config?.NAVIGATION_TIMEOUT || 15_000, 15_000),
-        logger,
-      );
+      const ready = await waitForPageReady(page, Math.min(config?.NAVIGATION_TIMEOUT || 15_000, 15_000), logger);
       if (!ready) {
         throw new Error('VPS 列表页页面上下文未就绪');
       }
@@ -100,9 +103,7 @@ export async function navigateToLoginPage(page, config, logger = NOOP_LOGGER) {
       if (!isRetryableLoginNavigationError(error) || attempt >= maxAttempts) {
         throw error;
       }
-      logger.warn?.(
-        `登录页导航网络异常，将重试（${attempt}/${maxAttempts - 1}）: ${error.message}`,
-      );
+      logger.warn?.(`登录页导航网络异常，将重试（${attempt}/${maxAttempts - 1}）: ${error.message}`);
       await sleep(retryDelayMs);
     }
   }
@@ -161,14 +162,11 @@ export async function handleLogin(page, { config, logger = NOOP_LOGGER } = {}) {
 
   logger.info('正在提交登录表单...');
   // 点击提交并等待导航
-  const submitBtn = await page.$('input[name="action_user_login"]')
-    || await page.$('#login_area input[type="submit"]');
+  const submitBtn =
+    (await page.$('input[name="action_user_login"]')) || (await page.$('#login_area input[type="submit"]'));
 
   if (submitBtn) {
-    await Promise.all([
-      waitForNav(page, config.NAVIGATION_TIMEOUT, logger),
-      submitBtn.click(),
-    ]);
+    await Promise.all([waitForNav(page, config.NAVIGATION_TIMEOUT, logger), submitBtn.click()]);
   } else {
     await Promise.all([
       waitForNav(page, config.NAVIGATION_TIMEOUT, logger),
@@ -270,21 +268,28 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   } catch {
     logger.warn(`等待免费 VPS 表格超时（${Math.round(tableWaitTimeout / 1000)}s），正在采集页面诊断信息...`);
     await waitForPageReady(page, 10_000, logger);
-    const diag = await safeEvaluate(page, () => {
-      const firstTable = document.querySelector('table');
-      return {
-        url: location.href,
-        freeIcoCount: document.querySelectorAll('.freeServerIco').length,
-        trCount: document.querySelectorAll('tr').length,
-        detailLinkCount: document.querySelectorAll('a[href*="/xvps/server/detail"]').length,
-        tableHtml: firstTable ? firstTable.outerHTML.slice(0, 800) : null,
-        bodyText: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
-      };
-    }, null, 3, 500, logger);
+    const diag = await safeEvaluate(
+      page,
+      () => {
+        const firstTable = document.querySelector('table');
+        return {
+          url: location.href,
+          freeIcoCount: document.querySelectorAll('.freeServerIco').length,
+          trCount: document.querySelectorAll('tr').length,
+          detailLinkCount: document.querySelectorAll('a[href*="/xvps/server/detail"]').length,
+          tableHtml: firstTable ? firstTable.outerHTML.slice(0, 800) : null,
+          bodyText: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
+        };
+      },
+      null,
+      3,
+      500,
+      logger,
+    );
     if (diag) {
       logger.warn(
-        `诊断: url=${diag.url} | freeServerIco=${diag.freeIcoCount} | tr=${diag.trCount}`
-        + ` | detail链接=${diag.detailLinkCount}`,
+        `诊断: url=${diag.url} | freeServerIco=${diag.freeIcoCount} | tr=${diag.trCount}` +
+          ` | detail链接=${diag.detailLinkCount}`,
       );
       if (diag.tableHtml) {
         logger.warn(`诊断-表格HTML片段: ${diag.tableHtml}`);
@@ -314,31 +319,39 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   // 服务器名/规格解析收敛到纯函数 extractVpsInfoFromCellTexts（可单测）
   // 注意：此处 defaultValue 为 undefined，若 evaluate 因 Frame 销毁/崩溃报错则直接抛出，
   // 严禁回退为 null 误判为业务上的「未找到免费 VPS」导致静默跳过！
-  const result = await safeEvaluate(page, () => {
-    const row = document.querySelector('tr:has(.freeServerIco)');
-    if (!row) {
-      return null;
-    }
+  const result = await safeEvaluate(
+    page,
+    () => {
+      const row = document.querySelector('tr:has(.freeServerIco)');
+      if (!row) {
+        return null;
+      }
 
-    const termEl = row.querySelector('.contract__term');
-    const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
+      const termEl = row.querySelector('.contract__term');
+      const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
 
-    return {
-      expireDate: termEl ? termEl.textContent.trim() : null,
-      detailHref: detailLink ? detailLink.href : null,
-      cellTexts: Array.from(row.querySelectorAll('td'))
-        .map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
-    };
-  }, undefined, 5, 800, logger);
+      return {
+        expireDate: termEl ? termEl.textContent.trim() : null,
+        detailHref: detailLink ? detailLink.href : null,
+        cellTexts: Array.from(row.querySelectorAll('td')).map((cell) => cell.textContent.replace(/\s+/g, ' ').trim()),
+      };
+    },
+    undefined,
+    5,
+    800,
+    logger,
+  );
 
   if (!result) {
     // 未停留在 VPS 面板页（URL 不含 /xvps/）说明被官方新增/变更的确认页拦截，
     // 标记需人工确认，由 main() 发送提醒而不是当作普通「无免费 VPS」跳过
     const onVpsPanel = page.url().includes('/xvps/');
     const needsManualConfirmation = !onVpsPanel;
-    logger.info(needsManualConfirmation
-      ? `未找到免费 VPS 条目（当前页面: ${page.url()}，疑似被官方确认页拦截）。`
-      : '未找到免费 VPS 条目。');
+    logger.info(
+      needsManualConfirmation
+        ? `未找到免费 VPS 条目（当前页面: ${page.url()}，疑似被官方确认页拦截）。`
+        : '未找到免费 VPS 条目。',
+    );
     return {
       needed: false,
       reasonCode: 'no_free_vps',
@@ -356,8 +369,7 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   }
 
   // 清理 VPS 信息中的多余空白符
-  const { serverName: parsedServerName, plan: parsedPlan } =
-    extractVpsInfoFromCellTexts(result.cellTexts);
+  const { serverName: parsedServerName, plan: parsedPlan } = extractVpsInfoFromCellTexts(result.cellTexts);
   const cleanServerName = normalizeCellText(parsedServerName);
   const cleanPlan = normalizeCellText(parsedPlan);
   // 统一时间基准：剩余小时与到期判定使用同一 nowMs，避免跨秒边界判定不一致
@@ -365,17 +377,16 @@ export async function checkRenewalNeeded(page, { config, logger = NOOP_LOGGER } 
   const remainingHours = getRemainingHours(result.expireDate, nowMs);
 
   logger.info(
-    `VPS: ${cleanServerName ?? '未找到'}`
-    + ` | 规格 ${cleanPlan ?? '未找到'}`
-    + ` | 到期 ${result.expireDate ?? '未找到'}`
-    + (remainingHours != null ? ` | 剩余约 ${remainingHours.toFixed(1)}h` : ''),
+    `VPS: ${cleanServerName ?? '未找到'}` +
+      ` | 规格 ${cleanPlan ?? '未找到'}` +
+      ` | 到期 ${result.expireDate ?? '未找到'}` +
+      (remainingHours != null ? ` | 剩余约 ${remainingHours.toFixed(1)}h` : ''),
   );
 
   // 官方规则：4GB 最长 FREE_VPS_MAX_HOURS 小时，剩余 ≤ RENEWAL_WINDOW_HOURS 小时可续期
   // 纯日期按东京日末估算剩余小时，不再把「明天到期」一律判为可续（#5）
   if (!isRenewalDue(result.expireDate, today, { nowMs })) {
-    const remainingLabel =
-      remainingHours != null ? `剩余约 ${remainingHours.toFixed(1)}h` : '剩余时间未知';
+    const remainingLabel = remainingHours != null ? `剩余约 ${remainingHours.toFixed(1)}h` : '剩余时间未知';
     const reasonDetail =
       `无需续期（到期: ${result.expireDate}；${remainingLabel}；` +
       `规则: 最长 ${FREE_VPS_MAX_HOURS}h / 剩余≤${RENEWAL_WINDOW_HOURS}h 可续；` +
@@ -466,10 +477,7 @@ export async function handleRenewalConfirm(page, renewUrl, { config, logger = NO
   }
 
   logger.info('正在点击续期确认...');
-  const [navOk] = await Promise.all([
-    waitForNav(page, config.NAVIGATION_TIMEOUT, logger),
-    extendBtn.click(),
-  ]);
+  const [navOk] = await Promise.all([waitForNav(page, config.NAVIGATION_TIMEOUT, logger), extendBtn.click()]);
 
   if (!navOk) {
     logger.warn('⚠️ 确认进入续期页导航未能在预期时间内完成，尝试确保页面上下文就绪...');
@@ -489,15 +497,17 @@ export async function handleRenewalConfirm(page, renewUrl, { config, logger = NO
 
   // 业务校验 Invariant Gate：必须确认离开 index 申请页，或确实进入了验证码/Turnstile 页面
   const isConfUrl = currentUrl.includes('/extend/conf');
-  const hasCaptchaFeatures = await page.evaluate(() => {
-    return Boolean(
-      document.querySelector('img[src^="data:"]')
-      || document.querySelector('[placeholder*="上の画像"]')
-      || document.querySelector('.cf-turnstile')
-      || document.querySelector('iframe[src*="challenges.cloudflare.com"]')
-      || document.querySelector('input[name="cf-turnstile-response"]')
-    );
-  }).catch(() => false);
+  const hasCaptchaFeatures = await page
+    .evaluate(() => {
+      return Boolean(
+        document.querySelector('img[src^="data:"]') ||
+        document.querySelector('[placeholder*="上の画像"]') ||
+        document.querySelector('.cf-turnstile') ||
+        document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+        document.querySelector('input[name="cf-turnstile-response"]'),
+      );
+    })
+    .catch(() => false);
 
   if (!isConfUrl && !hasCaptchaFeatures) {
     if (currentUrl.includes('/extend/index')) {
@@ -598,10 +608,7 @@ export function resolveSubmissionPollIntervalMs(elapsedMs, baseIntervalMs) {
  * @param {{ timeoutMs?: number, intervalMs?: number, logger?: object }} [opts]
  * @returns {Promise<{ pageText: string, currentUrl: string, evaluation: object }>}
  */
-export async function waitForSubmissionResult(
-  page,
-  { timeoutMs = 5000, intervalMs = 400, logger = NOOP_LOGGER } = {},
-) {
+export async function waitForSubmissionResult(page, { timeoutMs = 5000, intervalMs = 400, logger = NOOP_LOGGER } = {}) {
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let pageText = '';
@@ -634,10 +641,12 @@ export async function waitForSubmissionResult(
   } else {
     // 未识别成功信号时输出页面诊断：官方常在提交成功后跳回 xvps/index 列表页，
     // 兜底 fail 分支只带 URL 不带正文，debug 记录正文便于确认「成功文案」特征
-    const normalizedText = String(pageText || '').replace(/\s+/g, ' ').trim();
+    const normalizedText = String(pageText || '')
+      .replace(/\s+/g, ' ')
+      .trim();
     logger.debug(
-      `[提交结果诊断] 状态=${evaluation?.status || 'unknown'} | URL: ${currentUrl}`
-      + ` | 正文片段: ${normalizedText.slice(0, 500)}`,
+      `[提交结果诊断] 状态=${evaluation?.status || 'unknown'} | URL: ${currentUrl}` +
+        ` | 正文片段: ${normalizedText.slice(0, 500)}`,
     );
   }
   return { pageText, currentUrl, evaluation };
@@ -682,7 +691,7 @@ export async function syncRenewalFormFields(page, { code = '', token = '' } = {}
 
         if (tokenVal && typeof tokenVal === 'string') {
           const tsInputs = document.querySelectorAll(
-            'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"]'
+            'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"]',
           );
           turnstileCount = tsInputs.length;
           tsInputs.forEach((el) => {
@@ -722,13 +731,15 @@ export async function syncRenewalFormFields(page, { code = '', token = '' } = {}
       { codeVal: code, tokenVal: token },
     );
 
-    return result || {
-      authCodeCount: 0,
-      authCodeUpdated: 0,
-      turnstileCount: 0,
-      turnstileUpdated: 0,
-      formFields: [],
-    };
+    return (
+      result || {
+        authCodeCount: 0,
+        authCodeUpdated: 0,
+        turnstileCount: 0,
+        turnstileUpdated: 0,
+        formFields: [],
+      }
+    );
   } catch (error) {
     logger?.debug?.(`syncRenewalFormFields 执行异常（可能处于导航中间态）: ${error?.message || error}`);
     return {
@@ -804,7 +815,13 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
       logger.info(`验证码已填入输入框，已同步 ${authSync.authCodeCount} 处 auth_code 字段。`);
 
       // 主动回收 Base64 图片与局部变量，降低内存压力
-      if (typeof global.gc === 'function') { try { global.gc(); } catch { /* 忽略 */ } }
+      if (typeof global.gc === 'function') {
+        try {
+          global.gc();
+        } catch {
+          /* 忽略 */
+        }
+      }
 
       // 等待 Turnstile（返回 { ok, providerName, attempts }）
       const turnstileResult = await waitForTurnstile(page, {
@@ -835,10 +852,10 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
         .map((f) => `${f.name}(${f.type},长${f.valLen},值=${f.preview})`)
         .join(', ');
       logger.info(
-        `🔍 提交诊断 | 验证码: "${code}" (长 ${code.length}, 同步 ${finalSync.authCodeCount} 处) | `
-        + `Turnstile: 来源=${lastTurnstileMeta.turnstileProvider || 'none'}, Token长=${currentToken ? currentToken.length : 0} (同步 ${finalSync.turnstileCount} 处) | `
-        + `表单字段(${finalSync.formFields.length}): [${formFieldsSummary}] | `
-        + `URL: ${page.url()}`,
+        `🔍 提交诊断 | 验证码: "${code}" (长 ${code.length}, 同步 ${finalSync.authCodeCount} 处) | ` +
+          `Turnstile: 来源=${lastTurnstileMeta.turnstileProvider || 'none'}, Token长=${currentToken ? currentToken.length : 0} (同步 ${finalSync.turnstileCount} 处) | ` +
+          `表单字段(${finalSync.formFields.length}): [${formFieldsSummary}] | ` +
+          `URL: ${page.url()}`,
       );
 
       const submitBtn = await page.$('input[type="submit"], button[type="submit"]');
@@ -876,7 +893,11 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       if (evaluation.status === 'retry') {
         const isAuthFailure = evaluation.reason.includes('認証に失敗') || evaluation.reason.includes('认证失败');
-        if (isAuthFailure && lastTurnstileMeta.turnstileProvider && lastTurnstileMeta.turnstileProvider !== 'prefilled') {
+        if (
+          isAuthFailure &&
+          lastTurnstileMeta.turnstileProvider &&
+          lastTurnstileMeta.turnstileProvider !== 'prefilled'
+        ) {
           rejectedProviders.add(lastTurnstileMeta.turnstileProvider);
         }
         if (config?.SAVE_CAPTCHA_DATASET && imgDataUri && isAuthFailure) {
@@ -894,8 +915,8 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
           logger.info(`❌ 第 ${attempt} 次尝试失败: ${evaluation.reason}`);
           if (evaluation.reason.includes('認証に失敗') || evaluation.reason.includes('认证失败')) {
             logger.warn(
-              `⚠️ 认证失败诊断: 本次提交验证码="${code}"，Turnstile平台=[${lastTurnstileMeta.turnstileProvider || '未知'}]。`
-              + (rejectedProviders.size > 0 ? ` 下一轮将优先切换其他打码平台。` : ''),
+              `⚠️ 认证失败诊断: 本次提交验证码="${code}"，Turnstile平台=[${lastTurnstileMeta.turnstileProvider || '未知'}]。` +
+                (rejectedProviders.size > 0 ? ` 下一轮将优先切换其他打码平台。` : ''),
             );
           }
           logger.info(`⏭️ 刷新验证码，准备第 ${attempt + 1} 次尝试...`);
@@ -912,7 +933,6 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
           ? evaluation.reason
           : `续期提交后${evaluation.reason}`,
       );
-
     } catch (error) {
       lastError = error;
 
@@ -932,7 +952,11 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
             retryUrl = page.url();
           } catch {
             await waitForPageReady(page, 5000, logger);
-            try { retryUrl = page.url(); } catch { /* 忽略 */ }
+            try {
+              retryUrl = page.url();
+            } catch {
+              /* 忽略 */
+            }
           }
           await navigateForCaptchaRetry(page, retryUrl, renewUrl, { config, logger });
         } catch (reloadError) {

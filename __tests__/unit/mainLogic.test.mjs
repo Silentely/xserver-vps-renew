@@ -9,10 +9,12 @@ import {
 
 describe('buildKnownVpsInfo', () => {
   it('本轮提取到完整 VPS 信息时按字段归一化返回', () => {
-    expect(buildKnownVpsInfo(
-      { vpsInfo: { serverName: 'vps-1', plan: '4GB', expireDate: '2026-10-11' }, remainingHours: 3.5 },
-      null,
-    )).toEqual({
+    expect(
+      buildKnownVpsInfo(
+        { vpsInfo: { serverName: 'vps-1', plan: '4GB', expireDate: '2026-10-11' }, remainingHours: 3.5 },
+        null,
+      ),
+    ).toEqual({
       serverName: 'vps-1',
       plan: '4GB',
       expireDate: '2026-10-11',
@@ -21,17 +23,27 @@ describe('buildKnownVpsInfo', () => {
   });
 
   it('字段不全时缺失项回落为 null，剩余 0 小时保持为 0', () => {
-    expect(buildKnownVpsInfo({ vpsInfo: { serverName: 'vps-1' }, remainingHours: 0 }, null))
-      .toEqual({ serverName: 'vps-1', plan: null, expireDate: null, remainingHours: 0 });
-    expect(buildKnownVpsInfo({ vpsInfo: { plan: '4GBメモリ' } }, null))
-      .toEqual({ serverName: null, plan: '4GBメモリ', expireDate: null, remainingHours: null });
+    expect(buildKnownVpsInfo({ vpsInfo: { serverName: 'vps-1' }, remainingHours: 0 }, null)).toEqual({
+      serverName: 'vps-1',
+      plan: null,
+      expireDate: null,
+      remainingHours: 0,
+    });
+    expect(buildKnownVpsInfo({ vpsInfo: { plan: '4GBメモリ' } }, null)).toEqual({
+      serverName: null,
+      plan: '4GBメモリ',
+      expireDate: null,
+      remainingHours: null,
+    });
   });
 
   it('本轮未提取到信息时回退历史记录，新到期日优先于旧到期日', () => {
-    expect(buildKnownVpsInfo(
-      { vpsInfo: { serverName: null, plan: null, expireDate: null }, remainingHours: null },
-      { serverName: 'vps-old', plan: '2GB', oldExpireDate: '2026-09-01', newExpireDate: '2026-10-01' },
-    )).toEqual({
+    expect(
+      buildKnownVpsInfo(
+        { vpsInfo: { serverName: null, plan: null, expireDate: null }, remainingHours: null },
+        { serverName: 'vps-old', plan: '2GB', oldExpireDate: '2026-09-01', newExpireDate: '2026-10-01' },
+      ),
+    ).toEqual({
       serverName: 'vps-old',
       plan: '2GB',
       expireDate: '2026-10-01',
@@ -40,8 +52,12 @@ describe('buildKnownVpsInfo', () => {
   });
 
   it('历史记录仅有旧到期日时回退旧到期日', () => {
-    expect(buildKnownVpsInfo({}, { serverName: 'vps-old', oldExpireDate: '2026-09-01' }))
-      .toEqual({ serverName: 'vps-old', plan: null, expireDate: '2026-09-01', remainingHours: null });
+    expect(buildKnownVpsInfo({}, { serverName: 'vps-old', oldExpireDate: '2026-09-01' })).toEqual({
+      serverName: 'vps-old',
+      plan: null,
+      expireDate: '2026-09-01',
+      remainingHours: null,
+    });
   });
 
   it('本轮与历史均无信息时返回空上下文', () => {
@@ -53,8 +69,10 @@ describe('buildKnownVpsInfo', () => {
 
 describe('resolveSkipOutcome', () => {
   it('官方确认页拦截时转人工确认出口', () => {
-    expect(resolveSkipOutcome({ reasonCode: 'no_free_vps', needsManualConfirmation: true }))
-      .toEqual({ kind: 'manual_confirm', missingKnownVps: false });
+    expect(resolveSkipOutcome({ reasonCode: 'no_free_vps', needsManualConfirmation: true })).toEqual({
+      kind: 'manual_confirm',
+      missingKnownVps: false,
+    });
   });
 
   it('not_due 归入普通跳过并给出「无需续期」标签', () => {
@@ -66,8 +84,9 @@ describe('resolveSkipOutcome', () => {
   });
 
   it('window_blocked 同样归入「无需续期」标签', () => {
-    expect(resolveSkipOutcome({ reasonCode: 'window_blocked', baseReasonDetail: '窗口未开' }).skipLabel)
-      .toBe('无需续期');
+    expect(resolveSkipOutcome({ reasonCode: 'window_blocked', baseReasonDetail: '窗口未开' }).skipLabel).toBe(
+      '无需续期',
+    );
   });
 
   it('no_free_vps 且历史存在已知 VPS 时标记缺失并追加提示', () => {
@@ -78,8 +97,7 @@ describe('resolveSkipOutcome', () => {
     });
     expect(out.skipLabel).toBe('未找到免费 VPS');
     expect(out.missingKnownVps).toBe(true);
-    expect(out.reasonDetail)
-      .toBe('面板中未找到带免费标识的 VPS 条目（注意：历史记录曾存在 vps-old）');
+    expect(out.reasonDetail).toBe('面板中未找到带免费标识的 VPS 条目（注意：历史记录曾存在 vps-old）');
   });
 
   it('no_free_vps 但历史无服务器名时不标记缺失', () => {
@@ -114,11 +132,13 @@ describe('resolveEscalation', () => {
   });
 
   it('Turnstile 全平台熔断时立即升级', () => {
-    expect(resolveEscalation({
-      consecutiveFailures: 0,
-      threshold: 3,
-      turnstileAllProvidersFailed: true,
-    })).toBe(true);
+    expect(
+      resolveEscalation({
+        consecutiveFailures: 0,
+        threshold: 3,
+        turnstileAllProvidersFailed: true,
+      }),
+    ).toBe(true);
   });
 });
 

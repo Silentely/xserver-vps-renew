@@ -57,10 +57,12 @@ describe('parseCronIntervalHours / estimateNextRunMs', () => {
 
   it('优先使用 CRON 间隔', () => {
     const now = Date.UTC(2026, 6, 14, 6, 34, 0);
-    expect(estimateNextRunMs(now, {
-      cronSchedule: '32 */6 * * *',
-      intervalHours: 24,
-    })).toBe(now + 6 * 3_600_000);
+    expect(
+      estimateNextRunMs(now, {
+        cronSchedule: '32 */6 * * *',
+        intervalHours: 24,
+      }),
+    ).toBe(now + 6 * 3_600_000);
   });
 
   it('无 cron 时使用 intervalHours', () => {
@@ -69,9 +71,11 @@ describe('parseCronIntervalHours / estimateNextRunMs', () => {
   });
 
   it('resolveNextRunAt 返回非空字符串', () => {
-    expect(resolveNextRunAt(Date.UTC(2026, 6, 14, 6, 34, 0), {
-      cronSchedule: '32 */6 * * *',
-    })).toBeTruthy();
+    expect(
+      resolveNextRunAt(Date.UTC(2026, 6, 14, 6, 34, 0), {
+        cronSchedule: '32 */6 * * *',
+      }),
+    ).toBeTruthy();
   });
 });
 
@@ -185,10 +189,10 @@ describe('formatDurationMs / truncateNotifyText / clampTelegramMessage', () => {
   });
 
   it('clampProcessSteps 限制条数与单行长度', () => {
-    const steps = clampProcessSteps(
-      ['  a  ', '', 'b'.repeat(300), ...Array.from({ length: 20 }, (_, i) => `s${i}`)],
-      { maxCount: 5, maxLen: 20 },
-    );
+    const steps = clampProcessSteps(['  a  ', '', 'b'.repeat(300), ...Array.from({ length: 20 }, (_, i) => `s${i}`)], {
+      maxCount: 5,
+      maxLen: 20,
+    });
     expect(steps.length).toBeLessThanOrEqual(5);
     expect(steps.some((s) => s.includes('省略'))).toBe(true);
     expect(steps.every((s) => s.length <= 20 || s.includes('省略'))).toBe(true);
@@ -353,22 +357,19 @@ describe('formatTurnstileNotifyLine / resolveTurnstileProviderLabel', () => {
   });
 
   it('仅成功平台', () => {
-    expect(formatTurnstileNotifyLine({ providerName: 'CapSolver' }))
-      .toBe('🔐 Turnstile: CapSolver');
+    expect(formatTurnstileNotifyLine({ providerName: 'CapSolver' })).toBe('🔐 Turnstile: CapSolver');
   });
 
   it('prefilled / natural 使用中文标签', () => {
     expect(resolveTurnstileProviderLabel('prefilled')).toBe('页面预填');
     expect(resolveTurnstileProviderLabel('natural')).toBe('自然通过');
-    expect(formatTurnstileNotifyLine({ providerName: 'prefilled' }))
-      .toBe('🔐 Turnstile: 页面预填');
+    expect(formatTurnstileNotifyLine({ providerName: 'prefilled' })).toBe('🔐 Turnstile: 页面预填');
   });
 });
 
 describe('normalizeProcessSteps', () => {
   it('合并连续重复并去空', () => {
-    expect(normalizeProcessSteps(['登录', '登录', '', ' 检查 ', '检查', '提交']))
-      .toEqual(['登录', '检查', '提交']);
+    expect(normalizeProcessSteps(['登录', '登录', '', ' 检查 ', '检查', '提交'])).toEqual(['登录', '检查', '提交']);
   });
 });
 
@@ -513,12 +514,16 @@ describe('buildManualConfirmNotifyMessage', () => {
 describe('isTurnstileAllProvidersFailed', () => {
   it('flag / errorCode / 文案均可识别', () => {
     expect(isTurnstileAllProvidersFailed({ turnstileAllProvidersFailed: true })).toBe(true);
-    expect(isTurnstileAllProvidersFailed({
-      errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
-    })).toBe(true);
-    expect(isTurnstileAllProvidersFailed({
-      errorMessage: 'Turnstile 多平台均失败（链路: CapSolver）',
-    })).toBe(true);
+    expect(
+      isTurnstileAllProvidersFailed({
+        errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
+      }),
+    ).toBe(true);
+    expect(
+      isTurnstileAllProvidersFailed({
+        errorMessage: 'Turnstile 多平台均失败（链路: CapSolver）',
+      }),
+    ).toBe(true);
     expect(isTurnstileAllProvidersFailed({ errorMessage: 'timeout' })).toBe(false);
     expect(isTurnstileAllProvidersFailed()).toBe(false);
   });
@@ -526,48 +531,60 @@ describe('isTurnstileAllProvidersFailed', () => {
 
 describe('classifyRenewalFailure / buildFailureHints', () => {
   it('按错误文案/错误码分类', () => {
-    expect(classifyRenewalFailure({
-      errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
-    }).category).toBe(FAILURE_CATEGORY.TURNSTILE_OUTAGE);
+    expect(
+      classifyRenewalFailure({
+        errorCode: 'TURNSTILE_ALL_PROVIDERS_FAILED',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.TURNSTILE_OUTAGE);
 
-    expect(classifyRenewalFailure({
-      errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',
-    }).category).toBe(FAILURE_CATEGORY.LOGIN);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: '登录失败，请检查 XSERVER_MEMBER_ID 和 XSERVER_PASSWORD。',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.LOGIN);
 
-    expect(classifyRenewalFailure({
-      errorMessage: '配置校验失败: XSERVER_MEMBER_ID',
-    }).category).toBe(FAILURE_CATEGORY.CONFIG);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: '配置校验失败: XSERVER_MEMBER_ID',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.CONFIG);
 
-    expect(classifyRenewalFailure({
-      errorMessage: 'Keras 模型 API 返回无效结果: "ab"',
-    }).category).toBe(FAILURE_CATEGORY.CAPTCHA);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: 'Keras 模型 API 返回无效结果: "ab"',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.CAPTCHA);
 
-    expect(classifyRenewalFailure({
-      errorMessage: 'Turnstile 等待超时，将尝试强制提交',
-    }).category).toBe(FAILURE_CATEGORY.TURNSTILE);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: 'Turnstile 等待超时，将尝试强制提交',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.TURNSTILE);
 
-    expect(classifyRenewalFailure({
-      errorMessage: '需要绑定信用卡才能续期',
-    }).category).toBe(FAILURE_CATEGORY.BUSINESS);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: '需要绑定信用卡才能续期',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.BUSINESS);
 
-    expect(classifyRenewalFailure({
-      errorMessage: 'Navigation timeout of 30000 ms exceeded',
-    }).category).toBe(FAILURE_CATEGORY.TIMEOUT);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: 'Navigation timeout of 30000 ms exceeded',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.TIMEOUT);
 
-    expect(classifyRenewalFailure({
-      errorMessage: 'something weird',
-    }).category).toBe(FAILURE_CATEGORY.UNKNOWN);
+    expect(
+      classifyRenewalFailure({
+        errorMessage: 'something weird',
+      }).category,
+    ).toBe(FAILURE_CATEGORY.UNKNOWN);
   });
 
   it('按分类输出差异化处置建议', () => {
-    expect(buildFailureHints({ category: FAILURE_CATEGORY.LOGIN }))
-      .toContain('XSERVER_MEMBER_ID');
-    expect(buildFailureHints({ category: FAILURE_CATEGORY.CAPTCHA, captchaMaxRetry: 5 }))
-      .toContain('5 次');
-    expect(buildFailureHints({ category: FAILURE_CATEGORY.TURNSTILE_OUTAGE }))
-      .toContain('立即人工登录');
-    expect(buildFailureHints({ category: FAILURE_CATEGORY.CONFIG }))
-      .toContain('配置校验');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.LOGIN })).toContain('XSERVER_MEMBER_ID');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.CAPTCHA, captchaMaxRetry: 5 })).toContain('5 次');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.TURNSTILE_OUTAGE })).toContain('立即人工登录');
+    expect(buildFailureHints({ category: FAILURE_CATEGORY.CONFIG })).toContain('配置校验');
   });
 });
 
@@ -774,14 +791,15 @@ describe('buildFailureNotifyMessage', () => {
 
 describe('parseTelegramSendResult', () => {
   it('HTTP 200 + ok:true 视为发送成功', () => {
-    expect(parseTelegramSendResult('{"ok":true,"result":{"message_id":1}}'))
-      .toEqual({ ok: true, description: '' });
+    expect(parseTelegramSendResult('{"ok":true,"result":{"message_id":1}}')).toEqual({ ok: true, description: '' });
     expect(parseTelegramSendResult({ ok: true })).toEqual({ ok: true, description: '' });
   });
 
   it('HTTP 200 + ok:false（chat 不存在/被屏蔽）识别为失败并带原因', () => {
-    expect(parseTelegramSendResult('{"ok":false,"error_code":400,"description":"chat not found"}'))
-      .toEqual({ ok: false, description: 'chat not found' });
+    expect(parseTelegramSendResult('{"ok":false,"error_code":400,"description":"chat not found"}')).toEqual({
+      ok: false,
+      description: 'chat not found',
+    });
   });
 
   it('非 JSON 响应识别为失败', () => {

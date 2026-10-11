@@ -169,7 +169,9 @@ export function clampLogMessage(msg, maxLen = 3000) {
  * @returns {'debug'|'info'|'warn'|'error'}
  */
 export function parseLogLevel(value, fallback = DEFAULT_LOG_LEVEL) {
-  const v = String(value ?? '').trim().toLowerCase();
+  const v = String(value ?? '')
+    .trim()
+    .toLowerCase();
   if (v === LOG_LEVEL_DEBUG || v === 'verbose' || v === 'trace') return LOG_LEVEL_DEBUG;
   if (v === LOG_LEVEL_INFO || v === 'log' || v === 'normal' || v === 'default') {
     return LOG_LEVEL_INFO;
@@ -178,7 +180,9 @@ export function parseLogLevel(value, fallback = DEFAULT_LOG_LEVEL) {
   if (v === LOG_LEVEL_ERROR || v === 'err' || v === 'quiet' || v === 'silent') {
     return LOG_LEVEL_ERROR;
   }
-  const fb = String(fallback ?? '').trim().toLowerCase();
+  const fb = String(fallback ?? '')
+    .trim()
+    .toLowerCase();
   if (fb === LOG_LEVEL_DEBUG || fb === LOG_LEVEL_WARN || fb === LOG_LEVEL_ERROR) {
     return fb;
   }
@@ -193,8 +197,7 @@ export function parseLogLevel(value, fallback = DEFAULT_LOG_LEVEL) {
  */
 export function shouldLog(configuredLevel, messageLevel) {
   const cfg = LOG_LEVEL_RANK[parseLogLevel(configuredLevel)] ?? LOG_LEVEL_RANK[LOG_LEVEL_INFO];
-  const msg = LOG_LEVEL_RANK[parseLogLevel(messageLevel, LOG_LEVEL_INFO)]
-    ?? LOG_LEVEL_RANK[LOG_LEVEL_INFO];
+  const msg = LOG_LEVEL_RANK[parseLogLevel(messageLevel, LOG_LEVEL_INFO)] ?? LOG_LEVEL_RANK[LOG_LEVEL_INFO];
   return msg >= cfg;
 }
 
@@ -372,7 +375,11 @@ export function cleanChromeLocks(userDataDir) {
   if (!userDataDir) return;
   for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
     const lockPath = join(userDataDir, lock);
-    try { rmSync(lockPath, { force: true }); } catch { /* 忽略 */ }
+    try {
+      rmSync(lockPath, { force: true });
+    } catch {
+      /* 忽略 */
+    }
   }
 }
 
@@ -398,7 +405,9 @@ export function cleanChromeCaches(userDataDir) {
     const p = join(userDataDir, dir);
     try {
       rmSync(p, { recursive: true, force: true });
-    } catch { /* 忽略 */ }
+    } catch {
+      /* 忽略 */
+    }
   }
 }
 
@@ -432,6 +441,5 @@ export function isBenignRequestFailure(url) {
   // 命中埋点域名（含子域，如 www.google-analytics.com / stats.g.doubleclick.net）
   if (BENIGN_TRACKING_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return true;
   // google.com 的广告/转化回传（ccm/rmkt collect）同样在导航时被中止
-  return (host === 'google.com' || host === 'www.google.com')
-    && /^\/(ccm|rmkt)\/collect/.test(parsed.pathname);
+  return (host === 'google.com' || host === 'www.google.com') && /^\/(ccm|rmkt)\/collect/.test(parsed.pathname);
 }

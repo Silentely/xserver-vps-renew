@@ -14,9 +14,13 @@ import {
 
 describe('isFrameDetachError', () => {
   it('识别各类 frame 脱离和执行上下文销毁错误', () => {
-    expect(isFrameDetachError(new Error("Attempted to use detached Frame '57A4FC5CF7AC46D1E98DE625C150AB55'"))).toBe(true);
+    expect(isFrameDetachError(new Error("Attempted to use detached Frame '57A4FC5CF7AC46D1E98DE625C150AB55'"))).toBe(
+      true,
+    );
     expect(isFrameDetachError(new Error('Navigating frame was detached'))).toBe(true);
-    expect(isFrameDetachError(new Error('Execution context was destroyed, most likely because of a navigation.'))).toBe(true);
+    expect(isFrameDetachError(new Error('Execution context was destroyed, most likely because of a navigation.'))).toBe(
+      true,
+    );
     expect(isFrameDetachError(new Error('Cannot find context with specified id'))).toBe(true);
     expect(isFrameDetachError(new Error('Navigation timeout of 30000 ms exceeded'))).toBe(false);
     expect(isFrameDetachError(new Error('Protocol error (Input.dispatchKeyEvent): Target closed'))).toBe(false);

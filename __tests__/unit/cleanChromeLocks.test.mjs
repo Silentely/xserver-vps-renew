@@ -49,10 +49,7 @@ describe('cleanChromeLocks', () => {
   it('传入嵌套路径时正确拼接', () => {
     cleanChromeLocks('/home/user/.config/chromium/Default');
 
-    expect(mockRmSync).toHaveBeenCalledWith(
-      '/home/user/.config/chromium/Default/SingletonLock',
-      { force: true }
-    );
+    expect(mockRmSync).toHaveBeenCalledWith('/home/user/.config/chromium/Default/SingletonLock', { force: true });
   });
 
   it('锁文件不存在时静默忽略错误（force: true 行为）', () => {

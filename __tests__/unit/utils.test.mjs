@@ -146,22 +146,19 @@ describe('parseLogLevel / shouldLog / NOOP_LOGGER', () => {
 
 describe('formatLogLine', () => {
   it('输出 时间戳 + [级别] + 消息', () => {
-    expect(formatLogLine('2026-08-07 12:00:00', 'info', '正在检查续期状态'))
-      .toBe('2026-08-07 12:00:00 [INFO] 正在检查续期状态');
-    expect(formatLogLine('2026-08-07 12:00:00', 'warn', '警告'))
-      .toBe('2026-08-07 12:00:00 [WARN] 警告');
-    expect(formatLogLine('2026-08-07 12:00:00', 'debug', '细节'))
-      .toBe('2026-08-07 12:00:00 [DEBUG] 细节');
+    expect(formatLogLine('2026-08-07 12:00:00', 'info', '正在检查续期状态')).toBe(
+      '2026-08-07 12:00:00 [INFO] 正在检查续期状态',
+    );
+    expect(formatLogLine('2026-08-07 12:00:00', 'warn', '警告')).toBe('2026-08-07 12:00:00 [WARN] 警告');
+    expect(formatLogLine('2026-08-07 12:00:00', 'debug', '细节')).toBe('2026-08-07 12:00:00 [DEBUG] 细节');
   });
 
   it('error 消息未带 ❌ 时自动补充', () => {
-    expect(formatLogLine('t', 'error', '流程失败'))
-      .toBe('t [ERROR] ❌ 流程失败');
+    expect(formatLogLine('t', 'error', '流程失败')).toBe('t [ERROR] ❌ 流程失败');
   });
 
   it('error 消息已带 ❌ 时不重复', () => {
-    expect(formatLogLine('t', 'error', '❌ 流程失败'))
-      .toBe('t [ERROR] ❌ 流程失败');
+    expect(formatLogLine('t', 'error', '❌ 流程失败')).toBe('t [ERROR] ❌ 流程失败');
   });
 
   it('未知级别回退 [INFO]，空消息输出空内容', () => {
@@ -227,15 +224,11 @@ describe('formatLogTimestamp', () => {
       // Asia/Tokyo 已被本文件早前用例入缓存：两次调用均不应再构造
       formatLogTimestamp(utc, 'Asia/Tokyo');
       formatLogTimestamp(utc, 'Asia/Tokyo');
-      expect(
-        constructed.filter((o) => o?.timeZone === 'Asia/Tokyo'),
-      ).toHaveLength(0);
+      expect(constructed.filter((o) => o?.timeZone === 'Asia/Tokyo')).toHaveLength(0);
       // 本文件未使用过的新时区：仅首次构造，第二次命中缓存
       formatLogTimestamp(utc, 'Asia/Shanghai');
       formatLogTimestamp(utc, 'Asia/Shanghai');
-      expect(
-        constructed.filter((o) => o?.timeZone === 'Asia/Shanghai'),
-      ).toHaveLength(1);
+      expect(constructed.filter((o) => o?.timeZone === 'Asia/Shanghai')).toHaveLength(1);
     } finally {
       Intl.DateTimeFormat = Original;
     }
@@ -255,21 +248,25 @@ describe('analyzeFingerprintHealth', () => {
   });
 
   it('健康指纹返回空数组', () => {
-    expect(analyzeFingerprintHealth({
-      webdriver: false,
-      deviceMemory: 8,
-      hardwareConcurrency: 8,
-    })).toEqual([]);
+    expect(
+      analyzeFingerprintHealth({
+        webdriver: false,
+        deviceMemory: 8,
+        hardwareConcurrency: 8,
+      }),
+    ).toEqual([]);
   });
 
   it('空值/缺省不误报', () => {
     expect(analyzeFingerprintHealth({})).toEqual([]);
     expect(analyzeFingerprintHealth()).toEqual([]);
-    expect(analyzeFingerprintHealth({
-      webdriver: false,
-      deviceMemory: 'N/A',
-      hardwareConcurrency: 'N/A',
-    })).toEqual([]);
+    expect(
+      analyzeFingerprintHealth({
+        webdriver: false,
+        deviceMemory: 'N/A',
+        hardwareConcurrency: 'N/A',
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -287,14 +284,18 @@ describe('shouldSaveTurnstileScreenshot', () => {
   });
 
   it('显式 SAVE_TURNSTILE_SCREENSHOTS=true 强制开启（排查用）', () => {
-    expect(shouldSaveTurnstileScreenshot({
-      LOG_LEVEL: 'info',
-      SAVE_TURNSTILE_SCREENSHOTS: true,
-    })).toBe(true);
-    expect(shouldSaveTurnstileScreenshot({
-      LOG_LEVEL: 'debug',
-      SAVE_TURNSTILE_SCREENSHOTS: false,
-    })).toBe(true);
+    expect(
+      shouldSaveTurnstileScreenshot({
+        LOG_LEVEL: 'info',
+        SAVE_TURNSTILE_SCREENSHOTS: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldSaveTurnstileScreenshot({
+        LOG_LEVEL: 'debug',
+        SAVE_TURNSTILE_SCREENSHOTS: false,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -350,12 +351,14 @@ describe('validateRequiredConfig', () => {
   });
 
   it('完整代理配置通过', () => {
-    expect(validateRequiredConfig({
-      ...base,
-      PROXY_TYPE: 'socks5',
-      PROXY_ADDRESS: '1.2.3.4',
-      PROXY_PORT: '1080',
-    })).toEqual([]);
+    expect(
+      validateRequiredConfig({
+        ...base,
+        PROXY_TYPE: 'socks5',
+        PROXY_ADDRESS: '1.2.3.4',
+        PROXY_PORT: '1080',
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -397,9 +400,7 @@ describe('fetchWithTimeout', () => {
       });
     });
 
-    await expect(
-      fetchWithTimeout('https://example.com', {}, 20),
-    ).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(fetchWithTimeout('https://example.com', {}, 20)).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 describe('escapeHtml', () => {
@@ -436,8 +437,7 @@ describe('escapeHtml', () => {
   });
 
   it('转义全部 HTML 特殊字符', () => {
-    expect(escapeHtml('<a href="x">\'y\'</a>'))
-      .toBe('&lt;a href=&quot;x&quot;&gt;&#39;y&#39;&lt;/a&gt;');
+    expect(escapeHtml('<a href="x">\'y\'</a>')).toBe('&lt;a href=&quot;x&quot;&gt;&#39;y&#39;&lt;/a&gt;');
   });
 });
 
@@ -477,8 +477,12 @@ describe('isBenignRequestFailure', () => {
 
   it('面板/Cloudflare 等排障相关请求 → false（保留输出）', () => {
     expect(isBenignRequestFailure('https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do')).toBe(false);
-    expect(isBenignRequestFailure('https://brunhild.challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/i/abc')).toBe(false);
-    expect(isBenignRequestFailure('https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/fo/123')).toBe(false);
+    expect(
+      isBenignRequestFailure('https://brunhild.challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/i/abc'),
+    ).toBe(false);
+    expect(isBenignRequestFailure('https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/fo/123')).toBe(
+      false,
+    );
   });
 
   it('非法输入 → false', () => {

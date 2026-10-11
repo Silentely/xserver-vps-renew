@@ -28,19 +28,17 @@ describe('下次执行估算优先使用 CRON_SCHEDULE_DISPLAY（#10）', () => 
   it('cron-run 白名单透传 CRON_SCHEDULE_DISPLAY（取自 CRON_SCHEDULE）', () => {
     const cronBody = ENTRYPOINT_SRC.match(/cat > \/app\/cron-run\.sh <<'CRONSCRIPT'([\s\S]*?)CRONSCRIPT/);
     expect(cronBody, '应生成 cron-run.sh').toBeTruthy();
-    expect(
-      cronBody[1],
-      '应透传真实调度供「下次执行」估算',
-    ).toMatch(/export CRON_SCHEDULE_DISPLAY="\$\{CRON_SCHEDULE:-\}"/);
+    expect(cronBody[1], '应透传真实调度供「下次执行」估算').toMatch(
+      /export CRON_SCHEDULE_DISPLAY="\$\{CRON_SCHEDULE:-\}"/,
+    );
   });
 
   it('防线不回撤：白名单不得原样导出 CRON_SCHEDULE（#7）', () => {
     const cronBody = ENTRYPOINT_SRC.match(/cat > \/app\/cron-run\.sh <<'CRONSCRIPT'([\s\S]*?)CRONSCRIPT/);
     expect(cronBody, '应生成 cron-run.sh').toBeTruthy();
     // 注意：CRON_SCHEDULE_DISPLAY 不会被 /export CRON_SCHEDULE=/ 命中（变量名更长）
-    expect(
-      cronBody[1],
-      '禁止 export CRON_SCHEDULE=，避免子进程误入定时模式（#7）',
-    ).not.toMatch(/^export CRON_SCHEDULE=/m);
+    expect(cronBody[1], '禁止 export CRON_SCHEDULE=，避免子进程误入定时模式（#7）').not.toMatch(
+      /^export CRON_SCHEDULE=/m,
+    );
   });
 });

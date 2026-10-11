@@ -23,21 +23,25 @@ const CAPTCHA_PATTERN = new RegExp(`^\\d{${CAPTCHA_LENGTH}}$`);
 /** 平假名到数字的映射表（支持 OCR 错误时的备选匹配） */
 const HIRAGANA_NUMBER_MAP = {
   // 完整平假名
-  'ぜろ': '0', 'れい': '0',
-  'いち': '1',
-  'に': '2',
-  'さん': '3',
-  'よん': '4', 'し': '4',
-  'ご': '5',
-  'ろく': '6',
-  'なな': '7', 'しち': '7',
-  'はち': '8',
-  'きゅう': '9', 'く': '9',
+  ぜろ: '0',
+  れい: '0',
+  いち: '1',
+  に: '2',
+  さん: '3',
+  よん: '4',
+  し: '4',
+  ご: '5',
+  ろく: '6',
+  なな: '7',
+  しち: '7',
+  はち: '8',
+  きゅう: '9',
+  く: '9',
 
   // 可能的片段（OCR 识别错误时的备选）
-  'いちご': '15',
-  'さんろく': '36',
-  'きゅうろく': '96',
+  いちご: '15',
+  さんろく: '36',
+  きゅうろく: '96',
 };
 
 /**
@@ -112,7 +116,7 @@ export function normalizeCaptchaCode(rawText) {
 
   // 步骤 2: 全角数字转半角
   text = text.replace(/[０-９]/g, (char) => {
-    return String.fromCharCode(char.charCodeAt(0) - 0xFEE0);
+    return String.fromCharCode(char.charCodeAt(0) - 0xfee0);
   });
 
   // 步骤 3: 如果已经是纯数字，直接返回
@@ -246,12 +250,10 @@ export async function recognizeCaptcha(imgSrc, apiUrl, logger = NOOP_LOGGER, opt
  * @param {Function} [options.logger] - 日志函数
  * @returns {string|null} - 写入成功后的文件路径，失败返回 null
  */
-export function saveCaptchaSample(imgDataUri, {
-  type = 'verified',
-  label = '',
-  baseDir = '/data/captcha-dataset',
-  logger = NOOP_LOGGER,
-} = {}) {
+export function saveCaptchaSample(
+  imgDataUri,
+  { type = 'verified', label = '', baseDir = '/data/captcha-dataset', logger = NOOP_LOGGER } = {},
+) {
   try {
     if (!imgDataUri || typeof imgDataUri !== 'string') return null;
     const match = imgDataUri.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);

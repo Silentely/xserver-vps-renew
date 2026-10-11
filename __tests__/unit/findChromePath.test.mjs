@@ -38,9 +38,7 @@ describe('findChromePath', () => {
 
   it('优先返回排序靠前的候选（Linux 路径优先于 macOS）', () => {
     // 模拟 macOS 路径存在，但 Linux 路径不存在
-    mockExistsSync.mockImplementation(
-      (p) => p === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-    );
+    mockExistsSync.mockImplementation((p) => p === '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
     expect(findChromePath()).toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
   });
 

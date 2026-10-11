@@ -39,9 +39,7 @@ function listTestFiles() {
  * @returns {string}
  */
 function stripComments(code) {
-  return code
-    .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return code.replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' ')).replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
 describe('测试时钟卫生', () => {

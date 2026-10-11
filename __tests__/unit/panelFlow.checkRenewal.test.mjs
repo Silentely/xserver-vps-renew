@@ -125,9 +125,9 @@ describe('checkRenewalNeeded', () => {
       }),
     };
 
-    await expect(
-      checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER }),
-    ).rejects.toThrow('detached Frame');
+    await expect(checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER })).rejects.toThrow(
+      'detached Frame',
+    );
   });
 
   it('等待表格超时且诊断显示为空页面时，会触发重新加载 VPS 列表页', async () => {
@@ -185,8 +185,8 @@ describe('checkRenewalNeeded', () => {
       }),
     };
 
-    await expect(
-      checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER }),
-    ).rejects.toThrow('页面上下文未就绪');
+    await expect(checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER })).rejects.toThrow(
+      '页面上下文未就绪',
+    );
   });
 });

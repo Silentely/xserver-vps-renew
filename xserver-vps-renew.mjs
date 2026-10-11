@@ -33,12 +33,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
 import { addExtra } from 'puppeteer-extra';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
-import {
-  safeClosePage,
-  extractNewExpireDate,
-  safeEvaluate,
-  waitForPageReady,
-} from './src/page-utils.mjs';
+import { safeClosePage, extractNewExpireDate, safeEvaluate, waitForPageReady } from './src/page-utils.mjs';
 
 // 页面流程（登录/同意页/到期检查/续期确认/验证码提交）
 import {
@@ -110,10 +105,7 @@ import {
   DEFAULT_TG_NOTIFY_DETAIL,
 } from './src/notify.mjs';
 // 续期业务纯逻辑
-import {
-  FREE_VPS_MAX_HOURS,
-  RENEWAL_WINDOW_HOURS,
-} from './src/renewal-logic.mjs';
+import { FREE_VPS_MAX_HOURS, RENEWAL_WINDOW_HOURS } from './src/renewal-logic.mjs';
 // 主流程决策纯逻辑（上下文回退/跳过判定/告警升级/结果图标）
 import {
   buildKnownVpsInfo,
@@ -127,9 +119,7 @@ import {
 const DEFAULT_CAPTCHA_API = 'https://captcha-api-216250547992.us-central1.run.app';
 
 // 运行时版本号（单一来源：package.json；启动横幅展示，便于核对运行的是哪个版本）
-const PROJECT_VERSION = JSON.parse(
-  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
-).version;
+const PROJECT_VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 
 // 使用 rebrowser-puppeteer-core 替代原生 puppeteer-core
 // rebrowser-patches 修复了 Runtime.Enable 泄露检测，避免被 Cloudflare Turnstile 识别为自动化浏览器
@@ -141,7 +131,8 @@ puppeteer.use(StealthPlugin());
 // ============================================================
 
 // 与当前 CapSolver 返回值对齐的默认 UA；API 后续返回新 UA 时仍会动态同步浏览器。
-const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36';
+const DEFAULT_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36';
 
 /** 浏览器窗口/视口尺寸（与真实调试分辨率一致；启动参数与 defaultViewport 共用） */
 const VIEWPORT = { width: 1440, height: 900 };
@@ -170,11 +161,10 @@ const CONFIG = {
   // 超时/重试可通过环境变量覆盖
   NAVIGATION_TIMEOUT: parsePositiveInt(process.env.NAVIGATION_TIMEOUT_MS, 30_000, { min: 5_000, max: 180_000 }),
   LOGIN_NAVIGATION_RETRIES: parsePositiveInt(process.env.LOGIN_NAVIGATION_RETRIES, 2, { min: 1, max: 5 }),
-  LOGIN_NAVIGATION_RETRY_DELAY_MS: parsePositiveInt(
-    process.env.LOGIN_NAVIGATION_RETRY_DELAY_MS,
-    2_000,
-    { min: 0, max: 30_000 },
-  ),
+  LOGIN_NAVIGATION_RETRY_DELAY_MS: parsePositiveInt(process.env.LOGIN_NAVIGATION_RETRY_DELAY_MS, 2_000, {
+    min: 0,
+    max: 30_000,
+  }),
   TURNSTILE_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_TIMEOUT_MS, 60_000, { min: 10_000, max: 300_000 }),
   TURNSTILE_API_TIMEOUT: parsePositiveInt(process.env.TURNSTILE_API_TIMEOUT_MS, 120_000, { min: 15_000, max: 300_000 }),
   // Turnstile iframe 渲染软等待时间（ms），容器环境建议 8000-15000
@@ -182,7 +172,10 @@ const CONFIG = {
   CAPTCHA_MAX_RETRY: parsePositiveInt(process.env.CAPTCHA_MAX_RETRY, 3, { min: 1, max: 10 }),
   // 提交后等待服务端处理结果的轮询上限（官方 /extend/do 处理实测 60-90s；
   // 过早判定失败会中止在途 POST，需覆盖服务端处理时间）
-  SUBMISSION_RESULT_TIMEOUT_MS: parsePositiveInt(process.env.SUBMISSION_RESULT_TIMEOUT_MS, 120_000, { min: 15_000, max: 300_000 }),
+  SUBMISSION_RESULT_TIMEOUT_MS: parsePositiveInt(process.env.SUBMISSION_RESULT_TIMEOUT_MS, 120_000, {
+    min: 15_000,
+    max: 300_000,
+  }),
 
   CHROME_PATH: process.env.CHROME_PATH || findChromePath(),
   CHROME_USER_DATA: process.env.CHROME_USER_DATA || '/data/chrome-profile',
@@ -192,12 +185,12 @@ const CONFIG = {
   ANTICAPTCHA_API_KEY: process.env.ANTICAPTCHA_API_KEY || '', // 异构备份（真人/混合）
   // Anti-Captcha 开发者 softId（可选，未注册可不填）
   ANTICAPTCHA_SOFT_ID: process.env.ANTICAPTCHA_SOFT_ID || '',
-  YESCAPTCHA_API_KEY: process.env.YESCAPTCHA_API_KEY || '',  // Turnstile 备选（国内友好）
+  YESCAPTCHA_API_KEY: process.env.YESCAPTCHA_API_KEY || '', // Turnstile 备选（国内友好）
   // 国际: https://api.yescaptcha.com ；国内: https://cn.yescaptcha.com
   YESCAPTCHA_API_BASE: process.env.YESCAPTCHA_API_BASE || '',
   // TurnstileTaskProxyless（默认）或 TurnstileTaskProxylessM1
   YESCAPTCHA_TASK_TYPE: process.env.YESCAPTCHA_TASK_TYPE || '',
-  TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '',  // 仅用于 Turnstile 求解
+  TWOCAPTCHA_API_KEY: process.env.TWOCAPTCHA_API_KEY || '', // 仅用于 Turnstile 求解
   // 逗号分隔自定义顺序，例如: CapSolver,AntiCaptcha,YesCaptcha,2Captcha
   TURNSTILE_PROVIDER_ORDER: process.env.TURNSTILE_PROVIDER_ORDER || '',
   // 单平台连续失败达到此次数后切换下一平台
@@ -208,20 +201,17 @@ const CONFIG = {
   ),
 
   // 住宅代理（可选，用于 2Captcha / Anti-Captcha 带代理求解）
-  PROXY_TYPE: process.env.PROXY_TYPE || '',           // http | socks4 | socks5
-  PROXY_ADDRESS: process.env.PROXY_ADDRESS || '',     // IP 或域名
-  PROXY_PORT: process.env.PROXY_PORT || '',            // 端口
-  PROXY_LOGIN: process.env.PROXY_LOGIN || '',          // 用户名（可选）
-  PROXY_PASSWORD: process.env.PROXY_PASSWORD || '',    // 密码（可选）
+  PROXY_TYPE: process.env.PROXY_TYPE || '', // http | socks4 | socks5
+  PROXY_ADDRESS: process.env.PROXY_ADDRESS || '', // IP 或域名
+  PROXY_PORT: process.env.PROXY_PORT || '', // 端口
+  PROXY_LOGIN: process.env.PROXY_LOGIN || '', // 用户名（可选）
+  PROXY_PASSWORD: process.env.PROXY_PASSWORD || '', // 密码（可选）
 
   // Telegram 通知（可选）
   TG_BOT_TOKEN: process.env.TG_BOT_TOKEN || '',
   TG_CHAT_ID: process.env.TG_CHAT_ID || '',
   // 通知详细程度：full=完整摘要（含执行过程）/ compact=简洁摘要
-  TG_NOTIFY_DETAIL: parseNotifyDetail(
-    process.env.TG_NOTIFY_DETAIL,
-    DEFAULT_TG_NOTIFY_DETAIL,
-  ),
+  TG_NOTIFY_DETAIL: parseNotifyDetail(process.env.TG_NOTIFY_DETAIL, DEFAULT_TG_NOTIFY_DETAIL),
   // 是否推送「无需续期 / 跳过」类通知（默认 true）
   TG_NOTIFY_SKIP: parseEnvBool(process.env.TG_NOTIFY_SKIP, true),
 
@@ -231,18 +221,17 @@ const CONFIG = {
   SAVE_TURNSTILE_SCREENSHOTS: parseEnvBool(process.env.SAVE_TURNSTILE_SCREENSHOTS, false),
   // 验证码数据集自动收集（用于重训模型，方案二）
   SAVE_CAPTCHA_DATASET: parseEnvBool(process.env.SAVE_CAPTCHA_DATASET, false),
-  CAPTCHA_DATASET_DIR: process.env.CAPTCHA_DATASET_DIR || "/data/captcha-dataset",
+  CAPTCHA_DATASET_DIR: process.env.CAPTCHA_DATASET_DIR || '/data/captcha-dataset',
 
   // 容器内 cron（可选）；外部平台调度时也可只设 NOTIFY_NEXT_RUN_HOURS
   CRON_SCHEDULE: process.env.CRON_SCHEDULE || '',
   // 仅通知展示：cron-run 按 #7 清空 CRON_SCHEDULE 后经此变量透传真实调度，不作模式开关
   CRON_SCHEDULE_DISPLAY: process.env.CRON_SCHEDULE_DISPLAY || '',
   // 成功通知中「下次执行」估算间隔（小时）；默认 6，适配剩余≤12h 窗口
-  NOTIFY_NEXT_RUN_HOURS: parsePositiveInt(
-    process.env.NOTIFY_NEXT_RUN_HOURS,
-    DEFAULT_NEXT_RUN_INTERVAL_HOURS,
-    { min: 1, max: 168 },
-  ),
+  NOTIFY_NEXT_RUN_HOURS: parsePositiveInt(process.env.NOTIFY_NEXT_RUN_HOURS, DEFAULT_NEXT_RUN_INTERVAL_HOURS, {
+    min: 1,
+    max: 168,
+  }),
 
   // 传给 Turnstile 求解模块，保证 token 与浏览器 UA 一致
   userAgent: DEFAULT_UA,
@@ -321,16 +310,20 @@ async function notify(message, opts = {}) {
 
   const url = `https://api.telegram.org/bot${CONFIG.TG_BOT_TOKEN}/sendMessage`;
   try {
-    const res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CONFIG.TG_CHAT_ID,
-        text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-      }),
-    }, 10_000);
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: CONFIG.TG_CHAT_ID,
+          text,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+        }),
+      },
+      10_000,
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -378,11 +371,11 @@ async function main() {
   // 文档入口：排障 / 配置疑问的第一站（README 与 RUNBOOK 随仓库分发）
   log(`📖 文档: README.md（配置与入门） / RUNBOOK.md（排障手册）`);
   log(
-    `日志级别: ${CONFIG.LOG_LEVEL}`
-    + ` | 时区: ${process.env.TZ || 'Asia/Tokyo'}`
-    + ` | 通知: ${CONFIG.TG_NOTIFY_DETAIL}`
-    + `${CONFIG.TG_NOTIFY_SKIP ? '' : '（跳过类不推送）'}`
-    + `${CONFIG.TG_BOT_TOKEN && CONFIG.TG_CHAT_ID ? ' | Telegram 已配置' : ' | Telegram 未配置'}`,
+    `日志级别: ${CONFIG.LOG_LEVEL}` +
+      ` | 时区: ${process.env.TZ || 'Asia/Tokyo'}` +
+      ` | 通知: ${CONFIG.TG_NOTIFY_DETAIL}` +
+      `${CONFIG.TG_NOTIFY_SKIP ? '' : '（跳过类不推送）'}` +
+      `${CONFIG.TG_BOT_TOKEN && CONFIG.TG_CHAT_ID ? ' | Telegram 已配置' : ' | Telegram 未配置'}`,
   );
   // 运行环境：排障第一手信息（Node 版本差异曾造成 Intl/语法行为偏差，平台决定 Chrome 探测路径）
   log(`运行环境: Node ${process.version} | ${process.platform}/${process.arch}`);
@@ -396,21 +389,19 @@ async function main() {
   // 上次运行结果摘要：每次 cron 触发第一眼看到上次结局与连续统计
   // （读取失败由 getRenewalStatus 内部 warn 记录，不阻断启动）
   {
-    const status = getRenewalStatus(
-      RENEWAL_STATUS_FILE,
-      ALERT_AFTER_CONSECUTIVE_FAILURES,
-      LOGGER,
-    );
+    const status = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES, LOGGER);
     prevLastRecord = status.lastRecord || null;
     const last = status.lastRecord;
     if (last) {
-      const outcome = last.skipped ? '跳过' : (last.success ? '成功' : '失败');
+      const outcome = last.skipped ? '跳过' : last.success ? '成功' : '失败';
       const when = last.timestamp ? formatTokyoDateTime(new Date(last.timestamp)) : '时间未知';
-      const errBrief = last.errorMessage ? `，${last.errorMessage.slice(0, 100)}${last.errorMessage.length > 100 ? '…' : ''}` : '';
+      const errBrief = last.errorMessage
+        ? `，${last.errorMessage.slice(0, 100)}${last.errorMessage.length > 100 ? '…' : ''}`
+        : '';
       const newDate = last.newExpireDate ? `，新到期 ${last.newExpireDate}` : '';
       log(
-        `上次运行: ${outcome}（${when}）${newDate}${errBrief}`
-        + ` | 连续失败 ${status.consecutiveFailures} / 连续成功 ${status.consecutiveSuccesses}`,
+        `上次运行: ${outcome}（${when}）${newDate}${errBrief}` +
+          ` | 连续失败 ${status.consecutiveFailures} / 连续成功 ${status.consecutiveSuccesses}`,
       );
     } else {
       logDebug('上次运行: 无历史记录（首次运行）');
@@ -423,12 +414,14 @@ async function main() {
     const unknownProviders = listUnknownTurnstileProviderNames(CONFIG.TURNSTILE_PROVIDER_ORDER);
     if (unknownProviders.length > 0) {
       logWarn(
-        `⚠️ TURNSTILE_PROVIDER_ORDER 含无法识别的平台名（已忽略）: ${unknownProviders.join(' / ')}`
-        + `（可用: ${DEFAULT_TURNSTILE_PROVIDER_ORDER.join(', ')}）`,
+        `⚠️ TURNSTILE_PROVIDER_ORDER 含无法识别的平台名（已忽略）: ${unknownProviders.join(' / ')}` +
+          `（可用: ${DEFAULT_TURNSTILE_PROVIDER_ORDER.join(', ')}）`,
       );
     }
     if (tsProviders.length === 0) {
-      logWarn('⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份');
+      logWarn(
+        '⚠️ 未配置任何 Turnstile 打码平台密钥：将依赖自然通过，成功率极低（Docker 几乎不可用）。推荐至少配置 CAPSOLVER_API_KEY，并另配 ANTICAPTCHA_API_KEY 作异构备份',
+      );
     } else {
       const chain = tsProviders.map((p) => p.name).join(' → ');
       log(`Turnstile 多平台链路: ${chain}（每平台连续失败 ${CONFIG.TURNSTILE_PROVIDER_MAX_FAILURES} 次后切换）`);
@@ -442,8 +435,8 @@ async function main() {
       const anti = tsProviders.find((p) => p.name === 'AntiCaptcha');
       if (anti?.proxyMode === 'hostname_skipped') {
         log(
-          `ℹ️ AntiCaptcha：PROXY_ADDRESS 为域名，官方 TurnstileTask 仅支持 IP；`
-          + '打码任务将自动使用 TurnstileTaskProxyless（浏览器代理仍生效）',
+          `ℹ️ AntiCaptcha：PROXY_ADDRESS 为域名，官方 TurnstileTask 仅支持 IP；` +
+            '打码任务将自动使用 TurnstileTaskProxyless（浏览器代理仍生效）',
         );
       } else if (anti?.proxyMode === 'ip') {
         log('ℹ️ AntiCaptcha：已配置 IP 代理，将使用 TurnstileTask 带代理求解');
@@ -482,10 +475,11 @@ async function main() {
 
   // 下次执行：优先展示用调度（cron-run 透传的真实 cron，如 27 */4 * * *），
   // 退回 CRON_SCHEDULE（本地/单次模式），最后退化到 NOTIFY_NEXT_RUN_HOURS（默认 6h）
-  const resolveNextRun = () => resolveNextRunAt(Date.now(), {
-    cronSchedule: CONFIG.CRON_SCHEDULE_DISPLAY || CONFIG.CRON_SCHEDULE,
-    intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
-  });
+  const resolveNextRun = () =>
+    resolveNextRunAt(Date.now(), {
+      cronSchedule: CONFIG.CRON_SCHEDULE_DISPLAY || CONFIG.CRON_SCHEDULE,
+      intervalHours: CONFIG.NOTIFY_NEXT_RUN_HOURS,
+    });
 
   /**
    * 本轮判定为「跳过」的统一出口：
@@ -494,14 +488,7 @@ async function main() {
    * @param {object} opts
    * @param {import('puppeteer').Page} opts.page - 当前页面（try 块内声明，必须显式传入）
    */
-  const finishWithSkip = async ({
-    page,
-    reasonCode,
-    skipLabel,
-    reasonDetail,
-    logText,
-    runLabel = null,
-  }) => {
+  const finishWithSkip = async ({ page, reasonCode, skipLabel, reasonDetail, logText, runLabel = null }) => {
     runOutcome = 'skip';
     runOutcomeLabel = runLabel || skipLabel;
     pushStep(`判定结果: ${skipLabel}`);
@@ -511,29 +498,34 @@ async function main() {
       log(logText);
     }
     // 记录跳过，避免「长期无写入」被误判为监控静默
-    persistRenewalRecord(buildRenewalRecord({
-      success: true,
-      skipped: true,
-      serverName: knownVps.serverName,
-      plan: knownVps.plan,
-      oldExpireDate: knownVps.expireDate,
-      errorMessage: skipLabel,
-    }));
-    await notify(buildSkipNotifyMessage({
-      reasonCode,
-      serverName: knownVps.serverName,
-      plan: knownVps.plan,
-      expireDate: knownVps.expireDate,
-      remainingHours: knownVps.remainingHours,
-      reasonDetail,
-      executedAt: formatTokyoDateTime(),
-      nextRunAt: resolveNextRun(),
-      maxHours: FREE_VPS_MAX_HOURS,
-      windowHours: RENEWAL_WINDOW_HOURS,
-      processSteps,
-      detail: CONFIG.TG_NOTIFY_DETAIL,
-      durationMs: elapsedMs(),
-    }), { kind: 'skip' });
+    persistRenewalRecord(
+      buildRenewalRecord({
+        success: true,
+        skipped: true,
+        serverName: knownVps.serverName,
+        plan: knownVps.plan,
+        oldExpireDate: knownVps.expireDate,
+        errorMessage: skipLabel,
+      }),
+    );
+    await notify(
+      buildSkipNotifyMessage({
+        reasonCode,
+        serverName: knownVps.serverName,
+        plan: knownVps.plan,
+        expireDate: knownVps.expireDate,
+        remainingHours: knownVps.remainingHours,
+        reasonDetail,
+        executedAt: formatTokyoDateTime(),
+        nextRunAt: resolveNextRun(),
+        maxHours: FREE_VPS_MAX_HOURS,
+        windowHours: RENEWAL_WINDOW_HOURS,
+        processSteps,
+        detail: CONFIG.TG_NOTIFY_DETAIL,
+        durationMs: elapsedMs(),
+      }),
+      { kind: 'skip' },
+    );
     // 安全关闭：close 抛错不误入 catch（否则会造成「已跳过 + 失败」双通知），
     // 页面由 finally 中 browser.close() 兜底回收
     await safeClosePage(page, LOGGER);
@@ -544,7 +536,11 @@ async function main() {
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
     cleanChromeCaches(CONFIG.CHROME_USER_DATA);
     if (typeof global.gc === 'function') {
-      try { global.gc(); } catch { /* 忽略 */ }
+      try {
+        global.gc();
+      } catch {
+        /* 忽略 */
+      }
     }
 
     // 构建 Chrome 启动参数（针对 512MB 低内存容器深度压缩优化）
@@ -557,9 +553,9 @@ async function main() {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,  // 🔧 优化：使用真实浏览器调试的分辨率
+      `--window-size=${VIEWPORT.width},${VIEWPORT.height}`, // 🔧 优化：使用真实浏览器调试的分辨率
       '--window-position=0,0',
-      '--tz=Asia/Tokyo',         // 🔧 修正：Xserver 位于日本，使用东京时区
+      '--tz=Asia/Tokyo', // 🔧 修正：Xserver 位于日本，使用东京时区
       // ====== 512MB 低内存容器优化参数 ======
       '--js-flags=--max-old-space-size=128',
       '--renderer-process-limit=2',
@@ -594,8 +590,8 @@ async function main() {
     // 当配置了代理时，让浏览器也走同一代理
     // 确保浏览器提交表单的出口 IP 与 2Captcha 工人求解 token 时的 IP 一致
     if (HAS_PROXY) {
-      const proxyScheme = CONFIG.PROXY_TYPE === 'socks5' ? 'socks5' :
-        CONFIG.PROXY_TYPE === 'socks4' ? 'socks4' : 'http';
+      const proxyScheme =
+        CONFIG.PROXY_TYPE === 'socks5' ? 'socks5' : CONFIG.PROXY_TYPE === 'socks4' ? 'socks4' : 'http';
       chromeArgs.push(`--proxy-server=${proxyScheme}://${CONFIG.PROXY_ADDRESS}:${CONFIG.PROXY_PORT}`);
       const maskedAddr = maskProxyAddress(CONFIG.PROXY_ADDRESS);
       log(`浏览器代理已配置: ${proxyScheme}://${maskedAddr}:${CONFIG.PROXY_PORT}`);
@@ -608,7 +604,7 @@ async function main() {
       userDataDir: CONFIG.CHROME_USER_DATA,
       headless: false,
       args: chromeArgs,
-      defaultViewport: VIEWPORT,  // 🔧 优化：匹配启动参数
+      defaultViewport: VIEWPORT, // 🔧 优化：匹配启动参数
     });
     log('Chrome 启动成功（Stealth 模式完整注入）！');
 
@@ -659,7 +655,10 @@ async function main() {
       page.on('console', (msg) => {
         if (consoleCap.count >= consoleCap.max) return;
         consoleCap.count++;
-        const text = String(msg.text?.() || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+        const text = String(msg.text?.() || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 300);
         if (text) logDebug(`[页面console:${msg.type()}] ${text}`);
       });
       const pageErrorCap = { count: 0, max: 30 };
@@ -719,9 +718,9 @@ async function main() {
       logWarn(`指纹体检: ${risk}`);
     }
     logDebug(
-      `浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB,`
-      + ` hardwareConcurrency=${fingerprint.hardwareConcurrency},`
-      + ` platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`,
+      `浏览器指纹: deviceMemory=${fingerprint.deviceMemory}GB,` +
+        ` hardwareConcurrency=${fingerprint.hardwareConcurrency},` +
+        ` platform=${fingerprint.platform}, webdriver=${fingerprint.webdriver}`,
     );
 
     // 步骤 2：检查续期
@@ -746,18 +745,23 @@ async function main() {
         runOutcomeLabel = '需要人工确认';
         const manualReason = `当前停留在 ${page.url()}，未进入 VPS 面板，疑似官方新增确认页面`;
         err(manualReason);
-        persistRenewalRecord(buildRenewalRecord({
-          success: false,
-          serverName: knownVps.serverName,
-          plan: knownVps.plan,
-          oldExpireDate: knownVps.expireDate,
-          errorMessage: manualReason,
-        }));
-        await notify(buildManualConfirmNotifyMessage({
-          executedAt: formatTokyoDateTime(),
-          reason: manualReason,
-          nextRunAt: resolveNextRun(),
-        }), { kind: 'manual_confirm' });
+        persistRenewalRecord(
+          buildRenewalRecord({
+            success: false,
+            serverName: knownVps.serverName,
+            plan: knownVps.plan,
+            oldExpireDate: knownVps.expireDate,
+            errorMessage: manualReason,
+          }),
+        );
+        await notify(
+          buildManualConfirmNotifyMessage({
+            executedAt: formatTokyoDateTime(),
+            reason: manualReason,
+            nextRunAt: resolveNextRun(),
+          }),
+          { kind: 'manual_confirm' },
+        );
         process.exitCode = 1;
         return;
       }
@@ -766,11 +770,14 @@ async function main() {
         const missingWarning = buildMissingVpsWarning(prevLastRecord.serverName);
         logWarn(missingWarning);
         // 关键告警升级：即便配置了 TG_NOTIFY_SKIP=false 也通过 manual_confirm 渠道发送，杜绝静默漏报机器丢失
-        await notify(buildManualConfirmNotifyMessage({
-          executedAt: formatTokyoDateTime(),
-          reason: missingWarning,
-          nextRunAt: resolveNextRun(),
-        }), { kind: 'manual_confirm' });
+        await notify(
+          buildManualConfirmNotifyMessage({
+            executedAt: formatTokyoDateTime(),
+            reason: missingWarning,
+            nextRunAt: resolveNextRun(),
+          }),
+          { kind: 'manual_confirm' },
+        );
       }
 
       await finishWithSkip({
@@ -808,22 +815,23 @@ async function main() {
 
     // 步骤 4-6：验证码 + Turnstile + 提交（传入 renewUrl 供失败重试回到 index?id_vps）
     pushStep('识别验证码并求解 Turnstile，提交续期');
-    const captchaMeta = await handleCaptchaPage(page, { renewUrl: renewalData.renewUrl }, {
-      config: CONFIG,
-      logger: LOGGER,
-    }) || {
+    const captchaMeta = (await handleCaptchaPage(
+      page,
+      { renewUrl: renewalData.renewUrl },
+      {
+        config: CONFIG,
+        logger: LOGGER,
+      },
+    )) || {
       turnstileProvider: null,
       turnstileAttempts: [],
     };
     if (captchaMeta.turnstileProvider) {
-      const providerLabel = resolveTurnstileProviderLabel(captchaMeta.turnstileProvider)
-        || captchaMeta.turnstileProvider;
+      const providerLabel =
+        resolveTurnstileProviderLabel(captchaMeta.turnstileProvider) || captchaMeta.turnstileProvider;
       const failedBefore = listFailedTurnstileProviders(captchaMeta.turnstileAttempts);
       if (failedBefore.length > 0) {
-        pushStep(
-          `Turnstile 由 ${providerLabel} 求解成功`
-          + `（${failedBefore.join(' → ')} 熔断后切换）`,
-        );
+        pushStep(`Turnstile 由 ${providerLabel} 求解成功` + `（${failedBefore.join(' → ')} 熔断后切换）`);
       } else {
         pushStep(`Turnstile 由 ${providerLabel} 求解成功`);
       }
@@ -846,9 +854,7 @@ async function main() {
     }
 
     runOutcome = 'success';
-    runOutcomeLabel = newExpireDate
-      ? `续期成功 → ${newExpireDate}`
-      : '续期成功（未提取新到期日）';
+    runOutcomeLabel = newExpireDate ? `续期成功 → ${newExpireDate}` : '续期成功（未提取新到期日）';
     log(`🎉 续期流程全部完成！（耗时 ${durationText()}）`);
     pushStep('续期流程全部完成');
 
@@ -857,13 +863,15 @@ async function main() {
     const executedAt = formatTokyoDateTime();
 
     // 持久化续期成功记录（使用配置的状态文件路径）
-    persistRenewalRecord(buildRenewalRecord({
-      success: true,
-      serverName: renewalData.vpsInfo.serverName,
-      plan: renewalData.vpsInfo.plan,
-      oldExpireDate: renewalData.vpsInfo.expireDate,
-      newExpireDate,
-    }));
+    persistRenewalRecord(
+      buildRenewalRecord({
+        success: true,
+        serverName: renewalData.vpsInfo.serverName,
+        plan: renewalData.vpsInfo.plan,
+        oldExpireDate: renewalData.vpsInfo.expireDate,
+        newExpireDate,
+      }),
+    );
 
     // 持久化后仅读取一次，同时取两个信号：
     // - consecutiveSuccesses：含本轮在内的连续成功次数（持久化字段，与 30 条记录窗口解耦，
@@ -878,22 +886,25 @@ async function main() {
     );
     const hasHistory = postTotalRuns > 1;
 
-    await notify(buildSuccessNotifyMessage({
-      serverName: renewalData.vpsInfo.serverName,
-      plan: renewalData.vpsInfo.plan,
-      oldExpireDate: renewalData.vpsInfo.expireDate,
-      newExpireDate,
-      executedAt,
-      nextRunAt: nextRunStr,
-      processSteps,
-      detail: CONFIG.TG_NOTIFY_DETAIL,
-      turnstileProvider: captchaMeta.turnstileProvider,
-      turnstileAttempts: captchaMeta.turnstileAttempts,
-      durationMs: elapsedMs(),
-      remainingHours: renewalData.remainingHours,
-      consecutiveSuccesses,
-      hasHistory,
-    }), { kind: 'success' });
+    await notify(
+      buildSuccessNotifyMessage({
+        serverName: renewalData.vpsInfo.serverName,
+        plan: renewalData.vpsInfo.plan,
+        oldExpireDate: renewalData.vpsInfo.expireDate,
+        newExpireDate,
+        executedAt,
+        nextRunAt: nextRunStr,
+        processSteps,
+        detail: CONFIG.TG_NOTIFY_DETAIL,
+        turnstileProvider: captchaMeta.turnstileProvider,
+        turnstileAttempts: captchaMeta.turnstileAttempts,
+        durationMs: elapsedMs(),
+        remainingHours: renewalData.remainingHours,
+        consecutiveSuccesses,
+        hasHistory,
+      }),
+      { kind: 'success' },
+    );
     // 安全关闭：close 抛错不误入 catch（续期已成功且记录已持久化，误报失败会引发恐慌）
     await safeClosePage(page, LOGGER);
   } catch (e) {
@@ -907,25 +918,21 @@ async function main() {
     // 需人工确认的错误不套用失败分类标签，避免误导
     const needsManualConfirmation = e?.code === 'MANUAL_CONFIRMATION_REQUIRED';
     runOutcomeLabel = needsManualConfirmation ? '需要人工确认' : failureMeta.label;
-    err(
-      `流程异常终止 [${runOutcomeLabel}]: ${e.message}（耗时 ${durationText()}）`,
-    );
+    err(`流程异常终止 [${runOutcomeLabel}]: ${e.message}（耗时 ${durationText()}）`);
 
     // 持久化续期失败记录
-    persistRenewalRecord(buildRenewalRecord({
-      success: false,
-      serverName: knownVps.serverName,
-      plan: knownVps.plan,
-      oldExpireDate: knownVps.expireDate,
-      errorMessage: e.message,
-    }));
+    persistRenewalRecord(
+      buildRenewalRecord({
+        success: false,
+        serverName: knownVps.serverName,
+        plan: knownVps.plan,
+        oldExpireDate: knownVps.expireDate,
+        errorMessage: e.message,
+      }),
+    );
 
     // 告警升级：连续失败达到阈值，或 Turnstile 全平台熔断（判定收敛于 main-logic.resolveEscalation）
-    const { consecutiveFailures } = getRenewalStatus(
-      RENEWAL_STATUS_FILE,
-      ALERT_AFTER_CONSECUTIVE_FAILURES,
-      LOGGER,
-    );
+    const { consecutiveFailures } = getRenewalStatus(RENEWAL_STATUS_FILE, ALERT_AFTER_CONSECUTIVE_FAILURES, LOGGER);
     const isEscalation = resolveEscalation({
       consecutiveFailures,
       threshold: ALERT_AFTER_CONSECUTIVE_FAILURES,
@@ -945,58 +952,63 @@ async function main() {
 
     const failedProviders = Array.isArray(e?.providerNames)
       ? e.providerNames
-      : (Array.isArray(e?.attempts)
+      : Array.isArray(e?.attempts)
         ? e.attempts.map((a) => a.provider).filter(Boolean)
-        : []);
+        : [];
 
     // 图形验证码实际已尝试次数（handleCaptchaPage 最后一次重试抛错时附带）
     const captchaRetries = Number.isInteger(e?.captchaAttempts) ? e.captchaAttempts : 0;
 
     // 需人工确认：发送专门提醒（登录检查新确认页，手动处理后重跑容器），区别于通用失败通知
     if (needsManualConfirmation) {
-      await notify(buildManualConfirmNotifyMessage({
-        executedAt: formatTokyoDateTime(),
-        reason: e.message,
-        nextRunAt: resolveNextRun(),
-      }), { kind: 'manual_confirm' });
+      await notify(
+        buildManualConfirmNotifyMessage({
+          executedAt: formatTokyoDateTime(),
+          reason: e.message,
+          nextRunAt: resolveNextRun(),
+        }),
+        { kind: 'manual_confirm' },
+      );
     } else {
-      await notify(buildFailureNotifyMessage({
-        errorMessage: e.message,
-        consecutiveFailures,
-        isEscalation,
-        proxyHint,
-        captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
-        executedAt: formatTokyoDateTime(),
-        processSteps: failureSteps,
-        detail: CONFIG.TG_NOTIFY_DETAIL,
-        turnstileAllProvidersFailed,
-        failedProviders,
-        errorCode: e?.code || '',
-        turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
-        serverName: knownVps.serverName,
-        plan: knownVps.plan,
-        expireDate: knownVps.expireDate,
-        remainingHours: knownVps.remainingHours,
-        durationMs: elapsedMs(),
-        failureCategory: failureMeta.category,
-        nextRunAt: resolveNextRun(),
-        captchaRetries,
-      }), { kind: 'failure' });
+      await notify(
+        buildFailureNotifyMessage({
+          errorMessage: e.message,
+          consecutiveFailures,
+          isEscalation,
+          proxyHint,
+          captchaMaxRetry: CONFIG.CAPTCHA_MAX_RETRY,
+          executedAt: formatTokyoDateTime(),
+          processSteps: failureSteps,
+          detail: CONFIG.TG_NOTIFY_DETAIL,
+          turnstileAllProvidersFailed,
+          failedProviders,
+          errorCode: e?.code || '',
+          turnstileAttempts: Array.isArray(e?.attempts) ? e.attempts : [],
+          serverName: knownVps.serverName,
+          plan: knownVps.plan,
+          expireDate: knownVps.expireDate,
+          remainingHours: knownVps.remainingHours,
+          durationMs: elapsedMs(),
+          failureCategory: failureMeta.category,
+          nextRunAt: resolveNextRun(),
+          captchaRetries,
+        }),
+        { kind: 'failure' },
+      );
     }
     process.exitCode = 1;
   } finally {
     if (browser) {
       try {
         await browser.close();
-      } catch { /* 忽略 */ }
+      } catch {
+        /* 忽略 */
+      }
     }
     cleanChromeCaches(CONFIG.CHROME_USER_DATA);
     // 结局图标映射收敛于 main-logic.resolveOutcomeIcon（可单测）
     const outcomeIcon = resolveOutcomeIcon(runOutcome);
-    log(
-      `========== 流程结束 · ${outcomeIcon} ${runOutcomeLabel}`
-      + `（总耗时 ${durationText()}）==========`,
-    );
+    log(`========== 流程结束 · ${outcomeIcon} ${runOutcomeLabel}` + `（总耗时 ${durationText()}）==========`);
   }
 }
 

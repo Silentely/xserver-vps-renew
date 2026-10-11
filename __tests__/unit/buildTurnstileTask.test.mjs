@@ -6,7 +6,8 @@ import {
   YESCAPTCHA_SOFT_ID,
 } from '../../src/turnstile.mjs';
 
-const DEFAULT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
+const DEFAULT_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0';
 
 // 测试数据工厂
 const makeCapSolverProvider = () => ({
@@ -64,12 +65,7 @@ describe('buildTurnstileTask', () => {
   // === CapSolver 基础参数 ===
 
   it('CapSolver 生成包含正确 taskType 的任务', () => {
-    const task = buildTurnstileTask(
-      makeCapSolverProvider(),
-      makeParams(),
-      makeConfig(),
-      'https://example.com/login',
-    );
+    const task = buildTurnstileTask(makeCapSolverProvider(), makeParams(), makeConfig(), 'https://example.com/login');
     expect(task.type).toBe('AntiTurnstileTaskProxyLess');
     expect(task.websiteKey).toBe('0x4AAAAAAABTESTKEY');
     expect(task.websiteURL).toBe('https://example.com/login');
@@ -119,24 +115,14 @@ describe('buildTurnstileTask', () => {
   });
 
   it('CapSolver 无 action/cdata 时不生成 metadata', () => {
-    const task = buildTurnstileTask(
-      makeCapSolverProvider(),
-      makeParams(),
-      makeConfig(),
-      'https://example.com',
-    );
+    const task = buildTurnstileTask(makeCapSolverProvider(), makeParams(), makeConfig(), 'https://example.com');
     expect(task.metadata).toBeUndefined();
   });
 
   // === 2Captcha 基础参数 ===
 
   it('2Captcha 无代理时使用 TurnstileTaskProxyless', () => {
-    const task = buildTurnstileTask(
-      make2CaptchaProvider(false),
-      makeParams(),
-      makeConfig(),
-      'https://example.com',
-    );
+    const task = buildTurnstileTask(make2CaptchaProvider(false), makeParams(), makeConfig(), 'https://example.com');
     expect(task.type).toBe('TurnstileTaskProxyless');
   });
 

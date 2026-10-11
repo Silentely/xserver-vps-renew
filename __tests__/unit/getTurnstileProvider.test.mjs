@@ -151,11 +151,7 @@ describe('getTurnstileProvider', () => {
     CONFIG.CAPSOLVER_API_KEY = 'cap-key';
     CONFIG.ANTICAPTCHA_API_KEY = 'anti-key';
     CONFIG.TWOCAPTCHA_API_KEY = '2cap-key';
-    expect(listTurnstileProviders(CONFIG).map((p) => p.name)).toEqual([
-      'CapSolver',
-      'AntiCaptcha',
-      '2Captcha',
-    ]);
+    expect(listTurnstileProviders(CONFIG).map((p) => p.name)).toEqual(['CapSolver', 'AntiCaptcha', '2Captcha']);
   });
 
   it('enables proxy mode for 2Captcha when proxy vars set', () => {

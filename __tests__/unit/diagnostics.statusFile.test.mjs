@@ -18,15 +18,11 @@ const DIAG_SRC = readFileSync(join(REPO_ROOT, 'diagnostics.sh'), 'utf8');
 function probeStatusFile(statusFilePath) {
   const fnMatch = DIAG_SRC.match(/check_status_file_writability\(\) \{[\s\S]*?\n\}/);
   expect(fnMatch, 'diagnostics.sh 应定义 check_status_file_writability()').toBeTruthy();
-  const r = spawnSync(
-    'bash',
-    ['-c', `${fnMatch[0]}\ncheck_status_file_writability`, '_'],
-    {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: { PATH: '/usr/bin:/bin', RENEWAL_STATUS_FILE: statusFilePath },
-    },
-  );
+  const r = spawnSync('bash', ['-c', `${fnMatch[0]}\ncheck_status_file_writability`, '_'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    env: { PATH: '/usr/bin:/bin', RENEWAL_STATUS_FILE: statusFilePath },
+  });
   expect(r.status, `bash 求值失败: ${r.stderr}`).toBe(0);
   return r.stdout;
 }
@@ -41,7 +37,11 @@ describe('diagnostics.sh 状态文件可写性探测', () => {
   afterEach(() => {
     if (root && existsSync(root)) {
       // 恢复权限以便清理
-      try { chmodSync(root, 0o755); } catch { /* 忽略 */ }
+      try {
+        chmodSync(root, 0o755);
+      } catch {
+        /* 忽略 */
+      }
       rmSync(root, { recursive: true, force: true });
     }
   });

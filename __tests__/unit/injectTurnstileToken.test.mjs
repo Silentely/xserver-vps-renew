@@ -53,11 +53,7 @@ describe('injectTurnstileToken', () => {
       callbackName: 'callbackTurnstile',
     });
     expect(res).toEqual({ ok: true, injectedCount: 2, callbackCalled: true });
-    expect(page.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      'token-abc',
-      'callbackTurnstile',
-    );
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), 'token-abc', 'callbackTurnstile');
   });
 
   it('callback 执行抛错时记录 warning 并在 details 中返回 callbackError', async () => {
@@ -77,9 +73,7 @@ describe('injectTurnstileToken', () => {
       callbackCalled: false,
       callbackError: 'callbackTurnstile is not defined',
     });
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('callbackTurnstile is not defined'),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('callbackTurnstile is not defined'));
   });
   it('浏览器端 evaluateFn 安全解析 dotted-path 回调，并拒绝对恶意表达式执行 eval', async () => {
     let capturedFn = null;
@@ -97,7 +91,11 @@ describe('injectTurnstileToken', () => {
     const originalEvent = global.Event;
 
     try {
-      global.Event = class { constructor(type) { this.type = type; } };
+      global.Event = class {
+        constructor(type) {
+          this.type = type;
+        }
+      };
       const calls = [];
       global.window = {
         app: {

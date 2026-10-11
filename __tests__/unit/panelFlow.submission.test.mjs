@@ -80,11 +80,13 @@ describe('waitForSubmissionResult', () => {
         reads++;
         return reads < 3 ? '画像認証 6桁の数字を入力' : '手続きが完了しました';
       }),
-      url: vi.fn().mockImplementation(() => (
-        reads < 3
-          ? 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf'
-          : 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/result'
-      )),
+      url: vi
+        .fn()
+        .mockImplementation(() =>
+          reads < 3
+            ? 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf'
+            : 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/result',
+        ),
     };
     const { evaluation } = await waitForSubmissionResult(page, {
       timeoutMs: 2000,
@@ -99,8 +101,9 @@ describe('waitForSubmissionResult', () => {
       text: '更新が完了しました',
       url: 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/result',
     });
-    await expect(waitForSubmissionResult(page, { timeoutMs: 50, intervalMs: 10 }))
-      .resolves.toMatchObject({ evaluation: expect.objectContaining({ status: 'success' }) });
+    await expect(waitForSubmissionResult(page, { timeoutMs: 50, intervalMs: 10 })).resolves.toMatchObject({
+      evaluation: expect.objectContaining({ status: 'success' }),
+    });
   });
 
   it('未识别成功信号时输出页面正文诊断（debug），便于定位成功文案', async () => {
@@ -116,9 +119,7 @@ describe('waitForSubmissionResult', () => {
       logger,
     });
     expect(evaluation.status).not.toBe('success');
-    const diagLines = logger.debug.mock.calls
-      .map((call) => call[0])
-      .filter((line) => line.includes('[提交结果诊断]'));
+    const diagLines = logger.debug.mock.calls.map((call) => call[0]).filter((line) => line.includes('[提交结果诊断]'));
     // 诊断仅在轮询结束后输出一次
     expect(diagLines).toHaveLength(1);
     expect(diagLines[0]).toContain('URL: https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do');
@@ -133,9 +134,7 @@ describe('waitForSubmissionResult', () => {
     });
     const logger = { debug: vi.fn() };
     await waitForSubmissionResult(page, { timeoutMs: 50, intervalMs: 10, logger });
-    const diagLines = logger.debug.mock.calls
-      .map((call) => call[0])
-      .filter((line) => line.includes('[提交结果诊断]'));
+    const diagLines = logger.debug.mock.calls.map((call) => call[0]).filter((line) => line.includes('[提交结果诊断]'));
     expect(diagLines).toHaveLength(0);
   });
 

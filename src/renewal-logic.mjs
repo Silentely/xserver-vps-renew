@@ -47,19 +47,10 @@ const KNOWN_FAILURE_REASONS = [
  *   利用期限の12時間前から更新手続きが可能です。
  *   利用を継続される場合は、2026年7月24日12：00以降にお試しください。
  */
-const RENEWAL_WINDOW_BLOCKED_PATTERNS = [
-  '以降にお試し',
-  '以降に再度',
-  '以降にお申し込み',
-];
+const RENEWAL_WINDOW_BLOCKED_PATTERNS = ['以降にお試し', '以降に再度', '以降にお申し込み'];
 
 /** 辅助确认：与「请之后再试」同时出现时增强可信度 */
-const RENEWAL_WINDOW_CONTEXT_PATTERNS = [
-  '12時間前',
-  '更新手続き',
-  '契約更新',
-  '利用期限',
-];
+const RENEWAL_WINDOW_CONTEXT_PATTERNS = ['12時間前', '更新手続き', '契約更新', '利用期限'];
 
 /**
  * 从页面到期文案解析东京时区下的到期时间戳（毫秒）
@@ -74,9 +65,7 @@ export function parseExpireTimestamp(expireText) {
   if (!text) return null;
 
   // ISO / 斜杠：2026-07-15 10:30:00 或 2026/07/15 10:30
-  let m = text.match(
-    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
-  );
+  let m = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if (m) {
     const [, y, mo, d, hh, mm, ss] = m;
     const hasTime = hh !== undefined;
@@ -92,9 +81,7 @@ export function parseExpireTimestamp(expireText) {
   }
 
   // 日本格式：2026年7月15日 10時30分 / 2026年7月15日
-  m = text.match(
-    /(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2})[時:](\d{1,2})(?:分(?::?(\d{1,2})秒?)?)?)?/,
-  );
+  m = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2})[時:](\d{1,2})(?:分(?::?(\d{1,2})秒?)?)?)?/);
   if (m) {
     const [, y, mo, d, hh, mm, ss] = m;
     const hasTime = hh !== undefined;
@@ -195,18 +182,14 @@ export function extractRetryAfterFromText(pageText) {
   const text = pageText.replace(/\s+/g, ' ');
 
   // 日本格式：2026年7月24日12：00 / 2026年7月24日 12:00
-  const jp = text.match(
-    /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[：:時](\d{1,2})/,
-  );
+  const jp = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[：:時](\d{1,2})/);
   if (jp) {
     const [, y, mo, d, hh, mm] = jp;
     return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')} ${hh.padStart(2, '0')}:${mm.padStart(2, '0')}`;
   }
 
   // ISO：2026-07-24 12:00 或 2026/07/24 12:00
-  const iso = text.match(
-    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})/,
-  );
+  const iso = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{2})/);
   if (iso) {
     const [, y, mo, d, hh, mm] = iso;
     return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')} ${hh.padStart(2, '0')}:${mm}`;
@@ -234,11 +217,7 @@ export function detectRenewalWindowBlocked(pageText = '', currentUrl = '') {
   }
 
   // 已进入验证码流程则不当作窗口拦截
-  if (
-    text.includes('画像認証') ||
-    text.includes('上の画像') ||
-    /cf-turnstile|turnstile/i.test(text)
-  ) {
+  if (text.includes('画像認証') || text.includes('上の画像') || /cf-turnstile|turnstile/i.test(text)) {
     return { blocked: false, reason: null, retryAfter: null, matched: null };
   }
 
@@ -479,8 +458,8 @@ export function extractVpsInfoFromCellTexts(cellTexts) {
 
     // 判断规格：包含内存/CPU/存储信息
     if (
-      (text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe'))
-      && text.length > 10
+      (text.includes('メモリ') || text.includes('コア') || text.includes('GB') || text.includes('NVMe')) &&
+      text.length > 10
     ) {
       plan = text;
     }

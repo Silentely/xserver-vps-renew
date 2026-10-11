@@ -8,11 +8,7 @@ vi.mock('node:timers/promises', () => ({
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const {
-  solveTurnstileViaAPI,
-  injectTurnstileToken,
-  YESCAPTCHA_SOFT_ID,
-} = await import('../../src/turnstile.mjs');
+const { solveTurnstileViaAPI, injectTurnstileToken, YESCAPTCHA_SOFT_ID } = await import('../../src/turnstile.mjs');
 
 const makeConfig = (overrides = {}) => ({
   CAPSOLVER_API_KEY: '',
@@ -48,9 +44,9 @@ describe('solveTurnstileViaAPI', () => {
 
   it('无 API 密钥时抛出错误', async () => {
     const config = makeConfig();
-    await expect(
-      solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger),
-    ).rejects.toThrow('未配置 Turnstile 求解 API 密钥');
+    await expect(solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger)).rejects.toThrow(
+      '未配置 Turnstile 求解 API 密钥',
+    );
   });
 
   it('CapSolver 成功求解', async () => {
@@ -64,11 +60,12 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: { token: 'token-abc-xyz', userAgent: 'Mozilla/5.0 API-UA' },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: { token: 'token-abc-xyz', userAgent: 'Mozilla/5.0 API-UA' },
+        }),
     });
 
     const config = makeConfig({ CAPSOLVER_API_KEY: 'cap-key' });
@@ -92,20 +89,16 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: { token: 'token-2cap-789' },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: { token: 'token-2cap-789' },
+        }),
     });
 
     const config = makeConfig({ TWOCAPTCHA_API_KEY: '2cap-key' });
-    const result = await solveTurnstileViaAPI(
-      'https://example.com/page',
-      { sitekey: '0x4BBBB' },
-      config,
-      mockLogger,
-    );
+    const result = await solveTurnstileViaAPI('https://example.com/page', { sitekey: '0x4BBBB' }, config, mockLogger);
 
     expect(result.token).toBe('token-2cap-789');
     expect(result.userAgent).toBeNull();
@@ -120,23 +113,19 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: {
-          token: 'token-yes-abc',
-          userAgent: 'Mozilla/5.0 YesCaptcha-UA',
-        },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: {
+            token: 'token-yes-abc',
+            userAgent: 'Mozilla/5.0 YesCaptcha-UA',
+          },
+        }),
     });
 
     const config = makeConfig({ YESCAPTCHA_API_KEY: 'yes-key' });
-    const result = await solveTurnstileViaAPI(
-      'https://example.com/page',
-      { sitekey: '0x4YES' },
-      config,
-      mockLogger,
-    );
+    const result = await solveTurnstileViaAPI('https://example.com/page', { sitekey: '0x4YES' }, config, mockLogger);
 
     expect(result.token).toBe('token-yes-abc');
     expect(result.userAgent).toBe('Mozilla/5.0 YesCaptcha-UA');
@@ -162,23 +151,19 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: { token: 'token-yes-cn' },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: { token: 'token-yes-cn' },
+        }),
     });
 
     const config = makeConfig({
       YESCAPTCHA_API_KEY: 'yes-key',
       YESCAPTCHA_API_BASE: 'https://cn.yescaptcha.com',
     });
-    await solveTurnstileViaAPI(
-      'https://example.com/page',
-      { sitekey: '0x4YES' },
-      config,
-      mockLogger,
-    );
+    await solveTurnstileViaAPI('https://example.com/page', { sitekey: '0x4YES' }, config, mockLogger);
 
     expect(mockFetch.mock.calls[0][0]).toBe('https://cn.yescaptcha.com/createTask');
     expect(mockFetch.mock.calls[1][0]).toBe('https://cn.yescaptcha.com/getTaskResult');
@@ -191,9 +176,9 @@ describe('solveTurnstileViaAPI', () => {
     });
 
     const config = makeConfig({ CAPSOLVER_API_KEY: 'bad-key' });
-    await expect(
-      solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger),
-    ).rejects.toThrow('createTask HTTP 错误: 403');
+    await expect(solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger)).rejects.toThrow(
+      'createTask HTTP 错误: 403',
+    );
   });
 
   it('createTask 返回业务错误时抛出异常', async () => {
@@ -204,9 +189,9 @@ describe('solveTurnstileViaAPI', () => {
     });
 
     const config = makeConfig({ CAPSOLVER_API_KEY: 'invalid' });
-    await expect(
-      solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger),
-    ).rejects.toThrow('Invalid key');
+    await expect(solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger)).rejects.toThrow(
+      'Invalid key',
+    );
   });
 
   it('createTask 未返回 taskId 时抛出异常', async () => {
@@ -217,9 +202,9 @@ describe('solveTurnstileViaAPI', () => {
     });
 
     const config = makeConfig({ CAPSOLVER_API_KEY: 'cap-key' });
-    await expect(
-      solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger),
-    ).rejects.toThrow('未返回 taskId');
+    await expect(solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger)).rejects.toThrow(
+      '未返回 taskId',
+    );
   });
 
   it('轮询次数耗尽后抛出异常', async () => {
@@ -259,17 +244,16 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: { token: 'token-after-retry' },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: { token: 'token-after-retry' },
+        }),
     });
 
     const config = makeConfig({ CAPSOLVER_API_KEY: 'cap-key' });
-    const result = await solveTurnstileViaAPI(
-      'https://example.com', { sitekey: '0x4' }, config, mockLogger, 5000,
-    );
+    const result = await solveTurnstileViaAPI('https://example.com', { sitekey: '0x4' }, config, mockLogger, 5000);
 
     expect(result.token).toBe('token-after-retry');
   });
@@ -283,11 +267,12 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: { token: 'token-proxy' },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: { token: 'token-proxy' },
+        }),
     });
 
     const config = makeConfig({
@@ -318,14 +303,15 @@ describe('solveTurnstileViaAPI', () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({
-        errorId: 0,
-        status: 'ready',
-        solution: {
-          token: 'token-anti-xyz',
-          userAgent: 'Mozilla/5.0 Anti-UA',
-        },
-      }),
+      json: () =>
+        Promise.resolve({
+          errorId: 0,
+          status: 'ready',
+          solution: {
+            token: 'token-anti-xyz',
+            userAgent: 'Mozilla/5.0 Anti-UA',
+          },
+        }),
     });
 
     const config = makeConfig({
@@ -370,10 +356,7 @@ describe('injectTurnstileToken', () => {
     const result = await injectTurnstileToken(mockPage, 'test-token-123');
 
     expect(result).toBe(true);
-    expect(mockPage.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      'test-token-123',
-    );
+    expect(mockPage.evaluate).toHaveBeenCalledWith(expect.any(Function), 'test-token-123');
   });
 
   it('注入失败时记录警告日志', async () => {
@@ -385,9 +368,7 @@ describe('injectTurnstileToken', () => {
     const result = await injectTurnstileToken(mockPage, 'test-token', logger);
 
     expect(result).toBe(false);
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.stringContaining('0 个元素'),
-    );
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('0 个元素'));
   });
 
   it('注入成功时记录成功日志', async () => {
@@ -398,9 +379,7 @@ describe('injectTurnstileToken', () => {
 
     await injectTurnstileToken(mockPage, 'test-token', logger);
 
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.stringContaining('2 个元素'),
-    );
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('2 个元素'));
   });
 
   it('无 logger 时不报错', async () => {

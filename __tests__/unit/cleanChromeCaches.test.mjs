@@ -25,11 +25,20 @@ describe('cleanChromeCaches', () => {
     cleanChromeCaches('/data/chrome-profile');
 
     expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/Cache', { recursive: true, force: true });
-    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/Code Cache', { recursive: true, force: true });
+    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/Code Cache', {
+      recursive: true,
+      force: true,
+    });
     expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/GPUCache', { recursive: true, force: true });
     expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Crashpad', { recursive: true, force: true });
-    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/DawnGraphiteCache', { recursive: true, force: true });
-    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/Service Worker/CacheStorage', { recursive: true, force: true });
+    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/DawnGraphiteCache', {
+      recursive: true,
+      force: true,
+    });
+    expect(mockRmSync).toHaveBeenCalledWith('/data/chrome-profile/Default/Service Worker/CacheStorage', {
+      recursive: true,
+      force: true,
+    });
   });
 
   it('传入假值或空字符串时直接跳过且不抛异常', () => {

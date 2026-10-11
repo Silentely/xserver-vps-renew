@@ -73,7 +73,12 @@ export function readRenewalStatus(filePath = DEFAULT_STATUS_FILE, logger = CONSO
  * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
  * @throws {Error} 目录不可写或写入失败时抛出
  */
-export function writeRenewalStatus(record, filePath = DEFAULT_STATUS_FILE, maxRecords = DEFAULT_MAX_RECORDS, logger = CONSOLE_LOGGER) {
+export function writeRenewalStatus(
+  record,
+  filePath = DEFAULT_STATUS_FILE,
+  maxRecords = DEFAULT_MAX_RECORDS,
+  logger = CONSOLE_LOGGER,
+) {
   const { records, successStreak } = readRenewalStatus(filePath, logger);
   records.push(record);
   const trimmed = records.slice(-Math.max(1, maxRecords));
@@ -193,15 +198,18 @@ export function nextSuccessStreak(currentStreak, record) {
  * @param {{ warn?: Function, error?: Function }} [logger=CONSOLE_LOGGER] - 分级日志对象
  * @returns {object} - { healthy, lastRecord, lastSuccess, consecutiveFailures, consecutiveSuccesses, totalRuns }
  */
-export function getRenewalStatus(filePath = DEFAULT_STATUS_FILE, alertThreshold = DEFAULT_ALERT_AFTER_FAILURES, logger = CONSOLE_LOGGER) {
+export function getRenewalStatus(
+  filePath = DEFAULT_STATUS_FILE,
+  alertThreshold = DEFAULT_ALERT_AFTER_FAILURES,
+  logger = CONSOLE_LOGGER,
+) {
   const { records, lastRecord, successStreak } = readRenewalStatus(filePath, logger);
   const consecutiveFailures = countConsecutiveFailures(records);
   // 连续成功次数取持久化字段（不受 30 条记录窗口截断影响），连败仍按窗口内记录统计
   const consecutiveSuccesses = successStreak;
   const lastSuccess = [...records].reverse().find((r) => r && r.success && !r.skipped) || null;
-  const threshold = Number.isFinite(alertThreshold) && alertThreshold > 0
-    ? alertThreshold
-    : DEFAULT_ALERT_AFTER_FAILURES;
+  const threshold =
+    Number.isFinite(alertThreshold) && alertThreshold > 0 ? alertThreshold : DEFAULT_ALERT_AFTER_FAILURES;
   return {
     healthy: consecutiveFailures < threshold,
     lastRecord,

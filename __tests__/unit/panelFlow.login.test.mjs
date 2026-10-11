@@ -10,37 +10,45 @@ const LOGGER = {
 describe('navigateToLoginPage', () => {
   it('网络超时后有限重试并最终成功', async () => {
     const page = {
-      goto: vi.fn()
-        .mockRejectedValueOnce(new Error('net::ERR_TIMED_OUT'))
-        .mockResolvedValueOnce(null),
+      goto: vi.fn().mockRejectedValueOnce(new Error('net::ERR_TIMED_OUT')).mockResolvedValueOnce(null),
     };
 
-    await navigateToLoginPage(page, {
-      BASE_URL: 'https://secure.xserver.ne.jp',
-      LOGIN_PATH: '/xapanel/login/xvps/',
-      NAVIGATION_TIMEOUT: 1000,
-      LOGIN_NAVIGATION_RETRIES: 2,
-      LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
-    }, LOGGER);
+    await navigateToLoginPage(
+      page,
+      {
+        BASE_URL: 'https://secure.xserver.ne.jp',
+        LOGIN_PATH: '/xapanel/login/xvps/',
+        NAVIGATION_TIMEOUT: 1000,
+        LOGIN_NAVIGATION_RETRIES: 2,
+        LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
+      },
+      LOGGER,
+    );
 
     expect(page.goto).toHaveBeenCalledTimes(2);
-    expect(page.goto).toHaveBeenLastCalledWith(
-      'https://secure.xserver.ne.jp/xapanel/login/xvps/',
-      { waitUntil: 'domcontentloaded', timeout: 1000 },
-    );
+    expect(page.goto).toHaveBeenLastCalledWith('https://secure.xserver.ne.jp/xapanel/login/xvps/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 1000,
+    });
   });
 
   it('非网络错误不重试并原样抛出', async () => {
     const error = new Error('Invalid URL');
     const page = { goto: vi.fn().mockRejectedValue(error) };
 
-    await expect(navigateToLoginPage(page, {
-      BASE_URL: 'https://secure.xserver.ne.jp',
-      LOGIN_PATH: '/xapanel/login/xvps/',
-      NAVIGATION_TIMEOUT: 1000,
-      LOGIN_NAVIGATION_RETRIES: 2,
-      LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
-    }, LOGGER)).rejects.toBe(error);
+    await expect(
+      navigateToLoginPage(
+        page,
+        {
+          BASE_URL: 'https://secure.xserver.ne.jp',
+          LOGIN_PATH: '/xapanel/login/xvps/',
+          NAVIGATION_TIMEOUT: 1000,
+          LOGIN_NAVIGATION_RETRIES: 2,
+          LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
+        },
+        LOGGER,
+      ),
+    ).rejects.toBe(error);
 
     expect(page.goto).toHaveBeenCalledTimes(1);
   });
@@ -49,13 +57,19 @@ describe('navigateToLoginPage', () => {
     const error = new Error('Navigation timeout of 1000 ms exceeded');
     const page = { goto: vi.fn().mockRejectedValue(error) };
 
-    await expect(navigateToLoginPage(page, {
-      BASE_URL: 'https://secure.xserver.ne.jp',
-      LOGIN_PATH: '/xapanel/login/xvps/',
-      NAVIGATION_TIMEOUT: 1000,
-      LOGIN_NAVIGATION_RETRIES: 2,
-      LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
-    }, LOGGER)).rejects.toBe(error);
+    await expect(
+      navigateToLoginPage(
+        page,
+        {
+          BASE_URL: 'https://secure.xserver.ne.jp',
+          LOGIN_PATH: '/xapanel/login/xvps/',
+          NAVIGATION_TIMEOUT: 1000,
+          LOGIN_NAVIGATION_RETRIES: 2,
+          LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
+        },
+        LOGGER,
+      ),
+    ).rejects.toBe(error);
 
     expect(page.goto).toHaveBeenCalledTimes(2);
   });
@@ -77,17 +91,19 @@ describe('handleLogin', () => {
       evaluate: vi.fn().mockRejectedValue(new Error('Protocol error (Runtime.evaluate): Target closed')),
     };
 
-    await expect(handleLogin(page, {
-      config: {
-        BASE_URL: 'https://secure.xserver.ne.jp',
-        LOGIN_PATH: '/xapanel/login/xvps/',
-        MEMBER_ID: 'member',
-        PASSWORD: 'password',
-        NAVIGATION_TIMEOUT: 1000,
-        LOGIN_NAVIGATION_RETRIES: 1,
-      },
-      logger: LOGGER,
-    })).rejects.toThrow('页面上下文未就绪');
+    await expect(
+      handleLogin(page, {
+        config: {
+          BASE_URL: 'https://secure.xserver.ne.jp',
+          LOGIN_PATH: '/xapanel/login/xvps/',
+          MEMBER_ID: 'member',
+          PASSWORD: 'password',
+          NAVIGATION_TIMEOUT: 1000,
+          LOGIN_NAVIGATION_RETRIES: 1,
+        },
+        logger: LOGGER,
+      }),
+    ).rejects.toThrow('页面上下文未就绪');
 
     expect(LOGGER.info).not.toHaveBeenCalledWith('登录成功！');
   });
@@ -97,8 +113,7 @@ describe('handleLogin', () => {
     let currentUrl = 'https://secure.xserver.ne.jp/xapanel/login/xvps/';
     const page = {
       goto: vi.fn().mockResolvedValue(null),
-      url: vi.fn()
-        .mockImplementation(() => currentUrl),
+      url: vi.fn().mockImplementation(() => currentUrl),
       type: vi.fn().mockResolvedValue(null),
       $: vi.fn().mockImplementation(async (selector) => {
         if (selector === '.cf-turnstile, [data-sitekey]') {
@@ -134,7 +149,9 @@ describe('handleLogin', () => {
         }
         return [];
       }),
-      waitForNavigation: vi.fn().mockImplementation(async () => { currentUrl = 'https://secure.xserver.ne.jp/xapanel/xvps/index'; }),
+      waitForNavigation: vi.fn().mockImplementation(async () => {
+        currentUrl = 'https://secure.xserver.ne.jp/xapanel/xvps/index';
+      }),
     };
 
     const result = await handleLogin(page, {
@@ -180,18 +197,20 @@ describe('handleLogin', () => {
       $$eval: vi.fn().mockResolvedValue([]),
     };
 
-    await expect(handleLogin(page, {
-      config: {
-        BASE_URL: 'https://secure.xserver.ne.jp',
-        LOGIN_PATH: '/xapanel/login/xvps/',
-        MEMBER_ID: 'member',
-        PASSWORD: 'password',
-        NAVIGATION_TIMEOUT: 1000,
-        LOGIN_NAVIGATION_RETRIES: 1,
-        TURNSTILE_RENDER_WAIT_MS: 10,
-        TURNSTILE_SOLVE_TIMEOUT_MS: 50,
-      },
-      logger: LOGGER,
-    })).rejects.toThrow();
+    await expect(
+      handleLogin(page, {
+        config: {
+          BASE_URL: 'https://secure.xserver.ne.jp',
+          LOGIN_PATH: '/xapanel/login/xvps/',
+          MEMBER_ID: 'member',
+          PASSWORD: 'password',
+          NAVIGATION_TIMEOUT: 1000,
+          LOGIN_NAVIGATION_RETRIES: 1,
+          TURNSTILE_RENDER_WAIT_MS: 10,
+          TURNSTILE_SOLVE_TIMEOUT_MS: 50,
+        },
+        logger: LOGGER,
+      }),
+    ).rejects.toThrow();
   });
 });

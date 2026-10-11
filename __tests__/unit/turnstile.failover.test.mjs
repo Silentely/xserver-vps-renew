@@ -57,10 +57,7 @@ describe('normalizeProviderName / parseTurnstileProviderOrder', () => {
 
   it('非法项忽略；全非法回退默认', () => {
     expect(parseTurnstileProviderOrder('foo, bar')).toEqual(DEFAULT_TURNSTILE_PROVIDER_ORDER);
-    expect(parseTurnstileProviderOrder('CapSolver, foo, YesCaptcha')).toEqual([
-      'CapSolver',
-      'YesCaptcha',
-    ]);
+    expect(parseTurnstileProviderOrder('CapSolver, foo, YesCaptcha')).toEqual(['CapSolver', 'YesCaptcha']);
   });
 });
 
@@ -76,27 +73,26 @@ describe('listTurnstileProviders', () => {
   });
 
   it('多 key 按默认顺序：CapSolver → AntiCaptcha → YesCaptcha → 2Captcha', () => {
-    const list = listTurnstileProviders(makeConfig({
-      CAPSOLVER_API_KEY: 'c',
-      ANTICAPTCHA_API_KEY: 'a',
-      YESCAPTCHA_API_KEY: 'y',
-      TWOCAPTCHA_API_KEY: 't',
-    }));
-    expect(list.map((p) => p.name)).toEqual([
-      'CapSolver',
-      'AntiCaptcha',
-      'YesCaptcha',
-      '2Captcha',
-    ]);
+    const list = listTurnstileProviders(
+      makeConfig({
+        CAPSOLVER_API_KEY: 'c',
+        ANTICAPTCHA_API_KEY: 'a',
+        YESCAPTCHA_API_KEY: 'y',
+        TWOCAPTCHA_API_KEY: 't',
+      }),
+    );
+    expect(list.map((p) => p.name)).toEqual(['CapSolver', 'AntiCaptcha', 'YesCaptcha', '2Captcha']);
   });
 
   it('自定义顺序生效', () => {
-    const list = listTurnstileProviders(makeConfig({
-      CAPSOLVER_API_KEY: 'c',
-      ANTICAPTCHA_API_KEY: 'a',
-      TWOCAPTCHA_API_KEY: 't',
-      TURNSTILE_PROVIDER_ORDER: '2Captcha,AntiCaptcha,CapSolver',
-    }));
+    const list = listTurnstileProviders(
+      makeConfig({
+        CAPSOLVER_API_KEY: 'c',
+        ANTICAPTCHA_API_KEY: 'a',
+        TWOCAPTCHA_API_KEY: 't',
+        TURNSTILE_PROVIDER_ORDER: '2Captcha,AntiCaptcha,CapSolver',
+      }),
+    );
     expect(list.map((p) => p.name)).toEqual(['2Captcha', 'AntiCaptcha', 'CapSolver']);
   });
 
@@ -109,12 +105,14 @@ describe('listTurnstileProviders', () => {
   });
 
   it('AntiCaptcha 有 IP 代理时使用 TurnstileTask', () => {
-    const list = listTurnstileProviders(makeConfig({
-      ANTICAPTCHA_API_KEY: 'a',
-      PROXY_TYPE: 'http',
-      PROXY_ADDRESS: '1.2.3.4',
-      PROXY_PORT: '8080',
-    }));
+    const list = listTurnstileProviders(
+      makeConfig({
+        ANTICAPTCHA_API_KEY: 'a',
+        PROXY_TYPE: 'http',
+        PROXY_ADDRESS: '1.2.3.4',
+        PROXY_PORT: '8080',
+      }),
+    );
     expect(list[0].name).toBe('AntiCaptcha');
     expect(list[0].apiBase).toBe(ANTICAPTCHA_API_BASE);
     expect(list[0].taskType).toBe('TurnstileTask');
@@ -123,12 +121,14 @@ describe('listTurnstileProviders', () => {
   });
 
   it('AntiCaptcha 域名代理时自动改走 TurnstileTaskProxyless', () => {
-    const list = listTurnstileProviders(makeConfig({
-      ANTICAPTCHA_API_KEY: 'a',
-      PROXY_TYPE: 'http',
-      PROXY_ADDRESS: 'proxy.example.com',
-      PROXY_PORT: '80',
-    }));
+    const list = listTurnstileProviders(
+      makeConfig({
+        ANTICAPTCHA_API_KEY: 'a',
+        PROXY_TYPE: 'http',
+        PROXY_ADDRESS: 'proxy.example.com',
+        PROXY_PORT: '80',
+      }),
+    );
     expect(list[0].taskType).toBe('TurnstileTaskProxyless');
     expect(list[0].supportsProxy).toBe(false);
     expect(list[0].proxyMode).toBe('hostname_skipped');
@@ -142,18 +142,22 @@ describe('listTurnstileProviders', () => {
   });
 
   it('AntiCaptcha softId 透传', () => {
-    const list = listTurnstileProviders(makeConfig({
-      ANTICAPTCHA_API_KEY: 'a',
-      ANTICAPTCHA_SOFT_ID: '1187',
-    }));
+    const list = listTurnstileProviders(
+      makeConfig({
+        ANTICAPTCHA_API_KEY: 'a',
+        ANTICAPTCHA_SOFT_ID: '1187',
+      }),
+    );
     expect(list[0].softId).toBe(1187);
   });
 
   it('AntiCaptcha softId 非法字符串时不设置 softId', () => {
-    const list = listTurnstileProviders(makeConfig({
-      ANTICAPTCHA_API_KEY: 'a',
-      ANTICAPTCHA_SOFT_ID: 'not-a-number',
-    }));
+    const list = listTurnstileProviders(
+      makeConfig({
+        ANTICAPTCHA_API_KEY: 'a',
+        ANTICAPTCHA_SOFT_ID: 'not-a-number',
+      }),
+    );
     expect(list[0].softId).toBeUndefined();
   });
 });
@@ -171,24 +175,23 @@ describe('solveTurnstileWithFailover', () => {
   });
 
   it('无 key 抛错', async () => {
-    await expect(
-      solveTurnstileWithFailover('https://ex.com', params, makeConfig(), logger),
-    ).rejects.toThrow('未配置 Turnstile 求解 API 密钥');
+    await expect(solveTurnstileWithFailover('https://ex.com', params, makeConfig(), logger)).rejects.toThrow(
+      '未配置 Turnstile 求解 API 密钥',
+    );
   });
 
   it('第一家成功即返回，不调用后续平台', async () => {
-    const solveFn = vi.fn()
-      .mockResolvedValueOnce({ token: 'tok-1', userAgent: 'UA-1' });
+    const solveFn = vi.fn().mockResolvedValueOnce({ token: 'tok-1', userAgent: 'UA-1' });
 
     const config = makeConfig({
       CAPSOLVER_API_KEY: 'c',
       ANTICAPTCHA_API_KEY: 'a',
     });
 
-    const result = await solveTurnstileWithFailover(
-      'https://ex.com', params, config, logger,
-      { maxFailuresPerProvider: 3, solveFn },
-    );
+    const result = await solveTurnstileWithFailover('https://ex.com', params, config, logger, {
+      maxFailuresPerProvider: 3,
+      solveFn,
+    });
 
     expect(result.token).toBe('tok-1');
     expect(result.providerName).toBe('CapSolver');
@@ -198,7 +201,8 @@ describe('solveTurnstileWithFailover', () => {
   });
 
   it('主平台连续失败达阈值后切换副平台并成功', async () => {
-    const solveFn = vi.fn()
+    const solveFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error('CapSolver down 1'))
       .mockRejectedValueOnce(new Error('CapSolver down 2'))
       .mockRejectedValueOnce(new Error('CapSolver down 3'))
@@ -209,10 +213,10 @@ describe('solveTurnstileWithFailover', () => {
       ANTICAPTCHA_API_KEY: 'a',
     });
 
-    const result = await solveTurnstileWithFailover(
-      'https://ex.com', params, config, logger,
-      { maxFailuresPerProvider: 3, solveFn },
-    );
+    const result = await solveTurnstileWithFailover('https://ex.com', params, config, logger, {
+      maxFailuresPerProvider: 3,
+      solveFn,
+    });
 
     expect(result.token).toBe('tok-anti');
     expect(result.providerName).toBe('AntiCaptcha');
@@ -228,7 +232,8 @@ describe('solveTurnstileWithFailover', () => {
   });
 
   it('主平台第 2 次成功则不切换', async () => {
-    const solveFn = vi.fn()
+    const solveFn = vi
+      .fn()
       .mockRejectedValueOnce(new Error('transient'))
       .mockResolvedValueOnce({ token: 'tok-ok', userAgent: null });
 
@@ -237,10 +242,10 @@ describe('solveTurnstileWithFailover', () => {
       ANTICAPTCHA_API_KEY: 'a',
     });
 
-    const result = await solveTurnstileWithFailover(
-      'https://ex.com', params, config, logger,
-      { maxFailuresPerProvider: 3, solveFn },
-    );
+    const result = await solveTurnstileWithFailover('https://ex.com', params, config, logger, {
+      maxFailuresPerProvider: 3,
+      solveFn,
+    });
 
     expect(result.providerName).toBe('CapSolver');
     expect(solveFn).toHaveBeenCalledTimes(2);
@@ -256,10 +261,10 @@ describe('solveTurnstileWithFailover', () => {
 
     let caught;
     try {
-      await solveTurnstileWithFailover(
-        'https://ex.com', params, config, logger,
-        { maxFailuresPerProvider: 2, solveFn },
-      );
+      await solveTurnstileWithFailover('https://ex.com', params, config, logger, {
+        maxFailuresPerProvider: 2,
+        solveFn,
+      });
     } catch (e) {
       caught = e;
     }
@@ -274,13 +279,20 @@ describe('solveTurnstileWithFailover', () => {
   it('支持传入 options.providers 覆盖默认配置列表', async () => {
     const solveFn = vi.fn().mockResolvedValue({ token: 'tok-custom', userAgent: null });
     const customList = [{ name: 'CustomProvider' }];
-    const result = await solveTurnstileWithFailover(
-      'https://ex.com', params, makeConfig(), logger,
-      { solveFn, providers: customList },
-    );
+    const result = await solveTurnstileWithFailover('https://ex.com', params, makeConfig(), logger, {
+      solveFn,
+      providers: customList,
+    });
     expect(result.token).toBe('tok-custom');
     expect(result.providerName).toBe('CustomProvider');
-    expect(solveFn).toHaveBeenCalledWith('https://ex.com', params, expect.any(Object), logger, expect.any(Number), customList[0]);
+    expect(solveFn).toHaveBeenCalledWith(
+      'https://ex.com',
+      params,
+      expect.any(Object),
+      logger,
+      expect.any(Number),
+      customList[0],
+    );
   });
 
   it('默认 maxFailures 为 3', () => {
@@ -294,10 +306,10 @@ describe('solveTurnstileWithFailover', () => {
 
     let caught;
     try {
-      await solveTurnstileWithFailover(
-        'https://ex.com', params, config, logger,
-        { maxFailuresPerProvider: 2, solveFn },
-      );
+      await solveTurnstileWithFailover('https://ex.com', params, config, logger, {
+        maxFailuresPerProvider: 2,
+        solveFn,
+      });
     } catch (e) {
       caught = e;
     }
@@ -351,16 +363,20 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
 
   it('resolveAntiCaptchaProxyMode 三种模式', () => {
     expect(resolveAntiCaptchaProxyMode({})).toEqual({ useProxy: false, reason: 'none' });
-    expect(resolveAntiCaptchaProxyMode({
-      PROXY_TYPE: 'http',
-      PROXY_ADDRESS: '1.2.3.4',
-      PROXY_PORT: '80',
-    })).toEqual({ useProxy: true, reason: 'ip' });
-    expect(resolveAntiCaptchaProxyMode({
-      PROXY_TYPE: 'http',
-      PROXY_ADDRESS: 'proxy.example.com',
-      PROXY_PORT: '80',
-    })).toEqual({ useProxy: false, reason: 'hostname_skipped' });
+    expect(
+      resolveAntiCaptchaProxyMode({
+        PROXY_TYPE: 'http',
+        PROXY_ADDRESS: '1.2.3.4',
+        PROXY_PORT: '80',
+      }),
+    ).toEqual({ useProxy: true, reason: 'ip' });
+    expect(
+      resolveAntiCaptchaProxyMode({
+        PROXY_TYPE: 'http',
+        PROXY_ADDRESS: 'proxy.example.com',
+        PROXY_PORT: '80',
+      }),
+    ).toEqual({ useProxy: false, reason: 'hostname_skipped' });
   });
 
   it('域名代理时 solve 日志提示且任务无 proxy 字段', async () => {
@@ -378,10 +394,10 @@ describe('isIpProxyAddress / resolveAntiCaptchaProxyMode', () => {
     // 触发 failover 入口的提示日志（启动段/求解时的 info 级提示在主脚本与
     // solveTurnstileViaAPI 输出；failover 入口为 debug 级，避免同一运行重复提示）
     const solveFn = vi.fn().mockResolvedValue({ token: 't', userAgent: null });
-    await solveTurnstileWithFailover(
-      'https://ex.com', { sitekey: '0x4' }, config, logger,
-      { maxFailuresPerProvider: 1, solveFn },
-    );
+    await solveTurnstileWithFailover('https://ex.com', { sitekey: '0x4' }, config, logger, {
+      maxFailuresPerProvider: 1,
+      solveFn,
+    });
     const joined = logger.debug.mock.calls.map((c) => c[0]).join('\n');
     expect(joined).toMatch(/域名代理|Proxyless/);
   });

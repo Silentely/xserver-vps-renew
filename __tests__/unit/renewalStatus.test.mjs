@@ -95,66 +95,37 @@ describe('countConsecutiveFailures', () => {
   });
 
   it('从尾部统计连续失败', () => {
-    const records = [
-      { success: true },
-      { success: false },
-      { success: false },
-      { success: false },
-    ];
+    const records = [{ success: true }, { success: false }, { success: false }, { success: false }];
     expect(countConsecutiveFailures(records)).toBe(3);
   });
 
   it('最新记录成功时返回 0', () => {
-    const records = [
-      { success: false },
-      { success: false },
-      { success: true },
-    ];
+    const records = [{ success: false }, { success: false }, { success: true }];
     expect(countConsecutiveFailures(records)).toBe(0);
   });
 
   it('全部失败时返回总数', () => {
-    const records = [
-      { success: false },
-      { success: false },
-      { success: false },
-    ];
+    const records = [{ success: false }, { success: false }, { success: false }];
     expect(countConsecutiveFailures(records)).toBe(3);
   });
 
   it('全部成功时返回 0', () => {
-    const records = [
-      { success: true },
-      { success: true },
-    ];
+    const records = [{ success: true }, { success: true }];
     expect(countConsecutiveFailures(records)).toBe(0);
   });
 
   it('中间有成功但尾部是失败', () => {
-    const records = [
-      { success: false },
-      { success: true },
-      { success: false },
-      { success: false },
-    ];
+    const records = [{ success: false }, { success: true }, { success: false }, { success: false }];
     expect(countConsecutiveFailures(records)).toBe(2);
   });
 
   it('跳过记录不计入连续失败', () => {
-    const records = [
-      { success: false },
-      { success: false },
-      { success: true, skipped: true },
-    ];
+    const records = [{ success: false }, { success: false }, { success: true, skipped: true }];
     expect(countConsecutiveFailures(records)).toBe(2);
   });
 
   it('跳过记录夹在失败之间不中断连败统计', () => {
-    const records = [
-      { success: false },
-      { success: true, skipped: true },
-      { success: false },
-    ];
+    const records = [{ success: false }, { success: true, skipped: true }, { success: false }];
     expect(countConsecutiveFailures(records)).toBe(2);
   });
 });
@@ -166,29 +137,17 @@ describe('countConsecutiveSuccesses', () => {
   });
 
   it('从尾部统计连续成功', () => {
-    const records = [
-      { success: false },
-      { success: true },
-      { success: true },
-    ];
+    const records = [{ success: false }, { success: true }, { success: true }];
     expect(countConsecutiveSuccesses(records)).toBe(2);
   });
 
   it('最新记录失败时返回 0', () => {
-    const records = [
-      { success: true },
-      { success: true },
-      { success: false },
-    ];
+    const records = [{ success: true }, { success: true }, { success: false }];
     expect(countConsecutiveSuccesses(records)).toBe(0);
   });
 
   it('跳过记录不计入也不中断连成功', () => {
-    const records = [
-      { success: false },
-      { success: true, skipped: true },
-      { success: true },
-    ];
+    const records = [{ success: false }, { success: true, skipped: true }, { success: true }];
     expect(countConsecutiveSuccesses(records)).toBe(1);
   });
 });
@@ -222,12 +181,14 @@ describe('readRenewalStatus', () => {
   });
 
   it('读取有效 JSON 返回 records 和 lastRecord', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { timestamp: '2026-06-30', success: true },
-        { timestamp: '2026-06-29', success: false },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [
+          { timestamp: '2026-06-30', success: true },
+          { timestamp: '2026-06-29', success: false },
+        ],
+      }),
+    );
     const result = readRenewalStatus(TEST_FILE);
     expect(result.records).toHaveLength(2);
     expect(result.lastRecord.success).toBe(false);
@@ -236,7 +197,9 @@ describe('readRenewalStatus', () => {
   it('文件不存在时返回空状态', () => {
     const error = new Error('ENOENT: no such file');
     error.code = 'ENOENT';
-    mockFs.readFileSync.mockImplementation(() => { throw error; });
+    mockFs.readFileSync.mockImplementation(() => {
+      throw error;
+    });
     const result = readRenewalStatus(TEST_FILE);
     expect(result.records).toEqual([]);
     expect(result.lastRecord).toBeNull();
@@ -274,7 +237,9 @@ describe('readRenewalStatus', () => {
   it('文件权限不足时返回空状态', () => {
     const error = new Error('EACCES: permission denied');
     error.code = 'EACCES';
-    mockFs.readFileSync.mockImplementation(() => { throw error; });
+    mockFs.readFileSync.mockImplementation(() => {
+      throw error;
+    });
     const result = readRenewalStatus('/root/forbidden.json');
     expect(result.records).toEqual([]);
     expect(result.lastRecord).toBeNull();
@@ -289,38 +254,41 @@ describe('readRenewalStatus', () => {
   });
 
   it('优先返回持久化的 successStreak', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      successStreak: 42,
-      records: [{ success: true }, { success: true }],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        successStreak: 42,
+        records: [{ success: true }, { success: true }],
+      }),
+    );
     const result = readRenewalStatus(TEST_FILE);
     expect(result.successStreak).toBe(42);
   });
 
   it('旧格式文件无 successStreak 时按记录回退统计', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { success: false },
-        { success: true, skipped: true },
-        { success: true },
-        { success: true },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [{ success: false }, { success: true, skipped: true }, { success: true }, { success: true }],
+      }),
+    );
     const result = readRenewalStatus(TEST_FILE);
     expect(result.successStreak).toBe(2);
   });
 
   it('successStreak 非法时回退按记录统计', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      successStreak: -1,
-      records: [{ success: true }, { success: true }, { success: true }],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        successStreak: -1,
+        records: [{ success: true }, { success: true }, { success: true }],
+      }),
+    );
     expect(readRenewalStatus(TEST_FILE).successStreak).toBe(3);
 
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      successStreak: '5',
-      records: [{ success: true }],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        successStreak: '5',
+        records: [{ success: true }],
+      }),
+    );
     expect(readRenewalStatus(TEST_FILE).successStreak).toBe(1);
   });
 });
@@ -393,9 +361,11 @@ describe('writeRenewalStatus', () => {
   });
 
   it('旧格式文件首次写入时按记录回退后再累加', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [{ success: true }, { success: true }, { success: true }],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [{ success: true }, { success: true }, { success: true }],
+      }),
+    );
 
     writeRenewalStatus(buildRenewalRecord({ success: true }), TEST_FILE);
 
@@ -422,7 +392,9 @@ describe('writeRenewalStatus', () => {
   it('写入文件不存在时从空状态开始', () => {
     const error = new Error('ENOENT');
     error.code = 'ENOENT';
-    mockFs.readFileSync.mockImplementation(() => { throw error; });
+    mockFs.readFileSync.mockImplementation(() => {
+      throw error;
+    });
     const record = buildRenewalRecord({ success: false });
 
     writeRenewalStatus(record, TEST_FILE);
@@ -471,13 +443,11 @@ describe('getRenewalStatus', () => {
   });
 
   it('健康状态：连续失败 < 阈值', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { success: true },
-        { success: false },
-        { success: true },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [{ success: true }, { success: false }, { success: true }],
+      }),
+    );
     const status = getRenewalStatus(TEST_FILE);
     expect(status.healthy).toBe(true);
     expect(status.consecutiveFailures).toBe(0);
@@ -486,40 +456,38 @@ describe('getRenewalStatus', () => {
   });
 
   it('不健康状态：连续失败 >= 阈值', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { success: true },
-        { success: false },
-        { success: false },
-        { success: false },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [{ success: true }, { success: false }, { success: false }, { success: false }],
+      }),
+    );
     const status = getRenewalStatus(TEST_FILE);
     expect(status.healthy).toBe(false);
     expect(status.consecutiveFailures).toBe(3);
   });
 
   it('返回最近一次成功记录（忽略 skipped）', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { timestamp: '2026-06-28', success: true, serverName: 'vps-old' },
-        { timestamp: '2026-06-29', success: false },
-        { timestamp: '2026-06-30', success: true, serverName: 'vps-new' },
-        { timestamp: '2026-07-01', success: true, skipped: true },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [
+          { timestamp: '2026-06-28', success: true, serverName: 'vps-old' },
+          { timestamp: '2026-06-29', success: false },
+          { timestamp: '2026-06-30', success: true, serverName: 'vps-new' },
+          { timestamp: '2026-07-01', success: true, skipped: true },
+        ],
+      }),
+    );
     const status = getRenewalStatus(TEST_FILE);
     expect(status.lastSuccess).not.toBeNull();
     expect(status.lastSuccess.serverName).toBe('vps-new');
   });
 
   it('无成功记录时 lastSuccess 为 null', () => {
-    mockFs.readFileSync.mockReturnValue(JSON.stringify({
-      records: [
-        { success: false },
-        { success: false },
-      ],
-    }));
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        records: [{ success: false }, { success: false }],
+      }),
+    );
     const status = getRenewalStatus(TEST_FILE);
     expect(status.lastSuccess).toBeNull();
   });
@@ -536,7 +504,9 @@ describe('getRenewalStatus', () => {
   it('文件不存在时返回健康状态', () => {
     const error = new Error('ENOENT');
     error.code = 'ENOENT';
-    mockFs.readFileSync.mockImplementation(() => { throw error; });
+    mockFs.readFileSync.mockImplementation(() => {
+      throw error;
+    });
     const status = getRenewalStatus(TEST_FILE);
     expect(status.healthy).toBe(true);
     expect(status.totalRuns).toBe(0);
@@ -567,16 +537,19 @@ describe('连续成功次数不受记录窗口截断（窗口封顶回归）', (
       }
       return fileContent;
     });
-    mockFs.writeFileSync.mockImplementation((_path, data) => { fileContent = data; });
+    mockFs.writeFileSync.mockImplementation((_path, data) => {
+      fileContent = data;
+    });
   });
 
   it('跨过 30 条记录窗口后连续成功次数继续增长', () => {
     const shown = [];
     for (let day = 1; day <= 10; day++) {
       for (const hour of CHECK_HOURS) {
-        const record = hour === RENEW_HOUR
-          ? buildRenewalRecord({ success: true, serverName: 'host02-23' })
-          : buildRenewalRecord({ success: true, skipped: true, errorMessage: '无需续期' });
+        const record =
+          hour === RENEW_HOUR
+            ? buildRenewalRecord({ success: true, serverName: 'host02-23' })
+            : buildRenewalRecord({ success: true, skipped: true, errorMessage: '无需续期' });
         writeRenewalStatus(record, TEST_FILE, undefined, silent);
       }
       shown.push(getRenewalStatus(TEST_FILE, 3, silent).consecutiveSuccesses);
@@ -594,7 +567,12 @@ describe('连续成功次数不受记录窗口截断（窗口封顶回归）', (
     writeRenewalStatus(buildRenewalRecord({ success: true }), TEST_FILE, undefined, silent);
     expect(getRenewalStatus(TEST_FILE, 3, silent).consecutiveSuccesses).toBe(2);
 
-    writeRenewalStatus(buildRenewalRecord({ success: false, errorMessage: '验证码识别失败' }), TEST_FILE, undefined, silent);
+    writeRenewalStatus(
+      buildRenewalRecord({ success: false, errorMessage: '验证码识别失败' }),
+      TEST_FILE,
+      undefined,
+      silent,
+    );
     expect(getRenewalStatus(TEST_FILE, 3, silent).consecutiveSuccesses).toBe(0);
 
     writeRenewalStatus(buildRenewalRecord({ success: true, skipped: true }), TEST_FILE, undefined, silent);

@@ -49,32 +49,24 @@ describe('isRenewalDue', () => {
   it('仅日期：今天到期且剩余 ≤12h（日末估算）返回 true', () => {
     // 2026-07-11 20:00 JST = 11:00 UTC；到期日末 23:59:59 JST → 剩余约 4h
     const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
-    expect(
-      isRenewalDue('2026-07-11', '2026-07-11', { nowMs }),
-    ).toBe(true);
+    expect(isRenewalDue('2026-07-11', '2026-07-11', { nowMs })).toBe(true);
   });
 
   it('仅日期：明天到期剩余 >12h 返回 false（#5 回归：勿误入续期）', () => {
     // 2026-07-23 00:56 JST = 2026-07-22 15:56 UTC；到期 2026-07-24 日末 → 剩余约 47h
     const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0);
-    expect(
-      isRenewalDue('2026-07-24', '2026-07-23', { nowMs }),
-    ).toBe(false);
+    expect(isRenewalDue('2026-07-24', '2026-07-23', { nowMs })).toBe(false);
   });
 
   it('仅日期：今天到期但上午（剩余 >12h）返回 false', () => {
     // 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；到期日末 → 剩余约 18h
     const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
-    expect(
-      isRenewalDue('2026-07-11', '2026-07-11', { nowMs }),
-    ).toBe(false);
+    expect(isRenewalDue('2026-07-11', '2026-07-11', { nowMs })).toBe(false);
   });
 
   it('仅日期：其他日期返回 false', () => {
     const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
-    expect(
-      isRenewalDue('2026-07-20', '2026-07-11', { nowMs }),
-    ).toBe(false);
+    expect(isRenewalDue('2026-07-20', '2026-07-11', { nowMs })).toBe(false);
   });
 
   it('空值返回 false', () => {
@@ -85,40 +77,30 @@ describe('isRenewalDue', () => {
   it('允许首尾空白', () => {
     // 2026-07-11 20:00 JST，到期日末 → 可续
     const nowMs = Date.UTC(2026, 6, 11, 11, 0, 0);
-    expect(
-      isRenewalDue(' 2026-07-11 ', '2026-07-11', { nowMs }),
-    ).toBe(true);
+    expect(isRenewalDue(' 2026-07-11 ', '2026-07-11', { nowMs })).toBe(true);
   });
 
   it('含时间：剩余 ≤12h 返回 true', () => {
     // now = 2026-07-11 10:00 JST = 01:00 UTC；expire 20:00 JST → 剩余 10h
     const nowMs = Date.UTC(2026, 6, 11, 1, 0, 0);
-    expect(
-      isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs }),
-    ).toBe(true);
+    expect(isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs })).toBe(true);
   });
 
   it('含时间：剩余 >12h 返回 false', () => {
     // now = 2026-07-11 06:00 JST = 2026-07-10 21:00 UTC；expire 20:00 JST → 剩余 14h
     const nowMs = Date.UTC(2026, 6, 10, 21, 0, 0);
-    expect(
-      isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs }),
-    ).toBe(false);
+    expect(isRenewalDue('2026-07-11 20:00', '2026-07-11', { nowMs })).toBe(false);
   });
 
   it('含时间：略过期在宽限内仍可续', () => {
     // expire 10:00 JST，now 10:30 JST → 剩余 -0.5h
     const nowMs = Date.UTC(2026, 6, 11, 1, 30, 0);
-    expect(
-      isRenewalDue('2026-07-11 10:00', '2026-07-11', { nowMs }),
-    ).toBe(true);
+    expect(isRenewalDue('2026-07-11 10:00', '2026-07-11', { nowMs })).toBe(true);
   });
 
   it('日本格式纯日期：明天到期不可续', () => {
     const nowMs = Date.UTC(2026, 6, 22, 15, 56, 0); // 2026-07-23 00:56 JST
-    expect(
-      isRenewalDue('2026年7月24日', '2026-07-23', { nowMs }),
-    ).toBe(false);
+    expect(isRenewalDue('2026年7月24日', '2026-07-23', { nowMs })).toBe(false);
   });
 });
 
@@ -170,8 +152,7 @@ describe('detectRenewalWindowBlocked / extractRetryAfterFromText', () => {
   });
 
   it('仅政策脚注「12時間前」不误拦', () => {
-    const policyOnly =
-      '無料VPSは、1日ごとに契約を更新する必要があります。利用期限の12時間前から更新手続きが可能です。';
+    const policyOnly = '無料VPSは、1日ごとに契約を更新する必要があります。利用期限の12時間前から更新手続きが可能です。';
     expect(detectRenewalWindowBlocked(policyOnly).blocked).toBe(false);
   });
 
@@ -200,9 +181,7 @@ describe('buildRenewUrl', () => {
 
   it('从详情链接生成续期 URL', () => {
     const detail = `${origin}/xapanel/xvps/server/detail?id=12345`;
-    expect(buildRenewUrl(detail, origin)).toBe(
-      `${origin}/xapanel/xvps/server/freevps/extend/index?id_vps=12345`,
-    );
+    expect(buildRenewUrl(detail, origin)).toBe(`${origin}/xapanel/xvps/server/freevps/extend/index?id_vps=12345`);
   });
 
   it('空链接抛错', () => {
@@ -225,17 +204,13 @@ describe('resolveCaptchaRetryUrl', () => {
   });
 
   it('/do 替换为 /conf', () => {
-    expect(resolveCaptchaRetryUrl('https://example.com/extend/do')).toBe(
-      'https://example.com/extend/conf',
-    );
+    expect(resolveCaptchaRetryUrl('https://example.com/extend/do')).toBe('https://example.com/extend/conf');
   });
 
   it('/index 替换为 /conf（不重复 extend 段）', () => {
-    expect(resolveCaptchaRetryUrl(
-      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511',
-    )).toBe(
-      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf?id_vps=40091511',
-    );
+    expect(
+      resolveCaptchaRetryUrl('https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511'),
+    ).toBe('https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/conf?id_vps=40091511');
   });
 
   it('空值返回空字符串', () => {
@@ -245,14 +220,12 @@ describe('resolveCaptchaRetryUrl', () => {
 });
 
 describe('resolveCaptchaRetryNavigation', () => {
-  const renewUrl =
-    'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511';
+  const renewUrl = 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=40091511';
 
   it('有 renewUrl 时优先回到带 id_vps 的 index（避免裸 /conf 无验证码图）', () => {
-    const r = resolveCaptchaRetryNavigation(
-      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do',
-      { renewUrl },
-    );
+    const r = resolveCaptchaRetryNavigation('https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do', {
+      renewUrl,
+    });
     expect(r).toEqual({ mode: 'renew_index', url: renewUrl });
   });
 
@@ -384,7 +357,10 @@ describe('evaluateSubmissionResult', () => {
   });
 
   it('仍在续期域内（conf 外的其他页）无明确标识 → 仍为 fail 不明确', () => {
-    const r = evaluateSubmissionResult('hello world', 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do');
+    const r = evaluateSubmissionResult(
+      'hello world',
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/do',
+    );
     expect(r.status).toBe('fail');
     expect(r.reason).toContain('不明确');
   });
@@ -418,11 +394,7 @@ describe('normalizeCellText', () => {
 
 describe('extractVpsInfoFromCellTexts', () => {
   it('从混合单元格文本解析服务器名与规格', () => {
-    const cells = [
-      'host01',
-      ' 4GB プラン（メモリ 4GB / コア 2 / NVMe 100GB） ',
-      '2026-08-09',
-    ];
+    const cells = ['host01', ' 4GB プラン（メモリ 4GB / コア 2 / NVMe 100GB） ', '2026-08-09'];
     expect(extractVpsInfoFromCellTexts(cells)).toEqual({
       serverName: 'host01',
       plan: '4GB プラン（メモリ 4GB / コア 2 / NVMe 100GB）',

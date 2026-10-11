@@ -25,10 +25,14 @@ describe('handleRenewalConfirm', () => {
     const config = { NAVIGATION_TIMEOUT: 5000 };
 
     await expect(
-      handleRenewalConfirm(mockPage, 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123', {
-        config,
-        logger: NOOP_LOGGER,
-      }),
+      handleRenewalConfirm(
+        mockPage,
+        'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123',
+        {
+          config,
+          logger: NOOP_LOGGER,
+        },
+      ),
     ).rejects.toThrow('仍停留在申请首页');
   });
 
@@ -44,10 +48,14 @@ describe('handleRenewalConfirm', () => {
 
     const config = { NAVIGATION_TIMEOUT: 5000 };
 
-    const result = await handleRenewalConfirm(mockPage, 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123', {
-      config,
-      logger: NOOP_LOGGER,
-    });
+    const result = await handleRenewalConfirm(
+      mockPage,
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123',
+      {
+        config,
+        logger: NOOP_LOGGER,
+      },
+    );
 
     expect(result).toEqual({ status: 'ready' });
   });
@@ -64,10 +72,14 @@ describe('handleRenewalConfirm', () => {
 
     const config = { NAVIGATION_TIMEOUT: 5000 };
 
-    const result = await handleRenewalConfirm(mockPage, 'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123', {
-      config,
-      logger: NOOP_LOGGER,
-    });
+    const result = await handleRenewalConfirm(
+      mockPage,
+      'https://secure.xserver.ne.jp/xapanel/xvps/server/freevps/extend/index?id_vps=123',
+      {
+        config,
+        logger: NOOP_LOGGER,
+      },
+    );
 
     expect(result?.status).toBe('window_blocked');
     expect(result?.reason).toContain('12h');

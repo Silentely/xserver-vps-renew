@@ -52,41 +52,86 @@
  * fills the result, and submits the form once the Cloudflare Turnstile token is ready.)
  * =================================================================================================
  */
- 
+
 // 翻译
 function t(text) {
     const translations = {
-        '正在处理登录...': { en: 'Processing login...', ja: 'ログインを処理しています...', },
-        '已检测到保存凭据，正在自动登录...': { en: 'Saved credentials detected, automatically logging in...', ja: '保存された認証情報を検出しました。自動ログイン中...', },
-        '警告：登录函数异常，请手动登录。': { en: 'Warning: login function error, please log in manually.', ja: '警告：ログイン機能に異常が発生しました。手動でログインしてください。', },
-        '自动登录失败，请手动登录。': { en: 'Automatic login failed, please log in manually.', ja: '自動ログインに失敗しました。手動でログインしてください。', },
-        '正在检查续期状态...': { en: 'Checking renewal status...', ja: '更新状況を確認しています...', },
-        '未找到免费VPS。': { en: 'No free VPS found.', ja: '無料VPSが見つかりませんでした。', },
-        '检测到即将过期，正在续期...': { en: 'Detected imminent expiration, renewing...', ja: '期限切れが間近であることを検出しました。更新中...', },
-        '当前VPS无需续期。': { en: 'Current VPS does not require renewal.', ja: '現在のVPSは更新不要です。', },
-        '检查续期状态出错，请刷新页面重试。': { en: 'Error checking renewal status, please refresh the page and try again.', ja: '更新状況の確認中にエラーが発生しました。ページをリロードして再試行してください。', },
-        '正在准备续期申请...': { en: 'Preparing renewal request...', ja: '更新リクエストを準備しています...', },
-        '正在确认续期协议...': { en: 'Confirming renewal agreement...', ja: '更新契約を確認しています...', },
-        '续期申请页面交互失败。': { en: 'Failed to interact with the renewal request page.', ja: '更新申請ページの操作に失敗しました。', },
-        '正在识别并输入验证码...': { en: 'Recognizing and entering CAPTCHA...', ja: 'CAPTCHAを認識して入力しています...', },
-        '正在识别验证码，请稍候...': { en: 'Recognizing CAPTCHA, please wait...', ja: 'CAPTCHAを認識しています。しばらくお待ちください...', },
-        '验证码识别完成，准备提交表单...': { en: 'CAPTCHA recognition complete, preparing to submit form...', ja: 'CAPTCHAの認識が完了しました。フォームを送信する準備をしています...', },
-        '已完成验证码填写，正在处理人机验证...': { en: 'CAPTCHA entry complete, processing human verification...', ja: 'CAPTCHAの入力が完了しました。人間認証を処理中...', },
-        '等待人机验证令牌生成...': { en: 'Waiting for human verification token generation...', ja: '人間認証トークンの生成を待っています...', },
-        '人机验证响应超时，请手动完成人机验证后再提交。': { en: 'Human verification timed out. Please complete the verification manually and submit.', ja: '人間認証の応答がタイムアウトしました。手動で認証を完了して送信してください。' },
-        '验证码处理异常，请刷新页面重试。': { en: 'CAPTCHA processing error, please refresh the page and try again.', ja: 'CAPTCHA処理でエラーが発生しました。ページをリロードして再試行してください。', },
-        '所有验证已完成，准备提交...': { en: 'All verifications completed, preparing to submit...', ja: 'すべての認証が完了しました。送信準備中...', },
-        '找不到提交按钮，请手动提交表单': { en: 'Submit button not found, please submit the form manually.', ja: '送信ボタンが見つかりません。手動でフォームを送信してください。', },
-    }
-    if (!navigator?.language) return text
-    return translations[text]?.[navigator.language.slice(0, 2)] ?? text
+        '正在处理登录...': { en: 'Processing login...', ja: 'ログインを処理しています...' },
+        '已检测到保存凭据，正在自动登录...': {
+            en: 'Saved credentials detected, automatically logging in...',
+            ja: '保存された認証情報を検出しました。自動ログイン中...',
+        },
+        '警告：登录函数异常，请手动登录。': {
+            en: 'Warning: login function error, please log in manually.',
+            ja: '警告：ログイン機能に異常が発生しました。手動でログインしてください。',
+        },
+        '自动登录失败，请手动登录。': {
+            en: 'Automatic login failed, please log in manually.',
+            ja: '自動ログインに失敗しました。手動でログインしてください。',
+        },
+        '正在检查续期状态...': { en: 'Checking renewal status...', ja: '更新状況を確認しています...' },
+        '未找到免费VPS。': { en: 'No free VPS found.', ja: '無料VPSが見つかりませんでした。' },
+        '检测到即将过期，正在续期...': {
+            en: 'Detected imminent expiration, renewing...',
+            ja: '期限切れが間近であることを検出しました。更新中...',
+        },
+        '当前VPS无需续期。': { en: 'Current VPS does not require renewal.', ja: '現在のVPSは更新不要です。' },
+        '检查续期状态出错，请刷新页面重试。': {
+            en: 'Error checking renewal status, please refresh the page and try again.',
+            ja: '更新状況の確認中にエラーが発生しました。ページをリロードして再試行してください。',
+        },
+        '正在准备续期申请...': { en: 'Preparing renewal request...', ja: '更新リクエストを準備しています...' },
+        '正在确认续期协议...': { en: 'Confirming renewal agreement...', ja: '更新契約を確認しています...' },
+        '续期申请页面交互失败。': {
+            en: 'Failed to interact with the renewal request page.',
+            ja: '更新申請ページの操作に失敗しました。',
+        },
+        '正在识别并输入验证码...': {
+            en: 'Recognizing and entering CAPTCHA...',
+            ja: 'CAPTCHAを認識して入力しています...',
+        },
+        '正在识别验证码，请稍候...': {
+            en: 'Recognizing CAPTCHA, please wait...',
+            ja: 'CAPTCHAを認識しています。しばらくお待ちください...',
+        },
+        '验证码识别完成，准备提交表单...': {
+            en: 'CAPTCHA recognition complete, preparing to submit form...',
+            ja: 'CAPTCHAの認識が完了しました。フォームを送信する準備をしています...',
+        },
+        '已完成验证码填写，正在处理人机验证...': {
+            en: 'CAPTCHA entry complete, processing human verification...',
+            ja: 'CAPTCHAの入力が完了しました。人間認証を処理中...',
+        },
+        '等待人机验证令牌生成...': {
+            en: 'Waiting for human verification token generation...',
+            ja: '人間認証トークンの生成を待っています...',
+        },
+        '人机验证响应超时，请手动完成人机验证后再提交。': {
+            en: 'Human verification timed out. Please complete the verification manually and submit.',
+            ja: '人間認証の応答がタイムアウトしました。手動で認証を完了して送信してください。',
+        },
+        '验证码处理异常，请刷新页面重试。': {
+            en: 'CAPTCHA processing error, please refresh the page and try again.',
+            ja: 'CAPTCHA処理でエラーが発生しました。ページをリロードして再試行してください。',
+        },
+        '所有验证已完成，准备提交...': {
+            en: 'All verifications completed, preparing to submit...',
+            ja: 'すべての認証が完了しました。送信準備中...',
+        },
+        '找不到提交按钮，请手动提交表单': {
+            en: 'Submit button not found, please submit the form manually.',
+            ja: '送信ボタンが見つかりません。手動でフォームを送信してください。',
+        },
+    };
+    if (!navigator?.language) return text;
+    return translations[text]?.[navigator.language.slice(0, 2)] ?? text;
 }
- 
+
 (function () {
     'use strict';
- 
+
     // 给脚本日志添加统一前缀，便于识别
-    const LOG_PREFIX = "[xserver-vps-renew]";
+    const LOG_PREFIX = '[xserver-vps-renew]';
 
     // 注册菜单命令：配置 CAPTCHA API 地址
     if (typeof GM_registerMenuCommand !== 'undefined') {
@@ -101,7 +146,7 @@ function t(text) {
     }
 
     let isRunning = false;
- 
+
     GM_addStyle(`
         #vps-renewal-progress {
             position: fixed;
@@ -174,10 +219,10 @@ function t(text) {
             background: rgba(255, 255, 255, 0.15);
         }
     `);
- 
+
     // 等待DOM加载完成
     function waitForDOMReady() {
-        return new Promise(resolve => {
+        return new Promise((resolve) => {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', resolve);
             } else {
@@ -185,10 +230,10 @@ function t(text) {
             }
         });
     }
- 
+
     // 等待jQuery加载完成
     function waitForjQuery() {
-        return new Promise(resolve => {
+        return new Promise((resolve) => {
             if (typeof $ !== 'undefined') {
                 resolve();
             } else {
@@ -210,7 +255,7 @@ function t(text) {
             autoHideTimer = null;
         }
     }
- 
+
     /**
      * 创建一个状态提示元素并显示消息
      * @param {string} message - 提示文案（经 t() 翻译）
@@ -260,7 +305,7 @@ function t(text) {
 
         document.body.appendChild(statusEl);
     }
- 
+
     /**
      * 更新或移除状态提示元素
      * @param {string} message - 提示文案（经 t() 翻译）
@@ -270,8 +315,8 @@ function t(text) {
         const statusEl = document.getElementById('vps-renewal-progress');
         if (statusEl) {
             statusEl.setAttribute('data-state', state || 'info');
-            const bodyEl = statusEl.querySelector('.vps-renewal-body')
-                || statusEl.appendChild(document.createElement('div'));
+            const bodyEl =
+                statusEl.querySelector('.vps-renewal-body') || statusEl.appendChild(document.createElement('div'));
             bodyEl.className = 'vps-renewal-body';
             bodyEl.textContent = t(message);
         } else {
@@ -288,7 +333,7 @@ function t(text) {
             }, 3000);
         }
     }
- 
+
     function removeStatusElement() {
         clearAutoHide();
         const statusEl = document.getElementById('vps-renewal-progress');
@@ -296,17 +341,17 @@ function t(text) {
             statusEl.remove();
         }
     }
- 
+
     /**
      * 登录页面逻辑：自动填充并保存用户凭据
      */
     async function handleLogin() {
         console.log(`${LOG_PREFIX} 当前在登录页面。`);
-        updateStatusElement("正在处理登录...");
- 
+        updateStatusElement('正在处理登录...');
+
         const memberid = GM_getValue('memberid');
         const userPassword = GM_getValue('user_password');
- 
+
         // 判断是否可以进行自动登录（存在保存的凭据并且没有错误）
         if (memberid && userPassword && !document.querySelector('.errorMessage')) {
             console.log(`${LOG_PREFIX} 发现已保存的凭据，正在尝试自动登录...`);
@@ -318,7 +363,7 @@ function t(text) {
                 if (memberidInput && passwordInput) {
                     memberidInput.value = memberid;
                     passwordInput.value = userPassword;
-                    updateStatusElement("已检测到保存凭据，正在自动登录...");
+                    updateStatusElement('已检测到保存凭据，正在自动登录...');
                     // 延迟调用避免页面未完全渲染的问题
                     setTimeout(() => {
                         // 直接提交表单，而不是调用不存在的 loginFunc
@@ -332,7 +377,7 @@ function t(text) {
                                 submitBtn.click();
                             } else {
                                 console.warn(`${LOG_PREFIX} 无法找到登录表单或提交按钮。`);
-                                updateStatusElement("警告：无法提交登录表单，请手动登录。", 'warn');
+                                updateStatusElement('警告：无法提交登录表单，请手动登录。', 'warn');
                             }
                         }
                     }, 500);
@@ -341,7 +386,7 @@ function t(text) {
                 }
             } catch (e) {
                 console.error(`${LOG_PREFIX} 自动登录失败: `, e);
-                updateStatusElement("自动登录失败，请手动登录。", 'error');
+                updateStatusElement('自动登录失败，请手动登录。', 'error');
             }
         } else {
             console.log(`${LOG_PREFIX} 未发现凭据或页面有错误信息，等待用户手动操作。`);
@@ -366,30 +411,30 @@ function t(text) {
             }
         }
     }
- 
+
     /**
      * VPS管理主页逻辑：检查到期时间和跳转
      */
     function handleVPSDashboard() {
         console.log(`${LOG_PREFIX} 当前在VPS管理主页。`);
-        updateStatusElement("正在检查续期状态...");
- 
+        updateStatusElement('正在检查续期状态...');
+
         try {
             // 计算今天日期（东京时区，yyyy-mm-dd 格式）
             // 使用 UTC+9 偏移计算，避免客户端本地时区 DST 切换导致日期偏差
             const tokyoTime = Date.now() + 9 * 3600000;
             const today = new Date(tokyoTime).toISOString().slice(0, 10);
             const row = document.querySelector('tr:has(.freeServerIco)');
- 
+
             if (!row) {
                 console.log(`${LOG_PREFIX} 未找到免费VPS条目。`);
-                updateStatusElement("未找到免费VPS。", 'warn');
+                updateStatusElement('未找到免费VPS。', 'warn');
                 return;
             }
- 
+
             const expireSpan = row.querySelector('.contract__term');
             const expireDate = expireSpan ? expireSpan.textContent.trim() : null;
- 
+
             console.log(`${LOG_PREFIX} 页面上的到期日: ${expireDate || '未找到'}`);
             console.log(`${LOG_PREFIX} 今天的日期: ${today}`);
 
@@ -400,7 +445,7 @@ function t(text) {
                 console.log(`${LOG_PREFIX} 条件满足：到期日为今天（已进入剩余≤12h 续期窗口）。正在跳转到续期页面...`);
                 const detailLink = row.querySelector('a[href^="/xapanel/xvps/server/detail?id="]');
                 if (detailLink && detailLink.href) {
-                    updateStatusElement("检测到即将过期，正在续期...", 'warn');
+                    updateStatusElement('检测到即将过期，正在续期...', 'warn');
                     setTimeout(() => {
                         location.href = detailLink.href.replace('detail?id', 'freevps/extend/index?id_vps');
                     }, 1000);
@@ -409,28 +454,28 @@ function t(text) {
                 }
             } else {
                 console.log(`${LOG_PREFIX} 条件不满足：无需执行续期操作。`);
-                updateStatusElement("当前VPS无需续期。", 'success');
+                updateStatusElement('当前VPS无需续期。', 'success');
             }
         } catch (e) {
             console.error(`${LOG_PREFIX} 在VPS管理主页处理出现错误:`, e);
-            updateStatusElement("检查续期状态出错，请刷新页面重试。", 'error');
+            updateStatusElement('检查续期状态出错，请刷新页面重试。', 'error');
         }
     }
- 
+
     /**
      * 续期申请页面逻辑：自动点击确认按钮
      */
     function handleRenewalPage() {
         console.log(`${LOG_PREFIX} 当前在续期申请页面。`);
-        updateStatusElement("正在准备续期申请...");
- 
+        updateStatusElement('正在准备续期申请...');
+
         try {
             // 延迟一下确保页面内容稳定
             setTimeout(() => {
                 const extendButton = document.querySelector('[formaction="/xapanel/xvps/server/freevps/extend/conf"]');
                 if (extendButton) {
                     console.log(`${LOG_PREFIX} 找到续期按钮，正在点击...`);
-                    updateStatusElement("正在确认续期协议...");
+                    updateStatusElement('正在确认续期协议...');
                     setTimeout(() => {
                         extendButton.click();
                     }, 800);
@@ -440,30 +485,30 @@ function t(text) {
             }, 1000);
         } catch (e) {
             console.error(`${LOG_PREFIX} 续期确认按钮处理异常:`, e);
-            updateStatusElement("续期申请页面交互失败。", 'error');
+            updateStatusElement('续期申请页面交互失败。', 'error');
         }
     }
- 
+
     /**
      * 验证码页面逻辑：识别并提交验证码
      */
     async function handleCaptchaPage() {
         console.log(`${LOG_PREFIX} 当前在验证码页面，开始处理验证码...`);
-        updateStatusElement("正在识别并输入验证码...");
- 
+        updateStatusElement('正在识别并输入验证码...');
+
         try {
             // 等待DOM加载完成
             await waitForDOMReady();
- 
+
             // 查找验证码图片（确保是base64编码）
             const img = document.querySelector('img[src^="data:image"]') || document.querySelector('img[src^="data:"]');
             if (!img || !img.src) {
                 throw new Error('未找到验证码图片');
             }
- 
+
             console.log(`${LOG_PREFIX} 已找到验证码图片，正在发送到API进行识别...`);
-            updateStatusElement("正在识别验证码，请稍候...");
- 
+            updateStatusElement('正在识别验证码，请稍候...');
+
             // 调用外部API识别验证码
             // 静态配置验证提前，避免无意义重试
             const captchaApiUrl = GM_getValue('captcha_api_url', '');
@@ -485,21 +530,21 @@ function t(text) {
                             method: 'POST',
                             body: img.src,
                             headers: {
-                                'Content-Type': 'text/plain'
+                                'Content-Type': 'text/plain',
                             },
                             signal: controller.signal,
                         });
                     } finally {
                         clearTimeout(timeoutId);
                     }
- 
+
                     if (!response.ok) {
                         throw new Error(`API请求失败: ${response.status}`);
                     }
- 
+
                     codeResponse = await response.text();
                     if (codeResponse && codeResponse.length >= 4) break;
- 
+
                     throw new Error('API返回无效验证码');
                 } catch (err) {
                     retryCount++;
@@ -509,26 +554,26 @@ function t(text) {
                     console.log(`${LOG_PREFIX} 验证码识别失败，正在进行第${retryCount}次重试...`);
                 }
             }
- 
+
             const code = codeResponse.trim();
             if (!code || code.length < 4) {
                 throw new Error('未接收到有效验证码或验证码太短');
             }
- 
+
             console.log(`${LOG_PREFIX} API返回验证码: ${code}`);
-            updateStatusElement("验证码识别完成，准备提交表单...");
- 
+            updateStatusElement('验证码识别完成，准备提交表单...');
+
             // 将验证码填入输入框
             const input = document.querySelector('[placeholder*="上の画像"]');
             if (!input) {
                 throw new Error('未找到验证码输入框');
             }
- 
+
             input.value = code;
             input.dispatchEvent(new Event('input', { bubbles: true }));
             console.log(`${LOG_PREFIX} 已将验证码填入输入框。`);
-            updateStatusElement("已完成验证码填写，正在处理人机验证...");
- 
+            updateStatusElement('已完成验证码填写，正在处理人机验证...');
+
             // 处理 Cloudflare Turnstile 人机验证
             const cfContainer = document.querySelector('.cf-turnstile');
             if (!cfContainer) {
@@ -536,22 +581,22 @@ function t(text) {
                 submitForm();
                 return;
             }
- 
+
             const cf = cfContainer.querySelector('[name=cf-turnstile-response]');
             if (cf && cf.value) {
                 console.log(`${LOG_PREFIX} Cloudflare 令牌已存在，直接提交表单。`);
                 submitForm();
                 return;
             }
- 
+
             console.log(`${LOG_PREFIX} Cloudflare 令牌不存在，设置监听器等待生成...`);
-            updateStatusElement("等待人机验证令牌生成...");
+            updateStatusElement('等待人机验证令牌生成...');
 
             // cf-turnstile-response 输入框缺失（页面结构变化/改版）：直接提示人工完成，
             // 避免后续 observer.observe(null) 抛 TypeError 被笼统当作「验证码处理异常」
             if (!cf) {
                 console.warn(`${LOG_PREFIX} 未找到 cf-turnstile-response 输入框，无法自动提交，请手动完成。`);
-                updateStatusElement("未找到人机验证组件，请手动完成验证后提交。", 'warn');
+                updateStatusElement('未找到人机验证组件，请手动完成验证后提交。', 'warn');
                 return;
             }
 
@@ -564,7 +609,7 @@ function t(text) {
                 if (pollId) clearInterval(pollId);
                 if (observer) observer.disconnect();
                 console.warn(`${LOG_PREFIX} Cloudflare Turnstile令牌生成超时，未自动提交（强制提交必然认证失败）。`);
-                updateStatusElement("人机验证响应超时，请手动完成人机验证后再提交。", 'warn');
+                updateStatusElement('人机验证响应超时，请手动完成人机验证后再提交。', 'warn');
             }, 15000);
 
             // 轮询主路径：cf-turnstile-response 的 value 由 Turnstile 内部 JS 以 property 赋值写入，
@@ -583,11 +628,7 @@ function t(text) {
             // attribute 变化兜底（部分实现用 setAttribute 写入）
             observer = new MutationObserver((mutationsList) => {
                 for (const mutation of mutationsList) {
-                    if (
-                        mutation.type === 'attributes' &&
-                        mutation.attributeName === 'value' &&
-                        cf.value
-                    ) {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'value' && cf.value) {
                         clearTimeout(timeoutId);
                         clearInterval(pollId);
                         observer.disconnect();
@@ -599,19 +640,20 @@ function t(text) {
             });
 
             observer.observe(cf, { attributes: true, attributeFilter: ['value'] });
- 
         } catch (error) {
             console.error(`${LOG_PREFIX} 处理验证码时发生错误:`, error);
-            updateStatusElement("验证码处理异常，请刷新页面重试。", 'error');
+            updateStatusElement('验证码处理异常，请刷新页面重试。', 'error');
         }
- 
+
         // 提交表单逻辑
         function submitForm() {
-            updateStatusElement("所有验证已完成，准备提交...");
+            updateStatusElement('所有验证已完成，准备提交...');
             setTimeout(() => {
-                if (typeof unsafeWindow.submit_button !== 'undefined' &&
+                if (
+                    typeof unsafeWindow.submit_button !== 'undefined' &&
                     unsafeWindow.submit_button &&
-                    typeof unsafeWindow.submit_button.click === 'function') {
+                    typeof unsafeWindow.submit_button.click === 'function'
+                ) {
                     unsafeWindow.submit_button.click();
                 } else {
                     const submitBtn = document.querySelector('input[type="submit"], button[type="submit"]');
@@ -619,25 +661,25 @@ function t(text) {
                         submitBtn.click();
                     } else {
                         console.error(`${LOG_PREFIX} 未找到可点击的提交按钮`);
-                        updateStatusElement("找不到提交按钮，请手动提交表单");
+                        updateStatusElement('找不到提交按钮，请手动提交表单');
                     }
                 }
             }, 1000);
         }
     }
- 
+
     /**
      * 处理官方「個人情報の取り扱いについて」同意页（2026-08-05 上线，登录后必经）
      * 勾选同意复选框并提交表单；若缺失关键元素则仅提示，由用户手动处理
      */
     function handleAgreement() {
         console.log(`${LOG_PREFIX} 检测到「個人情報の取り扱いについて」同意页，正在自动同意...`);
-        updateStatusElement("检测到个人信息同意页，自动同意中...");
+        updateStatusElement('检测到个人信息同意页，自动同意中...');
 
         const checkbox = document.querySelector('#agree_flag_1, input[name="agree_flag"]');
         if (!checkbox) {
             console.log(`${LOG_PREFIX} 未找到同意复选框（agree_flag）。`);
-            updateStatusElement("未找到同意复选框，请手动同意。");
+            updateStatusElement('未找到同意复选框，请手动同意。');
             isRunning = false;
             return;
         }
@@ -650,7 +692,7 @@ function t(text) {
             submitBtn.click();
         } else {
             console.log(`${LOG_PREFIX} 未找到同意提交按钮。`);
-            updateStatusElement("未找到同意提交按钮，请手动同意。");
+            updateStatusElement('未找到同意提交按钮，请手动同意。');
             isRunning = false;
         }
     }
@@ -661,9 +703,9 @@ function t(text) {
     function main() {
         if (isRunning) return; // 防止多重运行
         isRunning = true;
- 
+
         const path = window.location.pathname;
- 
+
         if (path.startsWith('/xapanel/login/xvps')) {
             handleLogin();
         } else if (path.includes('/xapanel/myaccount/agreement')) {
@@ -682,8 +724,7 @@ function t(text) {
             isRunning = false;
         }
     }
- 
+
     // 入口调用
     main();
- 
 })();

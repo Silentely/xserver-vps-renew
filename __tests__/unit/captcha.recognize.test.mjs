@@ -4,10 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const {
-  recognizeCaptcha,
-  recognizeCaptchaWithKerasAPI,
-} = await import('../../src/captcha.mjs');
+const { recognizeCaptcha, recognizeCaptchaWithKerasAPI } = await import('../../src/captcha.mjs');
 
 describe('recognizeCaptchaWithKerasAPI', () => {
   const mockLogger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() };
@@ -61,9 +58,9 @@ describe('recognizeCaptchaWithKerasAPI', () => {
   });
 
   it('API 未配置时抛出错误', async () => {
-    await expect(
-      recognizeCaptchaWithKerasAPI('data:image/png;base64,abc', '', mockLogger),
-    ).rejects.toThrow('未配置 CAPTCHA_API');
+    await expect(recognizeCaptchaWithKerasAPI('data:image/png;base64,abc', '', mockLogger)).rejects.toThrow(
+      '未配置 CAPTCHA_API',
+    );
   });
 
   it('API 返回非 ok 时抛出错误', async () => {
@@ -103,9 +100,9 @@ describe('recognizeCaptchaWithKerasAPI', () => {
   });
 
   it('图片数据为空时抛出错误', async () => {
-    await expect(
-      recognizeCaptchaWithKerasAPI('', 'https://api.example.com', mockLogger),
-    ).rejects.toThrow('验证码图片数据为空');
+    await expect(recognizeCaptchaWithKerasAPI('', 'https://api.example.com', mockLogger)).rejects.toThrow(
+      '验证码图片数据为空',
+    );
   });
 
   it('记录日志：识别成功', async () => {
@@ -138,9 +135,9 @@ describe('recognizeCaptcha', () => {
   });
 
   it('未配置 API 抛出错误', async () => {
-    await expect(
-      recognizeCaptcha('data:image/png;base64,abc', '', mockLogger),
-    ).rejects.toThrow('未配置 Keras 模型 API');
+    await expect(recognizeCaptcha('data:image/png;base64,abc', '', mockLogger)).rejects.toThrow(
+      '未配置 Keras 模型 API',
+    );
   });
 
   it('成功时返回验证码', async () => {
@@ -155,20 +152,16 @@ describe('recognizeCaptcha', () => {
   });
 
   it('Cloud Run 冷启动网络异常时使用同一张图片重试，成功后才返回验证码', async () => {
-    mockFetch
-      .mockRejectedValueOnce(new Error('fetch failed'))
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve('654321'),
-      });
+    mockFetch.mockRejectedValueOnce(new Error('fetch failed')).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('654321'),
+    });
 
-    const result = await recognizeCaptcha(
-      'data:image/png;base64,abc',
-      'https://api.example.com',
-      mockLogger,
-      { maxAttempts: 2, retryDelayMs: 0 },
-    );
+    const result = await recognizeCaptcha('data:image/png;base64,abc', 'https://api.example.com', mockLogger, {
+      maxAttempts: 2,
+      retryDelayMs: 0,
+    });
 
     expect(result).toBe('654321');
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -182,9 +175,9 @@ describe('recognizeCaptcha', () => {
       text: () => Promise.resolve('Service Unavailable'),
     });
 
-    await expect(
-      recognizeCaptcha('data:image/png;base64,abc', 'https://api.example.com', mockLogger),
-    ).rejects.toThrow('503');
+    await expect(recognizeCaptcha('data:image/png;base64,abc', 'https://api.example.com', mockLogger)).rejects.toThrow(
+      '503',
+    );
 
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('识别失败'));
   });

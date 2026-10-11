@@ -52,9 +52,7 @@ async function clickTurnstileFallback(page, logger = NOOP_LOGGER) {
   try {
     logger.debug('尝试点击 Turnstile checkbox...');
     const frames = page.frames();
-    const turnstileFrame = frames.find((f) =>
-      f.url().includes('challenges.cloudflare.com'),
-    );
+    const turnstileFrame = frames.find((f) => f.url().includes('challenges.cloudflare.com'));
 
     if (turnstileFrame) {
       const frameHandle = await turnstileFrame.frameElement();
@@ -70,12 +68,11 @@ async function clickTurnstileFallback(page, logger = NOOP_LOGGER) {
           const startY = 300 + Math.random() * 200;
 
           logger.debug(
-            `Turnstile iframe: (${box.x.toFixed(0)},${box.y.toFixed(0)}) `
-            + `${box.width.toFixed(0)}x${box.height.toFixed(0)}`,
+            `Turnstile iframe: (${box.x.toFixed(0)},${box.y.toFixed(0)}) ` +
+              `${box.width.toFixed(0)}x${box.height.toFixed(0)}`,
           );
           logger.debug(
-            `鼠标轨迹: (${startX.toFixed(0)},${startY.toFixed(0)})`
-            + ` → (${clickX.toFixed(0)},${clickY.toFixed(0)})`,
+            `鼠标轨迹: (${startX.toFixed(0)},${startY.toFixed(0)})` + ` → (${clickX.toFixed(0)},${clickY.toFixed(0)})`,
           );
 
           await page.mouse.move(startX, startY);
@@ -169,10 +166,12 @@ export async function waitForTurnstileToken(
  */
 function isFrameDetachError(error) {
   const msg = String(error?.message || '');
-  return msg.includes('detached Frame')
-    || msg.includes('Frame was detached')
-    || msg.includes('Execution context was destroyed')
-    || msg.includes('Cannot find context with specified id');
+  return (
+    msg.includes('detached Frame') ||
+    msg.includes('Frame was detached') ||
+    msg.includes('Execution context was destroyed') ||
+    msg.includes('Cannot find context with specified id')
+  );
 }
 
 /**
@@ -192,13 +191,11 @@ export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_L
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const res = await injectFn(page, token, logger, { returnDetails: true, callbackName });
-      return typeof res === "boolean" ? { ok: res, callbackCalled: false } : res;
+      return typeof res === 'boolean' ? { ok: res, callbackCalled: false } : res;
     } catch (error) {
       lastError = error;
       if (!isFrameDetachError(error)) throw error;
-      logger.warn(
-        `Turnstile token 注入遇页面导航（frame 脱离），第 ${attempt + 1}/${maxRetries + 1} 次重试...`,
-      );
+      logger.warn(`Turnstile token 注入遇页面导航（frame 脱离），第 ${attempt + 1}/${maxRetries + 1} 次重试...`);
       await sleep(retryDelayMs);
     }
   }
@@ -211,7 +208,10 @@ export async function injectTurnstileTokenWithRetry(page, token, logger = NOOP_L
  * @param {{ config?: object, logger?: object }} [opts] - config 为 CONFIG（含各超时与提供商配置）
  * @returns {Promise<{ ok: boolean, providerName?: string|null, attempts?: object[] }>}
  */
-export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, excludeProviders = [], solveFn = solveTurnstileWithFailover } = {}) {
+export async function waitForTurnstile(
+  page,
+  { config, logger = NOOP_LOGGER, excludeProviders = [], solveFn = solveTurnstileWithFailover } = {},
+) {
   logger.info('正在处理 Cloudflare Turnstile...');
 
   const cfContainer = await page.$('.cf-turnstile');
@@ -220,19 +220,19 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
     return { ok: true, providerName: null, attempts: [] };
   }
 
-  const turnstileConfig = await page.evaluate(() => {
-    const div = document.querySelector('.cf-turnstile');
-    if (!div) return null;
-    return {
-      sitekey: div.getAttribute('data-sitekey'),
-      callback: div.getAttribute('data-callback'),
-    };
-  }).catch(() => null);
+  const turnstileConfig = await page
+    .evaluate(() => {
+      const div = document.querySelector('.cf-turnstile');
+      if (!div) return null;
+      return {
+        sitekey: div.getAttribute('data-sitekey'),
+        callback: div.getAttribute('data-callback'),
+      };
+    })
+    .catch(() => null);
 
   if (turnstileConfig) {
-    logger.debug(
-      `Turnstile 配置: sitekey=${turnstileConfig.sitekey}, callback=${turnstileConfig.callback}`,
-    );
+    logger.debug(`Turnstile 配置: sitekey=${turnstileConfig.sitekey}, callback=${turnstileConfig.callback}`);
   } else {
     logger.warn('无法获取 Turnstile 配置（继续尝试提取参数）');
   }
@@ -243,9 +243,9 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
     return { ok: true, providerName: 'prefilled', attempts: [] };
   }
 
-  const fieldCount = await page.evaluate(() => (
-    document.querySelectorAll('[name="cf-turnstile-response"]').length
-  )).catch(() => 0);
+  const fieldCount = await page
+    .evaluate(() => document.querySelectorAll('[name="cf-turnstile-response"]').length)
+    .catch(() => 0);
   logger.debug(`检测到 ${fieldCount} 个 cf-turnstile-response 字段`);
 
   logger.debug('等待 Turnstile 渲染...');
@@ -322,8 +322,8 @@ export async function waitForTurnstile(page, { config, logger = NOOP_LOGGER, exc
           const currentUA = await page.evaluate(() => navigator.userAgent);
           if (needsUserAgentAlignment(currentUA, result.userAgent)) {
             logger.warn(
-              `UA 不匹配，更新浏览器 UA 以匹配 API`
-              + `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
+              `UA 不匹配，更新浏览器 UA 以匹配 API` +
+                `（当前: ${currentUA.substring(0, 40)}… → API: ${result.userAgent.substring(0, 40)}…）`,
             );
             // 设定严格超时，避免 CDP Network.setUserAgentOverride 挂起导致 token 过期。
             await Promise.race([

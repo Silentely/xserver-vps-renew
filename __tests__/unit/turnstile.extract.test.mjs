@@ -1,9 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-const {
-  extractTurnstileParams,
-  readTurnstileWidgetParams,
-} = await import('../../src/turnstile.mjs');
+const { extractTurnstileParams, readTurnstileWidgetParams } = await import('../../src/turnstile.mjs');
 
 // 构造 mock page 对象
 const createMockPage = (options = {}) => {
@@ -58,20 +55,15 @@ describe('extractTurnstileParams', () => {
 
     await extractTurnstileParams(page);
 
-    expect(page.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      [
-        ['data-c-data', 'data-cdata'],
-        ['data-chl-page-data', 'data-chlpagedata'],
-      ],
-    );
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), [
+      ['data-c-data', 'data-cdata'],
+      ['data-chl-page-data', 'data-chlpagedata'],
+    ]);
   });
 
   it('无 Turnstile 元素时降级到正则匹配', async () => {
     const page = createMockPage({ hasTurnstileEl: false });
-    page.content.mockReturnValue(
-      Promise.resolve('<div data-sitekey="0x4FALLBACK"></div>'),
-    );
+    page.content.mockReturnValue(Promise.resolve('<div data-sitekey="0x4FALLBACK"></div>'));
 
     const params = await extractTurnstileParams(page);
 
@@ -107,23 +99,17 @@ describe('extractTurnstileParams', () => {
 
     await extractTurnstileParams(page, logger);
 
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.stringContaining('Turnstile 参数提取成功'),
-    );
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('Turnstile 参数提取成功'));
   });
 
   it('正则降级时记录日志', async () => {
     const page = createMockPage({ hasTurnstileEl: false });
-    page.content.mockReturnValue(
-      Promise.resolve('data-sitekey="0x4REGEX"'),
-    );
+    page.content.mockReturnValue(Promise.resolve('data-sitekey="0x4REGEX"'));
     const logger = { info: vi.fn(), debug: vi.fn() };
 
     await extractTurnstileParams(page, logger);
 
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.stringContaining('正则匹配'),
-    );
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('正则匹配'));
   });
 
   it('无 logger 时不报错（默认空函数）', async () => {
@@ -180,10 +166,18 @@ describe('extractTurnstileParams', () => {
 
     it('无属性或元素非法时返回空对象', () => {
       expect(readTurnstileWidgetParams(null)).toEqual({
-        sitekey: '', action: '', cData: '', chlPageData: '', callbackName: '',
+        sitekey: '',
+        action: '',
+        cData: '',
+        chlPageData: '',
+        callbackName: '',
       });
       expect(readTurnstileWidgetParams({})).toEqual({
-        sitekey: '', action: '', cData: '', chlPageData: '', callbackName: '',
+        sitekey: '',
+        action: '',
+        cData: '',
+        chlPageData: '',
+        callbackName: '',
       });
     });
   });

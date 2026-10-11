@@ -41,9 +41,7 @@ export function parseCronIntervalHours(cronSchedule) {
 export function estimateNextRunMs(nowMs = Date.now(), opts = {}) {
   const fromCron = parseCronIntervalHours(opts.cronSchedule);
   const hours = fromCron ?? opts.intervalHours ?? DEFAULT_NEXT_RUN_INTERVAL_HOURS;
-  const safeHours = Number.isFinite(hours) && hours >= 1 && hours <= 168
-    ? hours
-    : DEFAULT_NEXT_RUN_INTERVAL_HOURS;
+  const safeHours = Number.isFinite(hours) && hours >= 1 && hours <= 168 ? hours : DEFAULT_NEXT_RUN_INTERVAL_HOURS;
   return nowMs + safeHours * 3_600_000;
 }
 
@@ -86,22 +84,19 @@ const TG_PROCESS_STEP_MAX_LEN = 180;
  * @returns {'full'|'compact'}
  */
 export function parseNotifyDetail(value, fallback = DEFAULT_TG_NOTIFY_DETAIL) {
-  const v = String(value ?? '').trim().toLowerCase();
+  const v = String(value ?? '')
+    .trim()
+    .toLowerCase();
   if (v === TG_NOTIFY_DETAIL_FULL || v === 'detailed' || v === 'verbose') {
     return TG_NOTIFY_DETAIL_FULL;
   }
-  if (
-    v === TG_NOTIFY_DETAIL_COMPACT ||
-    v === 'brief' ||
-    v === 'simple' ||
-    v === 'short'
-  ) {
+  if (v === TG_NOTIFY_DETAIL_COMPACT || v === 'brief' || v === 'simple' || v === 'short') {
     return TG_NOTIFY_DETAIL_COMPACT;
   }
-  const fb = String(fallback ?? '').trim().toLowerCase();
-  return fb === TG_NOTIFY_DETAIL_COMPACT
-    ? TG_NOTIFY_DETAIL_COMPACT
-    : TG_NOTIFY_DETAIL_FULL;
+  const fb = String(fallback ?? '')
+    .trim()
+    .toLowerCase();
+  return fb === TG_NOTIFY_DETAIL_COMPACT ? TG_NOTIFY_DETAIL_COMPACT : TG_NOTIFY_DETAIL_FULL;
 }
 
 /**
@@ -131,10 +126,7 @@ export function formatRemainingHours(hours) {
  * @param {number} [windowHours=RENEWAL_WINDOW_HOURS]
  * @returns {number|null} 已进入窗口为 0；无法计算为 null；否则为正数
  */
-export function getHoursUntilRenewalWindow(
-  remainingHours,
-  windowHours = RENEWAL_WINDOW_HOURS,
-) {
+export function getHoursUntilRenewalWindow(remainingHours, windowHours = RENEWAL_WINDOW_HOURS) {
   if (remainingHours == null || !Number.isFinite(Number(remainingHours))) return null;
   const rem = Number(remainingHours);
   const win = Number(windowHours);
@@ -149,10 +141,7 @@ export function getHoursUntilRenewalWindow(
  * @param {number} [windowHours=RENEWAL_WINDOW_HOURS]
  * @returns {string} 空字符串表示不展示
  */
-export function formatHoursUntilWindow(
-  remainingHours,
-  windowHours = RENEWAL_WINDOW_HOURS,
-) {
+export function formatHoursUntilWindow(remainingHours, windowHours = RENEWAL_WINDOW_HOURS) {
   const until = getHoursUntilRenewalWindow(remainingHours, windowHours);
   if (until == null) return '';
   if (until <= 0) return '已进入可续期窗口';
@@ -222,9 +211,9 @@ export function clampProcessSteps(processSteps, opts = {}) {
   const maxCount = Math.max(1, Number(opts.maxCount) || TG_PROCESS_STEP_MAX_COUNT);
   const maxLen = Math.max(16, Number(opts.maxLen) || TG_PROCESS_STEP_MAX_LEN);
 
-  const cleaned = normalizeProcessSteps(processSteps).map((t) => (
-    t.length > maxLen ? `${t.slice(0, Math.max(8, maxLen - 1))}…` : t
-  ));
+  const cleaned = normalizeProcessSteps(processSteps).map((t) =>
+    t.length > maxLen ? `${t.slice(0, Math.max(8, maxLen - 1))}…` : t,
+  );
 
   if (cleaned.length <= maxCount) return cleaned;
 
@@ -254,9 +243,12 @@ export function formatProcessSteps(processSteps, detail = TG_NOTIFY_DETAIL_FULL)
  * @returns {string} 空字符串或一行（无尾换行）
  */
 function formatDurationNotifyLine(durationMs, durationText = null) {
-  const text = durationText != null && String(durationText).trim() !== ''
-    ? String(durationText).trim()
-    : (durationMs != null ? formatDurationMs(durationMs) : '');
+  const text =
+    durationText != null && String(durationText).trim() !== ''
+      ? String(durationText).trim()
+      : durationMs != null
+        ? formatDurationMs(durationMs)
+        : '';
   if (!text || text === '未知') return '';
   return `⏱️ 耗时: ${escapeHtml(text)}`;
 }
@@ -369,45 +361,47 @@ export function buildSuccessNotifyMessage({
     attempts: turnstileAttempts,
   });
   const durationLine = formatDurationNotifyLine(durationMs, durationText);
-  const remainingLine = remainingHours != null && Number.isFinite(Number(remainingHours))
-    ? `⏳ 续期前剩余: ${escapeHtml(formatRemainingHours(remainingHours))}`
-    : '';
+  const remainingLine =
+    remainingHours != null && Number.isFinite(Number(remainingHours))
+      ? `⏳ 续期前剩余: ${escapeHtml(formatRemainingHours(remainingHours))}`
+      : '';
   // 无历史累计（如非持久化部署）时展示「本轮续期成功」，避免恒为 1 的「已连续成功」误导；
   // 有历史且含本轮连续成功 ≥1 时展示累计次数，给用户「自动化运行稳定」的直观信号
-  const streakLine = hasHistory === false
-    ? '✅ 本轮续期成功'
-    : (consecutiveSuccesses != null && Number(consecutiveSuccesses) >= 1
-      ? `📈 已连续成功 ${Number(consecutiveSuccesses)} 次`
-      : '');
+  const streakLine =
+    hasHistory === false
+      ? '✅ 本轮续期成功'
+      : consecutiveSuccesses != null && Number(consecutiveSuccesses) >= 1
+        ? `📈 已连续成功 ${Number(consecutiveSuccesses)} 次`
+        : '';
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     return clampTelegramMessage(
       `✅ <b>Xserver VPS 续期成功</b>\n\n` +
-      `⏰ 执行时间: ${time}\n` +
-      `🖥️ 服务器名: ${name}\n` +
-      `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
-      `${turnstileLine ? `${turnstileLine}\n` : ''}` +
-      `${streakLine ? `${streakLine}\n` : ''}` +
-      `${durationLine ? `${durationLine}\n` : ''}` +
-      `⏭️ 下次检查: ${next}\n` +
-      PROJECT_SOURCE_LINE,
+        `⏰ 执行时间: ${time}\n` +
+        `🖥️ 服务器名: ${name}\n` +
+        `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+        `${turnstileLine ? `${turnstileLine}\n` : ''}` +
+        `${streakLine ? `${streakLine}\n` : ''}` +
+        `${durationLine ? `${durationLine}\n` : ''}` +
+        `⏭️ 下次检查: ${next}\n` +
+        PROJECT_SOURCE_LINE,
     );
   }
 
   return clampTelegramMessage(
     `✅ <b>Xserver VPS 续期成功</b>\n\n` +
-    `⏰ 执行时间: ${time}\n` +
-    `🖥️ 服务器名: ${name}\n` +
-    `📦 VPS 规格: ${escapeHtml(plan || '未知')}\n` +
-    `📅 原到期日: ${escapeHtml(oldExpireDate || '未知')}\n` +
-    `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
-    `${remainingLine ? `${remainingLine}\n` : ''}` +
-    `${turnstileLine ? `${turnstileLine}\n` : ''}` +
-    `${streakLine ? `${streakLine}\n` : ''}` +
-    `${durationLine ? `${durationLine}\n` : ''}` +
-    `⏭️ 下次检查: ${next}` +
-    formatProcessSteps(processSteps, mode) +
-    `\n${PROJECT_SOURCE_LINE}`,
+      `⏰ 执行时间: ${time}\n` +
+      `🖥️ 服务器名: ${name}\n` +
+      `📦 VPS 规格: ${escapeHtml(plan || '未知')}\n` +
+      `📅 原到期日: ${escapeHtml(oldExpireDate || '未知')}\n` +
+      `📅 新到期日: ${escapeHtml(newExpireDate || '未提取')}\n` +
+      `${remainingLine ? `${remainingLine}\n` : ''}` +
+      `${turnstileLine ? `${turnstileLine}\n` : ''}` +
+      `${streakLine ? `${streakLine}\n` : ''}` +
+      `${durationLine ? `${durationLine}\n` : ''}` +
+      `⏭️ 下次检查: ${next}` +
+      formatProcessSteps(processSteps, mode) +
+      `\n${PROJECT_SOURCE_LINE}`,
   );
 }
 
@@ -466,27 +460,15 @@ export function buildSkipNotifyMessage({
   const next = escapeHtml(nextRunAt || '');
   const durationLine = formatDurationNotifyLine(durationMs, durationText);
   // 未找到 VPS 时不展示「距可续窗口」；其余跳过路径在可计算时展示
-  const untilWindowText = !isNoVps
-    ? formatHoursUntilWindow(remainingHours, windowHours)
-    : '';
-  const untilWindowLine = untilWindowText
-    ? `🔓 距可续窗口: ${escapeHtml(untilWindowText)}`
-    : '';
+  const untilWindowText = !isNoVps ? formatHoursUntilWindow(remainingHours, windowHours) : '';
+  const untilWindowLine = untilWindowText ? `🔓 距可续窗口: ${escapeHtml(untilWindowText)}` : '';
 
-  const lines = [
-    title,
-    '',
-    `⏰ 执行时间: ${time}`,
-    `🖥️ 服务器名: ${name}`,
-  ];
+  const lines = [title, '', `⏰ 执行时间: ${time}`, `🖥️ 服务器名: ${name}`];
   // 规格与判定详情仅 full 模式展示；其余行两模式共用（compact 由 formatProcessSteps 自动省略过程）
   if (mode === TG_NOTIFY_DETAIL_FULL) {
     lines.push(`📦 VPS 规格: ${escapeHtml(plan || (isNoVps ? '—' : '未知'))}`);
   }
-  lines.push(
-    `📅 当前到期: ${expire}`,
-    `⏳ 剩余时间: ${remaining}`,
-  );
+  lines.push(`📅 当前到期: ${expire}`, `⏳ 剩余时间: ${remaining}`);
   if (untilWindowLine) lines.push(untilWindowLine);
   if (mode === TG_NOTIFY_DETAIL_FULL) {
     lines.push(`📌 判定结果: ${escapeHtml(reasonDetail || defaultDetail)}`);
@@ -494,9 +476,7 @@ export function buildSkipNotifyMessage({
   if (durationLine) lines.push(durationLine);
   lines.push(`⏭️ 下次检查: ${next}`);
 
-  return clampTelegramMessage(
-    lines.join('\n') + formatProcessSteps(processSteps, mode) + `\n${PROJECT_SOURCE_LINE}`,
-  );
+  return clampTelegramMessage(lines.join('\n') + formatProcessSteps(processSteps, mode) + `\n${PROJECT_SOURCE_LINE}`);
 }
 
 /**
@@ -509,11 +489,7 @@ export function buildSkipNotifyMessage({
  * @param {string} [opts.nextRunAt] 下次执行时间
  * @returns {string}
  */
-export function buildManualConfirmNotifyMessage({
-  executedAt = '',
-  reason = '',
-  nextRunAt = '',
-} = {}) {
+export function buildManualConfirmNotifyMessage({ executedAt = '', reason = '', nextRunAt = '' } = {}) {
   const lines = [
     '⚠️ <b>Xserver VPS 自动续期 · 需要人工确认</b>',
     '',
@@ -576,11 +552,7 @@ export function parseTelegramSendResult(body) {
  * @param {string} [opts.errorCode]
  * @returns {boolean}
  */
-export function isTurnstileAllProvidersFailed({
-  turnstileAllProvidersFailed,
-  errorMessage,
-  errorCode,
-} = {}) {
+export function isTurnstileAllProvidersFailed({ turnstileAllProvidersFailed, errorMessage, errorCode } = {}) {
   if (turnstileAllProvidersFailed === true) return true;
   if (errorCode === TURNSTILE_ALL_PROVIDERS_FAILED) return true;
   return isTurnstileOutageError({ code: errorCode, message: errorMessage });
@@ -618,16 +590,14 @@ const FAILURE_CATEGORY_LABELS = {
  * @param {boolean} [opts.turnstileAllProvidersFailed]
  * @returns {{ category: string, label: string }}
  */
-export function classifyRenewalFailure({
-  errorMessage,
-  errorCode,
-  turnstileAllProvidersFailed,
-} = {}) {
-  if (isTurnstileAllProvidersFailed({
-    turnstileAllProvidersFailed,
-    errorMessage,
-    errorCode,
-  })) {
+export function classifyRenewalFailure({ errorMessage, errorCode, turnstileAllProvidersFailed } = {}) {
+  if (
+    isTurnstileAllProvidersFailed({
+      turnstileAllProvidersFailed,
+      errorMessage,
+      errorCode,
+    })
+  ) {
     return {
       category: FAILURE_CATEGORY.TURNSTILE_OUTAGE,
       label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TURNSTILE_OUTAGE],
@@ -639,41 +609,35 @@ export function classifyRenewalFailure({
 
   // 配置类优先于登录类（错误文案可能同时含 XSERVER_MEMBER_ID）
   if (
-    /配置校验失败|配置对象无效|代理配置不完整|PROXY_TYPE|PROXY_PORT|CAPTCHA_API 协议|CAPTCHA_API 不是/.test(msg)
-    || code === 'CONFIG_INVALID'
+    /配置校验失败|配置对象无效|代理配置不完整|PROXY_TYPE|PROXY_PORT|CAPTCHA_API 协议|CAPTCHA_API 不是/.test(msg) ||
+    code === 'CONFIG_INVALID'
   ) {
     return { category: FAILURE_CATEGORY.CONFIG, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.CONFIG] };
   }
 
-  if (
-    /登录失败|请检查 XSERVER_MEMBER_ID|请检查 XSERVER_PASSWORD|凭据|认证に失敗|会員ID|パスワード/.test(msg)
-  ) {
+  if (/登录失败|请检查 XSERVER_MEMBER_ID|请检查 XSERVER_PASSWORD|凭据|认证に失敗|会員ID|パスワード/.test(msg)) {
     return { category: FAILURE_CATEGORY.LOGIN, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.LOGIN] };
   }
 
-  if (
-    /信用卡|カード|決済|無料枠|需要绑定|需要注册|需要设置支付/.test(msg)
-  ) {
+  if (/信用卡|カード|決済|無料枠|需要绑定|需要注册|需要设置支付/.test(msg)) {
     return { category: FAILURE_CATEGORY.BUSINESS, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.BUSINESS] };
   }
 
   if (
-    /验证码|Keras|CAPTCHA_API|imgSrc|平假名|识别失败|无效结果/.test(msg)
-    && !/Turnstile|cf-turnstile|打码平台/.test(msg)
+    /验证码|Keras|CAPTCHA_API|imgSrc|平假名|识别失败|无效结果/.test(msg) &&
+    !/Turnstile|cf-turnstile|打码平台/.test(msg)
   ) {
     return { category: FAILURE_CATEGORY.CAPTCHA, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.CAPTCHA] };
   }
 
   if (
-    /Turnstile|cf-turnstile|令牌|sitekey|打码平台|CapSolver|AntiCaptcha|YesCaptcha|2Captcha/.test(msg)
-    || code.startsWith('TURNSTILE_')
+    /Turnstile|cf-turnstile|令牌|sitekey|打码平台|CapSolver|AntiCaptcha|YesCaptcha|2Captcha/.test(msg) ||
+    code.startsWith('TURNSTILE_')
   ) {
     return { category: FAILURE_CATEGORY.TURNSTILE, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TURNSTILE] };
   }
 
-  if (
-    /超时|timeout|Timeout|Navigation|net::|ERR_|ECONN|ENOTFOUND|网络异常|AbortError/i.test(msg)
-  ) {
+  if (/超时|timeout|Timeout|Navigation|net::|ERR_|ECONN|ENOTFOUND|网络异常|AbortError/i.test(msg)) {
     return { category: FAILURE_CATEGORY.TIMEOUT, label: FAILURE_CATEGORY_LABELS[FAILURE_CATEGORY.TIMEOUT] };
   }
 
@@ -687,10 +651,7 @@ export function classifyRenewalFailure({
  * @param {number} [opts.captchaMaxRetry=3]
  * @returns {string}
  */
-export function buildFailureHints({
-  category,
-  captchaMaxRetry = 3,
-} = {}) {
+export function buildFailureHints({ category, captchaMaxRetry = 3 } = {}) {
   const cat = category || FAILURE_CATEGORY.UNKNOWN;
 
   if (cat === FAILURE_CATEGORY.TURNSTILE_OUTAGE) {
@@ -837,28 +798,28 @@ export function buildFailureNotifyMessage({
     errorCode,
     turnstileAllProvidersFailed: multiProviderOutage,
   });
-  const failureMeta = failureCategory && FAILURE_CATEGORY_LABELS[failureCategory]
-    ? { category: failureCategory, label: FAILURE_CATEGORY_LABELS[failureCategory] }
-    : autoClassified;
+  const failureMeta =
+    failureCategory && FAILURE_CATEGORY_LABELS[failureCategory]
+      ? { category: failureCategory, label: FAILURE_CATEGORY_LABELS[failureCategory] }
+      : autoClassified;
 
-  const title = multiProviderOutage
-    || failureMeta.category === FAILURE_CATEGORY.TURNSTILE_OUTAGE
-    ? '🚨🚨 <b>【最高级告警·删机风险】Xserver VPS 续期失败</b>'
-    : escalate
-      ? '🚨 <b>【告警升级】Xserver VPS 续期失败</b>'
-      : '❌ <b>Xserver VPS 续期失败</b>';
+  const title =
+    multiProviderOutage || failureMeta.category === FAILURE_CATEGORY.TURNSTILE_OUTAGE
+      ? '🚨🚨 <b>【最高级告警·删机风险】Xserver VPS 续期失败</b>'
+      : escalate
+        ? '🚨 <b>【告警升级】Xserver VPS 续期失败</b>'
+        : '❌ <b>Xserver VPS 续期失败</b>';
 
   const turnstileLine = formatTurnstileNotifyLine({
     providerName: turnstileProvider,
     attempts: turnstileAttempts,
   });
-  const failedLabels = (failedProviders || [])
-    .map((p) => resolveTurnstileProviderLabel(p))
-    .filter(Boolean);
+  const failedLabels = (failedProviders || []).map((p) => resolveTurnstileProviderLabel(p)).filter(Boolean);
   // 失败且未成功求解时，用熔断列表补充 Turnstile 行
-  const turnstileFailLine = !turnstileLine && failedLabels.length
-    ? `🔐 Turnstile: 已熔断 ${escapeHtml(failedLabels.join(' → '))}`
-    : turnstileLine;
+  const turnstileFailLine =
+    !turnstileLine && failedLabels.length
+      ? `🔐 Turnstile: 已熔断 ${escapeHtml(failedLabels.join(' → '))}`
+      : turnstileLine;
 
   const safeError = escapeHtml(truncateNotifyText(errorMessage || '未知错误'));
   const durationLine = formatDurationNotifyLine(durationMs, durationText);
@@ -866,12 +827,12 @@ export function buildFailureNotifyMessage({
   const nextRunLine = nextRunAt ? `⏭️ 下次检查: ${escapeHtml(nextRunAt)}` : '';
   // 图形验证码实际重试次数（仅当 >0 时展示；≤1 表示首轮即败，无重试可提）
   const retries = Number(captchaRetries);
-  const captchaRetryLine = Number.isInteger(retries) && retries > 1
-    ? `🔄 验证码识别已重试 ${retries} 次（上限 ${captchaMaxRetry}）\n`
-    : '';
-  const remainingLine = remainingHours != null && Number.isFinite(Number(remainingHours))
-    ? `⏳ 剩余时间: ${escapeHtml(formatRemainingHours(remainingHours))}`
-    : '';
+  const captchaRetryLine =
+    Number.isInteger(retries) && retries > 1 ? `🔄 验证码识别已重试 ${retries} 次（上限 ${captchaMaxRetry}）\n` : '';
+  const remainingLine =
+    remainingHours != null && Number.isFinite(Number(remainingHours))
+      ? `⏳ 剩余时间: ${escapeHtml(formatRemainingHours(remainingHours))}`
+      : '';
 
   const contextLines = [];
   if (serverName) contextLines.push(`🖥️ 服务器名: ${escapeHtml(serverName)}`);
@@ -891,14 +852,14 @@ export function buildFailureNotifyMessage({
     `${turnstileFailLine ? `${turnstileFailLine}\n` : ''}` +
     `${durationLine ? `${durationLine}\n` : ''}` +
     `${nextRunLine ? `${nextRunLine}\n` : ''}` +
-    `${multiProviderOutage || failureMeta.category === FAILURE_CATEGORY.TURNSTILE_OUTAGE
-      ? `🛑 <b>Turnstile 打码平台已全部失败</b>${failedLabels.length
-        ? `（${escapeHtml(failedLabels.join(' → '))}）`
-        : ''}，请<b>今天内手动登录官网续期</b>，否则 VPS 可能被删除！\n`
-      : ''}` +
-    `${escalate && consecutiveFailures > 0
-      ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n`
-      : ''}`;
+    `${
+      multiProviderOutage || failureMeta.category === FAILURE_CATEGORY.TURNSTILE_OUTAGE
+        ? `🛑 <b>Turnstile 打码平台已全部失败</b>${
+            failedLabels.length ? `（${escapeHtml(failedLabels.join(' → '))}）` : ''
+          }，请<b>今天内手动登录官网续期</b>，否则 VPS 可能被删除！\n`
+        : ''
+    }` +
+    `${escalate && consecutiveFailures > 0 ? `⚠️ <b>连续失败 ${consecutiveFailures} 次</b>，请立即人工介入！\n` : ''}`;
 
   if (mode === TG_NOTIFY_DETAIL_COMPACT) {
     // compact 同样标注源项目，保证任何失败通知都能找到第一来源
@@ -914,13 +875,7 @@ export function buildFailureNotifyMessage({
 
   // proxyHint 为空时避免产生多余空行（head 末尾恒有 \n，空提示只需补一个 \n 形成单一空行）
   const hintBlock = proxyHint ? `\n${proxyHint}\n\n` : '\n';
-  return clampTelegramMessage(
-    head +
-    hintBlock +
-    failHints +
-    formatProcessSteps(processSteps, mode) +
-    sourceLine,
-  );
+  return clampTelegramMessage(head + hintBlock + failHints + formatProcessSteps(processSteps, mode) + sourceLine);
 }
 
 /**
@@ -933,20 +888,11 @@ export function buildFailureNotifyMessage({
  * @param {boolean} [opts.antiCaptchaHostnameSkipped] - AntiCaptcha 因域名代理改走 Proxyless
  * @returns {string}
  */
-export function buildProxyHint({
-  hasProxy,
-  proxyType,
-  maskedAddress,
-  proxyPort,
-  antiCaptchaHostnameSkipped = false,
-}) {
+export function buildProxyHint({ hasProxy, proxyType, maskedAddress, proxyPort, antiCaptchaHostnameSkipped = false }) {
   if (hasProxy) {
     const base = `📡 浏览器代理: ${proxyType}://${maskedAddress}:${proxyPort}`;
     if (antiCaptchaHostnameSkipped) {
-      return (
-        `${base}\n` +
-        `ℹ️ Anti-Captcha 官方仅支持 IP 代理，当前为域名地址，打码任务已自动改用 Proxyless`
-      );
+      return `${base}\n` + `ℹ️ Anti-Captcha 官方仅支持 IP 代理，当前为域名地址，打码任务已自动改用 Proxyless`;
     }
     return base;
   }

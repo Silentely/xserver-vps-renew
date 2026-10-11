@@ -7,19 +7,45 @@ describe('syncRenewalFormFields', () => {
     const mockEvaluatePage = {
       evaluate: vi.fn().mockImplementation(async (fn, args) => {
         // 创建最小 mock DOM 环境
-        const authHidden = { name: 'auth_code', type: 'hidden', value: '', events: [], dispatchEvent(e) { this.events.push(e.type); } };
-        const authText = { name: 'auth_code', type: 'text', value: '', events: [], dispatchEvent(e) { this.events.push(e.type); } };
-        const tsHidden1 = { name: 'cf-turnstile-response', type: 'hidden', value: '', events: [], dispatchEvent(e) { this.events.push(e.type); } };
-        const tsHidden2 = { name: 'cf-turnstile-response', type: 'hidden', value: '', events: [], dispatchEvent(e) { this.events.push(e.type); } };
+        const authHidden = {
+          name: 'auth_code',
+          type: 'hidden',
+          value: '',
+          events: [],
+          dispatchEvent(e) {
+            this.events.push(e.type);
+          },
+        };
+        const authText = {
+          name: 'auth_code',
+          type: 'text',
+          value: '',
+          events: [],
+          dispatchEvent(e) {
+            this.events.push(e.type);
+          },
+        };
+        const tsHidden1 = {
+          name: 'cf-turnstile-response',
+          type: 'hidden',
+          value: '',
+          events: [],
+          dispatchEvent(e) {
+            this.events.push(e.type);
+          },
+        };
+        const tsHidden2 = {
+          name: 'cf-turnstile-response',
+          type: 'hidden',
+          value: '',
+          events: [],
+          dispatchEvent(e) {
+            this.events.push(e.type);
+          },
+        };
 
         const form = {
-          elements: [
-            { name: 'uniqid', type: 'hidden', value: 'abc' },
-            authHidden,
-            tsHidden1,
-            authText,
-            tsHidden2,
-          ],
+          elements: [{ name: 'uniqid', type: 'hidden', value: 'abc' }, authHidden, tsHidden1, authText, tsHidden2],
         };
 
         const doc = {
@@ -38,7 +64,11 @@ describe('syncRenewalFormFields', () => {
         const prevDoc = globalThis.document;
         const prevEvent = globalThis.Event;
         globalThis.document = doc;
-        globalThis.Event = class { constructor(type) { this.type = type; } };
+        globalThis.Event = class {
+          constructor(type) {
+            this.type = type;
+          }
+        };
 
         try {
           return await fn(args);
@@ -64,7 +94,12 @@ describe('syncRenewalFormFields', () => {
     const mockEvaluatePage = {
       evaluate: vi.fn().mockImplementation(async (fn, args) => {
         const authHidden = { name: 'auth_code', type: 'hidden', value: '', dispatchEvent: vi.fn() };
-        const tsHidden = { name: 'cf-turnstile-response', type: 'hidden', value: 'existing_token', dispatchEvent: vi.fn() };
+        const tsHidden = {
+          name: 'cf-turnstile-response',
+          type: 'hidden',
+          value: 'existing_token',
+          dispatchEvent: vi.fn(),
+        };
 
         const prevDoc = globalThis.document;
         const prevEvent = globalThis.Event;
@@ -76,7 +111,11 @@ describe('syncRenewalFormFields', () => {
           },
           querySelector: () => ({ elements: [authHidden, tsHidden] }),
         };
-        globalThis.Event = class { constructor(type) { this.type = type; } };
+        globalThis.Event = class {
+          constructor(type) {
+            this.type = type;
+          }
+        };
 
         try {
           return await fn(args);
@@ -102,7 +141,11 @@ describe('syncRenewalFormFields', () => {
           querySelectorAll: () => [],
           querySelector: () => null,
         };
-        globalThis.Event = class { constructor(type) { this.type = type; } };
+        globalThis.Event = class {
+          constructor(type) {
+            this.type = type;
+          }
+        };
 
         try {
           return await fn(args);

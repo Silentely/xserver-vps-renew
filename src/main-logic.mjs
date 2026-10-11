@@ -48,7 +48,12 @@ export function buildKnownVpsInfo(renewalData, prevLastRecord) {
  *   reasonDetail?: string,
  * }}
  */
-export function resolveSkipOutcome({ reasonCode, needsManualConfirmation = false, prevLastRecord = null, baseReasonDetail = '' }) {
+export function resolveSkipOutcome({
+  reasonCode,
+  needsManualConfirmation = false,
+  prevLastRecord = null,
+  baseReasonDetail = '',
+}) {
   // 官方新增/变更确认页导致未进入 VPS 面板：转人工确认（failure 路径），不当作普通跳过
   if (reasonCode === 'no_free_vps' && needsManualConfirmation) {
     return { kind: 'manual_confirm', missingKnownVps: false };
