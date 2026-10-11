@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@evomap/evolver": "^1.92.1",
+    "@evomap/evolver": "^2.0.0",
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.39.4",
     "eslint-plugin-import": "^2.32.0",
