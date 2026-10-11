@@ -1,7 +1,7 @@
 # 编译 supercronic：官方 v0.2.48 release 用 Go 1.26.5 构建，低于 Go stdlib 修复版本 1.26.6
 # （CVE-2026-39821 Punycode / CVE-2026-46600 DNS 解析），改用 Go 1.26.6+ 从同 tag 源码重建
 # （ldflags 注入方式与官方 Makefile 一致：-X main.Version）
-FROM golang:1.26 AS supercronic-build
+FROM golang:1.27 AS supercronic-build
 ARG SUPERCRONIC_VERSION=v0.2.48
 RUN CGO_ENABLED=0 go install -ldflags "-X main.Version=${SUPERCRONIC_VERSION}" \
         github.com/aptible/supercronic@${SUPERCRONIC_VERSION}
