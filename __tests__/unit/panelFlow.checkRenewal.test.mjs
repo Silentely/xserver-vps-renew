@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { checkRenewalNeeded } from '../../src/panel-flow.mjs';
-import { NOOP_LOGGER } from '../../src/utils.mjs';
+import { getTokyoDateString, NOOP_LOGGER } from '../../src/utils.mjs';
 
 describe('checkRenewalNeeded', () => {
   const baseConfig = {
@@ -8,16 +8,10 @@ describe('checkRenewalNeeded', () => {
     NAVIGATION_TIMEOUT: 500,
   };
 
-  it('成功找到今天到期的免费 VPS 时返回 needed: true', async () => {
-    // 构造东京今天的日期
-    const todayTokyo = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Tokyo',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-
-    const mockPage = {
+  // 构造「今天到期」的免费 VPS 模拟页：expireDate 为纯日期，源内按东京日末估算剩余时间，
+  // 因此是否落在 12h 续期窗口内取决于被钉住的时钟，调用方必须显式固定时间基准。
+  function buildExpiringTodayPage(todayTokyo) {
+    return {
       url: vi.fn().mockReturnValue('https://secure.xserver.ne.jp/xapanel/xvps/index'),
       goto: vi.fn().mockResolvedValue(null),
       waitForSelector: vi.fn().mockResolvedValue(null),
@@ -36,11 +30,40 @@ describe('checkRenewalNeeded', () => {
         return 'complete';
       }),
     };
+  }
 
-    const result = await checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER });
-    expect(result.needed).toBe(true);
-    expect(result.vpsInfo.expireDate).toBe(todayTokyo);
-    expect(result.renewUrl).toContain('id_vps=12345');
+  it('成功找到今天到期的免费 VPS 时返回 needed: true', async () => {
+    // 固定时钟为东京 20:00（UTC 11:00），处于到期日 12h 续期窗口内（东京 12:00 之后）
+    const fixedMs = Date.parse('2026-10-11T11:00:00Z');
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedMs);
+    try {
+      const todayTokyo = getTokyoDateString(fixedMs);
+      const mockPage = buildExpiringTodayPage(todayTokyo);
+
+      const result = await checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER });
+      expect(result.needed).toBe(true);
+      expect(result.vpsInfo.expireDate).toBe(todayTokyo);
+      expect(result.renewUrl).toContain('id_vps=12345');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('东京上午（12:00 前）到期日为今天时按日末估算剩余时间返回 not_due', async () => {
+    // 固定时钟为东京 09:00（UTC 00:00），距东京日末约 15h，尚未进入 12h 续期窗口
+    const fixedMs = Date.parse('2026-10-11T00:00:00Z');
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(fixedMs);
+    try {
+      const todayTokyo = getTokyoDateString(fixedMs);
+      const mockPage = buildExpiringTodayPage(todayTokyo);
+
+      const result = await checkRenewalNeeded(mockPage, { config: baseConfig, logger: NOOP_LOGGER });
+      expect(result.needed).toBe(false);
+      expect(result.reasonCode).toBe('not_due');
+      expect(result.vpsInfo.expireDate).toBe(todayTokyo);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('页面正常渲染但不存在免费 VPS 时返回 reasonCode: no_free_vps 且无需人工确认', async () => {
