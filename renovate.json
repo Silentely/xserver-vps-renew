@@ -21,6 +21,13 @@
       ],
       "groupName": "非大版本依赖升级",
       "groupSlug": "non-major"
+    },
+    {
+      "description": "锁定 brace-expansion 于 1.x 修复版，避免破坏 CommonJS 及 minimatch 兼容性",
+      "matchPackageNames": [
+        "brace-expansion"
+      ],
+      "enabled": false
     }
   ]
 }
