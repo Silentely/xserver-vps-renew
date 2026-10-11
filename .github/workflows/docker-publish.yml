@@ -50,7 +50,8 @@ jobs:
             type=sha,prefix=sha-,format=short
 
       - name: Install dependencies
-        run: npm install
+        # 严格按 package-lock.json 安装，避免依赖升级类 PR 的 lock 解析被改写
+        run: npm ci
 
       - name: Validate scripts
         run: |

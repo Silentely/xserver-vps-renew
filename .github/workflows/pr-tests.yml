@@ -1,0 +1,30 @@
+name: PR Tests
+
+# PR 阶段只跑单元测试：依赖升级类 PR 在合并前即可暴露测试失败，
+# 避免失败只能在 push 到 main 后由 docker-publish 工作流发现并阻断镜像发布。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
