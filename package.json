@@ -31,7 +31,7 @@
   },
   "overrides": {
     "brace-expansion": "1.1.21",
-    "@puppeteer/browsers": "3.2.0",
+    "@puppeteer/browsers": "3.2.4",
     "nanoid": "3.3.18"
   }
 }
