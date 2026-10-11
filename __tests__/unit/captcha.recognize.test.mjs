@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock 全局 fetch
 const mockFetch = vi.fn();
@@ -7,7 +7,6 @@ global.fetch = mockFetch;
 const {
   recognizeCaptcha,
   recognizeCaptchaWithKerasAPI,
-  normalizeCaptchaCode,
 } = await import('../../src/captcha.mjs');
 
 describe('recognizeCaptchaWithKerasAPI', () => {

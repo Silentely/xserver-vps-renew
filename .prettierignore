@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+memory/
+logs/
+data/
+chrome-profile/
+assets/
+package-lock.json
+*.md

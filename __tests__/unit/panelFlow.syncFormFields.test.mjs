@@ -3,25 +3,6 @@ import { syncRenewalFormFields } from '../../src/panel-flow.mjs';
 
 describe('syncRenewalFormFields', () => {
   it('同步多个 auth_code 输入框（包括 hidden 和 text），分发 input/change 事件', async () => {
-    let evaluateFn;
-    const page = {
-      evaluate: vi.fn().mockImplementation((fn, args) => {
-        evaluateFn = fn;
-        // 模拟页面 DOM
-        const formElements = [
-          { name: 'uniqid', type: 'hidden', value: 'uid123' },
-          { name: 'id_vps', type: 'hidden', value: '40091511' },
-          { name: 'auth_code', type: 'hidden', value: '' },
-          { name: 'cf-turnstile-response', type: 'hidden', value: '' },
-          { name: 'auth_code', type: 'text', value: '123456' },
-          { name: 'cf-turnstile-response', type: 'hidden', value: 'token_abc' },
-        ];
-
-        // 模拟 evaluate 回调逻辑
-        return evaluateFn(args);
-      }),
-    };
-
     // 使用模拟 DOM 的 evaluate
     const mockEvaluatePage = {
       evaluate: vi.fn().mockImplementation(async (fn, args) => {

@@ -17,7 +17,11 @@
     "start": "node xserver-vps-renew.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.mjs\" \"__tests__/**/*.mjs\" xserver-vps-renew.mjs browser-fingerprint-patch.js xserver-renews.js turnstile-patch/content.js vitest.config.mjs eslint.config.js",
+    "format:check": "prettier --check \"src/**/*.mjs\" \"__tests__/**/*.mjs\" xserver-vps-renew.mjs browser-fingerprint-patch.js xserver-renews.js turnstile-patch/content.js vitest.config.mjs eslint.config.js"
   },
   "dependencies": {
     "puppeteer-extra": "^3.3.6",
@@ -25,8 +29,14 @@
     "rebrowser-puppeteer-core": "^24.8.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@evomap/evolver": "^1.92.1",
     "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^18.4.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
     "vitest": "^4.1.11"
   },
   "overrides": {

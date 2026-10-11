@@ -113,7 +113,7 @@ describe('handleLogin', () => {
         }
         return null;
       }),
-      evaluate: vi.fn().mockImplementation(async (fn, arg) => {
+      evaluate: vi.fn().mockImplementation(async (fn) => {
         if (typeof fn === 'function') {
           const fnStr = fn.toString();
           if (fnStr.includes('cf-turnstile')) {

@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 

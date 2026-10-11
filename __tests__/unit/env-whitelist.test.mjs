@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { describe, it, expect } from 'vitest';
 
 // 防漂移测试：cron-run.sh 环境变量白名单（entrypoint.sh 内联生成）必须与
 // 主脚本 CONFIG 读取项、.env.example 文档清单保持同步。

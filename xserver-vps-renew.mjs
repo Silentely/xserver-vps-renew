@@ -25,13 +25,13 @@
  *   LOG_LEVEL             - 日志级别：debug / info（默认）/ warn / error
  */
 
-import { addExtra } from 'puppeteer-extra';
-import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import rebrowserPuppeteer from 'rebrowser-puppeteer-core';
+import { addExtra } from 'puppeteer-extra';
 import { injectBrowserFingerprint } from './browser-fingerprint-patch.js';
 import {
   safeClosePage,

@@ -7,10 +7,10 @@
  * 修复：entrypoint 白名单透传仅展示用的 CRON_SCHEDULE_DISPLAY，
  * 主脚本估算时优先读取；该变量不参与模式判断，避免 #7 防线回撤。
  */
-import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const MAIN_SRC = readFileSync(join(REPO_ROOT, 'xserver-vps-renew.mjs'), 'utf8');

@@ -6,12 +6,12 @@
  *
  * 期望：只要 argv 含 --once，无论 CRON_SCHEDULE 是否设置，都只执行一次续期并退出。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const ENTRYPOINT_SRC = join(REPO_ROOT, 'entrypoint.sh');

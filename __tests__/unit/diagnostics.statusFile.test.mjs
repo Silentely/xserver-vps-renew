@@ -4,12 +4,12 @@
  * 部署常见坑：/data 挂载卷属主/权限不足时 writeRenewalStatus 只能在运行中失败，
  * 诊断脚本提前探测目录/文件可写性，把问题暴露在排障第一阶段。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DIAG_SRC = readFileSync(join(REPO_ROOT, 'diagnostics.sh'), 'utf8');

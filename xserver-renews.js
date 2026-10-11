@@ -305,10 +305,10 @@ function t(text) {
         updateStatusElement("正在处理登录...");
  
         const memberid = GM_getValue('memberid');
-        const user_password = GM_getValue('user_password');
+        const userPassword = GM_getValue('user_password');
  
         // 判断是否可以进行自动登录（存在保存的凭据并且没有错误）
-        if (memberid && user_password && !document.querySelector('.errorMessage')) {
+        if (memberid && userPassword && !document.querySelector('.errorMessage')) {
             console.log(`${LOG_PREFIX} 发现已保存的凭据，正在尝试自动登录...`);
             try {
                 // 使用 document.getElementById 获取表单元素
@@ -317,7 +317,7 @@ function t(text) {
 
                 if (memberidInput && passwordInput) {
                     memberidInput.value = memberid;
-                    passwordInput.value = user_password;
+                    passwordInput.value = userPassword;
                     updateStatusElement("已检测到保存凭据，正在自动登录...");
                     // 延迟调用避免页面未完全渲染的问题
                     setTimeout(() => {

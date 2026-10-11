@@ -84,7 +84,7 @@ describe('injectTurnstileToken', () => {
   it('浏览器端 evaluateFn 安全解析 dotted-path 回调，并拒绝对恶意表达式执行 eval', async () => {
     let capturedFn = null;
     const page = {
-      evaluate: vi.fn((fn, ...args) => {
+      evaluate: vi.fn((fn) => {
         capturedFn = fn;
         return { injectedCount: 1, callbackCalled: true };
       }),

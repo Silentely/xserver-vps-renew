@@ -12,7 +12,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const PROMPT = 'This image contains a Japanese CAPTCHA. It typically consists of Japanese hiragana characters (or digits). Recognize the characters accurately from left to right. Return ONLY the recognized characters without any spaces, newlines, markdown codeblocks, punctuation, or explanation.';
 

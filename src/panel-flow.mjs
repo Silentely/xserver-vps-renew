@@ -851,7 +851,7 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
 
       // 验证续期是否真正成功：长轮询等待服务端处理结果（官方处理需 60-90s，
       // 停留 conf 页期间持续等待而非判定失败；成功/明确失败信号提前返回）
-      const { pageText, currentUrl, evaluation } = await waitForSubmissionResult(page, {
+      const { currentUrl, evaluation } = await waitForSubmissionResult(page, {
         timeoutMs: config.SUBMISSION_RESULT_TIMEOUT_MS,
         logger,
       });
@@ -932,7 +932,7 @@ export async function handleCaptchaPage(page, options = {}, { config, logger = N
             retryUrl = page.url();
           } catch {
             await waitForPageReady(page, 5000, logger);
-            try { retryUrl = page.url(); } catch {}
+            try { retryUrl = page.url(); } catch { /* 忽略 */ }
           }
           await navigateForCaptchaRetry(page, retryUrl, renewUrl, { config, logger });
         } catch (reloadError) {
