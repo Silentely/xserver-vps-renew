@@ -28,6 +28,17 @@
         "brace-expansion"
       ],
       "enabled": false
+    },
+    {
+      "description": "暂不升级 eslint 至 v10，等待 eslint-plugin-import 等生态插件支持",
+      "matchPackageNames": [
+        "eslint",
+        "@eslint/js"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
     }
   ]
 }
