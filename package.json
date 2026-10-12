@@ -29,10 +29,10 @@
     "rebrowser-puppeteer-core": "^24.8.1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.0",
     "@evomap/evolver": "^2.0.0",
     "@vitest/coverage-v8": "^5.0.0",
-    "eslint": "^9.39.4",
+    "eslint": "^10.0.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-n": "^18.4.1",
     "globals": "^17.13.0",
