@@ -76,6 +76,13 @@ describe('buildRenewalRecord', () => {
     expect(record.skipped).toBe(false);
   });
 
+  it('维护跳过记录带 maintenance 标记，普通记录默认 false', () => {
+    expect(buildRenewalRecord({ success: true }).maintenance).toBe(false);
+    const record = buildRenewalRecord({ success: true, skipped: true, maintenance: true, errorMessage: '官方维护' });
+    expect(record.skipped).toBe(true);
+    expect(record.maintenance).toBe(true);
+  });
+
   it('每次调用生成不同的 timestamp', async () => {
     const r1 = buildRenewalRecord({ success: true });
     await new Promise((r) => setTimeout(r, 10));

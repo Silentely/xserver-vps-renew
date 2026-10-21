@@ -516,6 +516,43 @@ export function buildManualConfirmNotifyMessage({ executedAt = '', reason = '', 
 }
 
 /**
+ * 构建「官方维护提醒」通知（区别于普通失败通知）
+ * 命中官方维护（503 等）且当日尚未续期时发送；同一自然日最多一次（由调用方去重）。
+ * 不受 compact 模式的「跳过类不推送」影响，仅受 TG_NOTIFY_MAINTENANCE 开关控制。
+ * @param {object} opts
+ * @param {string} [opts.executedAt] - 执行时间（已格式化）
+ * @param {string} [opts.expireDate] - 当前到期日
+ * @param {string} [opts.nextRunAt] - 下次执行时间
+ * @param {string} [opts.serverName] - 服务器名（可选）
+ * @returns {string}
+ */
+export function buildMaintenanceNotifyMessage({
+  executedAt = '',
+  expireDate = '',
+  nextRunAt = '',
+  serverName = '',
+} = {}) {
+  const lines = [
+    '⏸️ <b>Xserver 面板官方维护暂停（HTTP 503）</b>',
+    '',
+    'Xserver 官方面板因「予防的な安全対策」暂停服务，登录页返回维护页，',
+    '本轮自动续期无法进行。',
+    '',
+    `🖥️ 服务器名: ${escapeHtml(serverName || '未知')}`,
+    `📅 当前到期日: ${escapeHtml(expireDate || '未知')}`,
+    '',
+    '⚠️ <b>到期日临近风险</b>：若维护持续时间较长且到期日逼近，VPS 存在被回收风险。',
+    '请在官方维护结束后及时续期，本任务将在下个周期自动重试。',
+    '',
+    `⏰ 执行时间: ${escapeHtml(executedAt || '—')}`,
+    `⏭️ 下次检查: ${escapeHtml(nextRunAt || '—')}`,
+    '',
+    PROJECT_SOURCE_LINE,
+  ];
+  return clampTelegramMessage(lines.join('\n'));
+}
+
+/**
  * 解析 Telegram sendMessage 响应（纯函数）
  * Bot API 对逻辑错误（chat 不存在、bot 被屏蔽等）返回 HTTP 200 + { ok:false, description }，
  * 仅检查 HTTP 状态会误报「已发送」。

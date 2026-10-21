@@ -56,9 +56,25 @@ import {
   writeRenewalStatus,
   buildRenewalRecord,
   getRenewalStatus,
+  readRenewalStatus,
   DEFAULT_STATUS_FILE,
   DEFAULT_ALERT_AFTER_FAILURES,
 } from './src/renewal-status.mjs';
+// 官方维护（503 智能降级）：异常识别 / 分流决策 / 提醒去重
+import {
+  isMaintenanceError,
+  readMaintenanceNotice,
+  recordMaintenanceNotice,
+  formatLocalDateKey,
+  resolveMaintenanceOutcome,
+  MAINTENANCE_ACTION,
+  EXIT_MAINTENANCE_RENEWED,
+  EXIT_MAINTENANCE_NOTIFIED,
+  DEFAULT_MAINTENANCE_NOTICE_FILE,
+} from './src/maintenance.mjs';
+
+// 维护专用退出码统一由 maintenance 模块定义，此处再导出便于主脚本/test 引用
+export { EXIT_MAINTENANCE_RENEWED, EXIT_MAINTENANCE_NOTIFIED };
 // 通用工具
 import {
   maskProxyAddress,
@@ -91,6 +107,7 @@ import {
   buildSkipNotifyMessage,
   buildFailureNotifyMessage,
   buildManualConfirmNotifyMessage,
+  buildMaintenanceNotifyMessage,
   buildProxyHint,
   formatDurationMs,
   parseNotifyDetail,
@@ -214,6 +231,14 @@ const CONFIG = {
   TG_NOTIFY_DETAIL: parseNotifyDetail(process.env.TG_NOTIFY_DETAIL, DEFAULT_TG_NOTIFY_DETAIL),
   // 是否推送「无需续期 / 跳过」类通知（默认 true）
   TG_NOTIFY_SKIP: parseEnvBool(process.env.TG_NOTIFY_SKIP, true),
+  // 是否推送「官方维护提醒」（默认 true；不受 compact 模式「跳过类不推送」影响）
+  TG_NOTIFY_MAINTENANCE: parseEnvBool(process.env.TG_NOTIFY_MAINTENANCE, true),
+
+  // 官方维护降级：HTTP 状态码与关键词可配置（默认 503,502,504 / メンテナンス,一時停止,保守）
+  MAINTENANCE_HTTP_CODES: process.env.MAINTENANCE_HTTP_CODES || '',
+  MAINTENANCE_KEYWORDS: process.env.MAINTENANCE_KEYWORDS || '',
+  // 维护提醒「同一自然日最多 1 次」的去重记录文件
+  MAINTENANCE_NOTICE_FILE: process.env.MAINTENANCE_NOTICE_FILE || DEFAULT_MAINTENANCE_NOTICE_FILE,
 
   // 日志级别：debug / info（默认）/ warn / error
   LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL),
@@ -288,8 +313,9 @@ const LOGGER = { info: log, debug: logDebug, warn: logWarn, error: err };
 /**
  * 发送 Telegram 通知
  * @param {string} message
- * @param {{ kind?: 'success'|'skip'|'failure'|'manual_confirm'|'other' }} [opts]
- *   kind 仅用于 skip 类开关判定（skip 且 TG_NOTIFY_SKIP=false 时不推送），其余归类为 'other'
+ * @param {{ kind?: 'success'|'skip'|'failure'|'manual_confirm'|'maintenance'|'other' }} [opts]
+ *   kind 仅用于跳过类开关判定（skip 且 TG_NOTIFY_SKIP=false 时不推送）；
+ *   maintenance 不受该开关影响，其开关在调用前由 TG_NOTIFY_MAINTENANCE 控制
  */
 async function notify(message, opts = {}) {
   const kind = opts.kind || 'other';
@@ -531,6 +557,94 @@ async function main() {
     await safeClosePage(page, LOGGER);
   };
 
+  /**
+   * 本轮命中「官方维护」的统一出口（不重试、不发失败通知）：
+   * 记录 skipped 记录 → 按当日续期状态分流 → 以专用退出码结束
+   * - 当日已续期/已保障：静默跳过，退出码 75，无任何通知
+   * - 当日未续期：发送「官方维护提醒」（同日去重），退出码 76
+   * skipped 记录经 nextSuccessStreak 判定不重置连续成功次数。
+   * @param {object} opts
+   * @param {import('puppeteer').Page} opts.page - 当前页面
+   * @param {Error & { status?: number }} opts.error - MaintenanceError
+   */
+  const finishWithMaintenance = async ({ page, error }) => {
+    const status = error?.status || '5xx';
+    runOutcome = 'skip';
+    runOutcomeLabel = '官方维护，本轮跳过';
+    pushStep(`检测到官方维护（HTTP ${status}），面板暂停服务，提前结束`);
+    log(`⏸️ ${error.message}`);
+
+    // 登录即失败，尚未来得及读面板：到期日/服务器名回退到上次记录，保证提醒可读
+    const expireDate = knownVps.expireDate || prevLastRecord?.newExpireDate || prevLastRecord?.oldExpireDate || null;
+    const serverName = knownVps.serverName || prevLastRecord?.serverName || null;
+    const plan = knownVps.plan || prevLastRecord?.plan || null;
+
+    // 先读取本轮之前的持久化记录再做分流：本轮新增的维护跳过记录不应参与「当日已保障」判定
+    // （timestamp 为 ISO UTC，按本地时区归类）
+    const { records } = readRenewalStatus(RENEWAL_STATUS_FILE, LOGGER);
+    // 单次取基准时间：避免跨零点时「当日续期判定」与「提醒去重日期」落在不同自然日
+    const nowMs = Date.now();
+    const dateOpts = { now: nowMs, tz: process.env.TZ || 'Asia/Tokyo' };
+    const todayKey = formatLocalDateKey(nowMs, dateOpts.tz);
+    const { lastMaintenanceNoticeAt } = readMaintenanceNotice(CONFIG.MAINTENANCE_NOTICE_FILE, LOGGER);
+    // 分流决策收敛于 maintenance.resolveMaintenanceOutcome（可单测）
+    const { action, exitCode, renewedToday, skipCoveredToday } = resolveMaintenanceOutcome({
+      records,
+      lastMaintenanceNoticeAt,
+      todayKey,
+      ...dateOpts,
+    });
+
+    // 记录一条跳过记录（maintenance=true 与「无需续期」跳过区分；不得重置连续成功次数）
+    persistRenewalRecord(
+      buildRenewalRecord({
+        success: true,
+        skipped: true,
+        maintenance: true,
+        serverName,
+        plan,
+        oldExpireDate: expireDate,
+        errorMessage: error.message,
+      }),
+    );
+
+    if (action === MAINTENANCE_ACTION.SILENT_SKIP) {
+      const why = renewedToday ? '当日已续期成功' : skipCoveredToday ? '当日已判定无需续期' : '当日已保障';
+      log(`⏸️ 官方维护，跳过（${why}，不发送通知）`);
+      process.exitCode = exitCode;
+      await safeClosePage(page, LOGGER);
+      return;
+    }
+
+    if (action === MAINTENANCE_ACTION.DEDUP_SKIP) {
+      log(`⏸️ 今日（${todayKey}）已发送过维护提醒，不再重复发送`);
+      process.exitCode = exitCode;
+      await safeClosePage(page, LOGGER);
+      return;
+    }
+
+    // action === SEND_NOTICE：当日尚未续期，发送维护提醒（同一自然日最多 1 次）
+    if (!CONFIG.TG_NOTIFY_MAINTENANCE) {
+      log('⏸️ 维护提醒已按 TG_NOTIFY_MAINTENANCE=false 关闭，跳过发送');
+    } else {
+      await notify(
+        buildMaintenanceNotifyMessage({
+          executedAt: formatTokyoDateTime(),
+          expireDate,
+          nextRunAt: resolveNextRun(),
+          serverName,
+        }),
+        // 维护提醒不受 compact / TG_NOTIFY_SKIP 影响，仅受 TG_NOTIFY_MAINTENANCE 控制
+        { kind: 'maintenance' },
+      );
+    }
+    // 无论是否实际发送都记录当日，避免开关切换后同日重复打扰
+    recordMaintenanceNotice(CONFIG.MAINTENANCE_NOTICE_FILE, todayKey, LOGGER);
+    log('⏸️ 官方维护提醒已处理，本轮结束（不重试）');
+    process.exitCode = exitCode;
+    await safeClosePage(page, LOGGER);
+  };
+
   try {
     // 清理锁文件与临时缓存（防止磁盘及 Page Cache 累积膨胀）
     cleanChromeLocks(CONFIG.CHROME_USER_DATA);
@@ -685,7 +799,17 @@ async function main() {
 
     // 步骤 1：登录
     pushStep('登录 Xserver 面板');
-    const loginResult = await handleLogin(page, { config: CONFIG, logger: LOGGER });
+    let loginResult;
+    try {
+      loginResult = await handleLogin(page, { config: CONFIG, logger: LOGGER });
+    } catch (e) {
+      // 官方维护（503 等）：不走通用失败分支（不重试、不发失败通知、不置失败退出码）
+      if (isMaintenanceError(e)) {
+        await finishWithMaintenance({ page, error: e });
+        return;
+      }
+      throw e;
+    }
     pushStep(loginResult?.viaCookie ? '登录成功（Cookie 复用）' : '登录成功');
 
     // 官方 2026-08-05 上线「個人情報の取り扱いについて」同意页（登录后必经，

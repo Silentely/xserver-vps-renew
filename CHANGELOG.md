@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### 迭代（2026-10-21）
+- **官方维护（503）智能降级**：登录页命中官方维护页时不再归类为「其他错误」并按 `MAX_RETRIES=3` 连发失败通知。新增 `src/maintenance.mjs`——`MaintenanceError`（`code='MAINTENANCE'`，不可重试）、`detectMaintenance`（状态码 ∈ `MAINTENANCE_HTTP_CODES` 且命中 `MAINTENANCE_KEYWORDS` 或页面无 `#memberid` 才降级）、`resolveMaintenanceOutcome`（按当日续期状态分流）与维护提醒去重；`navigateToLoginPage` 趁早拦截，`isRetryableLoginNavigationError` 之外单独排除维护错误。当日已续期/已保障（含当日仅有 `skipped` 记录）→ 记录跳过、无通知、退出码 75；当日未续期 → 发送一次「官方维护提醒」（同一自然日最多 1 次，受 `TG_NOTIFY_MAINTENANCE` 控制，不受 `TG_NOTIFY_SKIP`/compact 影响）、退出码 76。`entrypoint.sh` / 生成的 `cron-run.sh` 识别 75/76 后打印对应文案并结束本轮，不计失败、不重试。`hasRenewedToday` / `hasTodaySkipCoverage` 按容器本地时区（默认 Asia/Tokyo）归类 ISO UTC 记录；旧状态文件无新字段仍可读，升级后首轮即生效
+- 新增 4 个环境变量：`TG_NOTIFY_MAINTENANCE`（默认 true）、`MAINTENANCE_HTTP_CODES`（默认 `503,502,504`）、`MAINTENANCE_KEYWORDS`（默认 `メンテナンス,一時停止,保守`）、`MAINTENANCE_NOTICE_FILE`（默认 `/data/chrome-profile/maintenance-notice.json`）；README / RUNBOOK / `.env.example` 同步
+- 验证：`npm test` 35 文件 / 611 用例全绿（新增 maintenance 43 用例、entrypoint 退出码透传 2 用例）；本地以 mock 状态文件跑通验收表格（当日已续期静默跳过、当日未续期首条提醒、同日去重、次日再提醒、非 503 走原重试、200 正常页不触发、UTC 23:xx = JST 次日跨时区归类）
+
 ### 修复（2026-10-11）
 - **CI：解除镜像构建阻断（续期判定用例的时刻依赖）**：`panelFlow.checkRenewal` 的「成功找到今天到期的免费 VPS 时返回 needed: true」用例用真实时钟（`new Intl.DateTimeFormat(...).format(new Date())`）推导当天日期，而 `isRenewalDue` 对纯日期到期文案按东京日末 23:59:59 估算剩余小时——该断言只在东京 12:00 之后成立，东京上午运行的 CI 必然失败。修复：用例改为 `vi.spyOn(Date, 'now')` 固定时钟至东京 20:00（UTC 11:00）并由该时刻推导日期，另补「东京 09:00、到期日为当天 → `not_due`」边界用例覆盖 12h 续期窗口两侧；影响面：`docker-publish` 的 `Run unit tests` 位于构建推送之前，自 PR #16 合并（01:41 UTC = 东京 10:41）起连续 5 次 run 全部失败，`latest` 镜像停留在 10-07 版本
 - 验证：受控时钟复现东京 09:00 / 12:00 / 20:00 三点 needed 分别为 false / true / true；修复前本地 `npm test` 1 failed、修复后 546/547 全绿；推送后 CI run 38103695850 的 unit tests、coverage gate、build & push、supercronic 冒烟、Trivy 扫描全部 success，发布 `latest` 与 `sha-b076be4`

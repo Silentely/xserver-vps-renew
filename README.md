@@ -23,6 +23,7 @@
   - 单平台连续失败 N 次（默认 3）自动切换下一家；全部熔断 → Telegram **最高级删机风险告警**
   - **无密钥降级**：等待自然通过（Docker / 无头几乎不可用，**不建议**）
 - ✅ Telegram 通知：每次执行均推送（成功 / 失败 / **无需续期**）；`TG_NOTIFY_DETAIL` 可选完整/简洁摘要
+- ✅ **官方维护智能降级**：登录页命中 503 维护页（`一時停止のお知らせ` 等）时，当日已续期则静默跳过、未续期则发送一次「维护提醒」，不重试、不误报失败
 - ✅ Docker 部署，内置 supercronic 定时调度，开箱即用
 
 ## 🚀 快速开始
@@ -189,6 +190,23 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 | 续期成功 | 规格、原/新到期日、Turnstile、连续成功次数、耗时、下次检查、过程步骤 | 服务器、新到期日、Turnstile、连续成功次数、耗时、下次检查 |
 | 无需续期 | 规格、剩余时间、距可续窗口、判定原因、耗时、过程步骤 | 服务器、到期、剩余时间、距可续窗口、耗时、下次检查 |
 | 续期失败 | 失败类型、服务器/规格/到期/剩余、错误（截断）、Turnstile、耗时、代理提示、**按类处置建议**、过程步骤 | 失败类型、服务器、错误、告警升级、耗时 |
+| 官方维护提醒 | 维护原因（503）、当前到期日、到期临近风险、下次检查 | 同左（维护提醒不裁剪关键字段） |
+
+### 可选 - 官方维护智能降级（503 等）
+
+登录页返回官方维护页（如 503 + `一時停止のお知らせ` / `メンテナンス`）时，不再归类为「其他错误」，而是按当日续期状态分流：
+
+- **当日已续期/已保障**（含当日仅有「无需续期」跳过记录）：记录一条跳过记录，**不发任何通知**，退出码 75，cron 不重试；
+- **当日未续期**：发送一次**「官方维护提醒」**（区别于失败通知，含当前到期日与风险提示），同一自然日最多 1 次，退出码 76，cron 不重试。
+
+维护判定 = 状态码命中 `MAINTENANCE_HTTP_CODES` **且**（命中 `MAINTENANCE_KEYWORDS` **或** 页面无 `#memberid` 登录表单），宁可漏判走原失败流程，不误吞真实故障。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `TG_NOTIFY_MAINTENANCE` | `true` | 是否推送「官方维护提醒」；不受 `TG_NOTIFY_SKIP=false` / `compact` 模式影响，仅受本开关控制 |
+| `MAINTENANCE_HTTP_CODES` | `503,502,504` | 视为官方维护的 HTTP 状态码（逗号分隔） |
+| `MAINTENANCE_KEYWORDS` | `メンテナンス,一時停止,保守` | 维护页关键词（逗号分隔）；官方更换文案时追加即可 |
+| `MAINTENANCE_NOTICE_FILE` | `/data/chrome-profile/maintenance-notice.json` | 维护提醒「同一自然日最多 1 次」的去重记录文件 |
 
 ### 可选 - 代理配置
 
@@ -244,6 +262,7 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 │   ├── captcha.mjs                # 验证码处理（标准化/识别/平假名转换）
 │   ├── turnstile.mjs              # Turnstile 求解（参数构建/API 调用/token 注入）
 │   ├── renewal-status.mjs         # 续期结果持久化与健康检查
+│   ├── maintenance.mjs            # 官方维护（503）探测、降级分流与提醒去重
 │   ├── renewal-logic.mjs          # 续期业务纯逻辑（到期判定/URL 构建/提交结果）
 │   ├── notify.mjs                 # Telegram 通知构建（文案/失败分类/下次执行估算）
 │   └── utils.mjs                  # 通用纯函数（脱敏/东京日期/超时 fetch/日志级别）
@@ -312,10 +331,13 @@ npm run test:watch
 
 ```json
 {
+  "successStreak": 3,
   "records": [
     {
       "timestamp": "2026-06-30T15:00:00.000Z",
       "success": true,
+      "skipped": false,
+      "maintenance": false,
       "serverName": "vps-xxx",
       "plan": "1GB",
       "oldExpireDate": "2026-07-01",
@@ -325,6 +347,9 @@ npm run test:watch
   ]
 }
 ```
+
+- `timestamp` 为 ISO UTC；「当日」判定按容器本地时区（`TZ`，默认 `Asia/Tokyo`）归类。
+- `skipped: true` 表示跳过记录；`maintenance: true` 表示因官方维护跳过（不计入「当日已保障」，避免维护自我满足而静默）。
 
 当连续失败次数 ≥ `ALERT_AFTER_FAILURES`（默认 3）时，Telegram 告警会附加 `🚨 【告警升级】` 标记和连续失败次数，提示人工介入。
 

@@ -146,15 +146,24 @@ run_renew() {
         rm -f /tmp/.X99-lock 2>/dev/null || true
     fi
 
-    if [ $EXIT_CODE -eq 0 ]; then
-        echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
-        if [ -n "${CRON_SCHEDULE:-}" ]; then
-            NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
-            echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
-        fi
-    else
-        echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
-    fi
+    case "$EXIT_CODE" in
+        0)
+            echo "$LOG_PREFIX ✅ 续期检查完成（成功或无需续期）"
+            if [ -n "${CRON_SCHEDULE:-}" ]; then
+                NEXT_RUN=$(show_cron_schedule "$CRON_SCHEDULE")
+                echo "$LOG_PREFIX ⏭️ 下次续期检查: $NEXT_RUN"
+            fi
+            ;;
+        75)
+            echo "$LOG_PREFIX ⏸️ 官方维护，跳过（当日已续期）"
+            ;;
+        76)
+            echo "$LOG_PREFIX ⏸️ 官方维护，已发送维护提醒"
+            ;;
+        *)
+            echo "$LOG_PREFIX ❌ 续期失败，退出码: $EXIT_CODE"
+            ;;
+    esac
 
     echo "$LOG_PREFIX ====== 执行完毕 $(ts) ======"
     return $EXIT_CODE
@@ -228,6 +237,10 @@ export TG_BOT_TOKEN="${TG_BOT_TOKEN:-}"
 export TG_CHAT_ID="${TG_CHAT_ID:-}"
 export TG_NOTIFY_DETAIL="${TG_NOTIFY_DETAIL:-}"
 export TG_NOTIFY_SKIP="${TG_NOTIFY_SKIP:-}"
+export TG_NOTIFY_MAINTENANCE="${TG_NOTIFY_MAINTENANCE:-}"
+export MAINTENANCE_HTTP_CODES="${MAINTENANCE_HTTP_CODES:-}"
+export MAINTENANCE_KEYWORDS="${MAINTENANCE_KEYWORDS:-}"
+export MAINTENANCE_NOTICE_FILE="${MAINTENANCE_NOTICE_FILE:-}"
 export NOTIFY_NEXT_RUN_HOURS="${NOTIFY_NEXT_RUN_HOURS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-}"
 export SAVE_TURNSTILE_SCREENSHOTS="${SAVE_TURNSTILE_SCREENSHOTS:-}"
@@ -264,6 +277,19 @@ for i in $(seq 1 $MAX_RETRIES); do
     # 通知「下次执行」经 CRON_SCHEDULE_DISPLAY 按真实 cron 估算；外部调度场景回退 NOTIFY_NEXT_RUN_HOURS
     if cd /app && CRON_SCHEDULE="" SKIP_DIAGNOSTICS=true ./entrypoint.sh --once; then
         echo "$LOG_PREFIX ✅ 续期成功"
+        exit 0
+    else
+        # 必须在 else 分支内取值：if 复合命令在条件为假时返回 0，跳出 if 后 $? 已被覆盖
+        EXIT_CODE=$?
+    fi
+    # 官方维护专用退出码（75=当日已续期静默跳过 / 76=已发送维护提醒）：
+    # 维护属预期内暂停，重试无意义，直接结束本轮，不计入失败
+    if [ "$EXIT_CODE" -eq 75 ]; then
+        echo "$LOG_PREFIX ⏸️ 官方维护，跳过（当日已续期）"
+        exit 0
+    fi
+    if [ "$EXIT_CODE" -eq 76 ]; then
+        echo "$LOG_PREFIX ⏸️ 官方维护，已发送维护提醒"
         exit 0
     fi
     if [ $i -lt $MAX_RETRIES ]; then

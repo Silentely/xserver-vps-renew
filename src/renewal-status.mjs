@@ -5,6 +5,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, accessSync, constants } from 'node:fs';
 import { dirname } from 'node:path';
+import { getLocalDateString } from './utils.mjs';
 
 /** 默认状态文件路径（与 Chrome 用户数据同目录，便于 Docker 单卷持久化） */
 export const DEFAULT_STATUS_FILE = '/data/chrome-profile/renewal-status.json';
@@ -129,17 +130,67 @@ export function buildRenewalRecord({
   newExpireDate,
   errorMessage,
   skipped = false,
+  maintenance = false,
 }) {
   return {
     timestamp: new Date().toISOString(),
     success: !!success,
     skipped: !!skipped,
+    // 官方维护导致的跳过：与「无需续期」跳过区分，避免被当作当日已保障而错误静默
+    maintenance: !!maintenance,
     serverName: serverName || null,
     plan: plan || null,
     oldExpireDate: oldExpireDate || null,
     newExpireDate: newExpireDate || null,
     errorMessage: errorMessage || null,
   };
+}
+
+/**
+ * 是否「当日已续期」：当日存在 success:true && !skipped && newExpireDate 的续期成功记录
+ * record.timestamp 为 ISO UTC，按容器本地时区（tz，默认 Asia/Tokyo）转日期后与当日比较
+ * @param {Array} records - 续期记录数组
+ * @param {object} [opts]
+ * @param {number} [opts.now=Date.now()] - 基准时间（毫秒）
+ * @param {string} [opts.tz=process.env.TZ || 'Asia/Tokyo'] - 本地时区
+ * @returns {boolean}
+ */
+export function hasRenewedToday(records, { now = Date.now(), tz = process.env.TZ || 'Asia/Tokyo' } = {}) {
+  if (!Array.isArray(records) || records.length === 0) return false;
+  const today = getLocalDateString(now, tz);
+  return records.some((r) => {
+    if (!r || r.skipped || r.success !== true || !r.newExpireDate) return false;
+    const t = new Date(r.timestamp);
+    if (Number.isNaN(t.getTime())) return false;
+    return getLocalDateString(t, tz) === today;
+  });
+}
+
+/**
+ * 是否「当日仅有跳过记录」：当日存在续期记录，且全部为 skipped:true（无需续期），
+ * 且当日没有真实续期成功（success && !skipped && newExpireDate）记录。
+ * 作为维护降级的边界判定：当日已验证过无需续期，同样视为「已保障」，走静默跳过分支。
+ * @param {Array} records - 续期记录数组
+ * @param {object} [opts]
+ * @param {number} [opts.now=Date.now()] - 基准时间（毫秒）
+ * @param {string} [opts.tz=process.env.TZ || 'Asia/Tokyo'] - 本地时区
+ * @returns {boolean}
+ */
+export function hasTodaySkipCoverage(records, { now = Date.now(), tz = process.env.TZ || 'Asia/Tokyo' } = {}) {
+  if (!Array.isArray(records) || records.length === 0) return false;
+  const today = getLocalDateString(now, tz);
+  const todayRecords = records.filter((r) => {
+    if (!r || !r.timestamp) return false;
+    // 官方维护跳过记录不算「无需续期」保障（否则每次维护都会自我满足而静默）
+    if (r.maintenance === true) return false;
+    const t = new Date(r.timestamp);
+    if (Number.isNaN(t.getTime())) return false;
+    return getLocalDateString(t, tz) === today;
+  });
+  if (todayRecords.length === 0) return false;
+  // 当日已有真实续期成功 → 归 hasRenewedToday 兜底（此处不视为仅有跳过）
+  if (todayRecords.some((r) => r.success && !r.skipped && r.newExpireDate)) return false;
+  return todayRecords.every((r) => r.skipped === true);
 }
 
 /**

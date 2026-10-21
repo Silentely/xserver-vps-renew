@@ -167,6 +167,28 @@ describe('entrypoint.sh --once 优先于 CRON_SCHEDULE（#7）', () => {
     expect(result.stdout).toMatch(/单次执行模式/);
   });
 
+  it('运行：主脚本退出码 75（当日已续期维护跳过）原样透传并输出对应文案', () => {
+    writeFileSync(join(harness.bin, 'node'), '#!/bin/bash\nexit 75\n');
+    chmodSync(join(harness.bin, 'node'), 0o755);
+
+    const result = runEntrypoint(harness, ['--once'], { CRON_SCHEDULE: '', TZ: 'Asia/Tokyo' });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(75);
+    expect(result.stdout).toContain('官方维护，跳过（当日已续期）');
+  });
+
+  it('运行：主脚本退出码 76（已发送维护提醒）原样透传并输出对应文案', () => {
+    writeFileSync(join(harness.bin, 'node'), '#!/bin/bash\nexit 76\n');
+    chmodSync(join(harness.bin, 'node'), 0o755);
+
+    const result = runEntrypoint(harness, ['--once'], { CRON_SCHEDULE: '', TZ: 'Asia/Tokyo' });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(76);
+    expect(result.stdout).toContain('官方维护，已发送维护提醒');
+  });
+
   it('源码：cron-run 调用 --once 时应清空或覆盖 CRON_SCHEDULE（防御纵深）', () => {
     const src = readFileSync(ENTRYPOINT_SRC, 'utf8');
     const cronRunMatch = src.match(/cat > \/app\/cron-run\.sh <<'CRONSCRIPT'([\s\S]*?)CRONSCRIPT/);

@@ -41,6 +41,25 @@ export function getTokyoDateString(nowMs = Date.now(), dayOffset = 0) {
 }
 
 /**
+ * 按指定时区返回 YYYY-MM-DD 日期字符串（供续期状态/维护提醒的「当日」判定复用）
+ * 使用 Intl.DateTimeFormat（en-CA 得到固定宽度 YYYY-MM-DD），避免依赖固定时区偏移；
+ * 时区取 TZ 环境变量，默认 Asia/Tokyo（与日志时间戳、容器 cron 时区一致）。
+ * @param {number|Date} [when=new Date()] - 基准时间（毫秒或 Date）
+ * @param {string} [tz=process.env.TZ || 'Asia/Tokyo']
+ * @returns {string}
+ */
+const LOCAL_DATE_FORMATTERS = new Map();
+export function getLocalDateString(when = Date.now(), tz = process.env.TZ || 'Asia/Tokyo') {
+  const d = when instanceof Date ? when : new Date(when);
+  let fmt = LOCAL_DATE_FORMATTERS.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    LOCAL_DATE_FORMATTERS.set(tz, fmt);
+  }
+  return fmt.format(d);
+}
+
+/**
  * 带超时的 fetch 封装
  * @param {string} url - 请求 URL
  * @param {RequestInit} [options={}] - fetch 选项（可含 signal，会与超时合并）

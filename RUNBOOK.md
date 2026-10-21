@@ -16,6 +16,25 @@ docker compose run --rm -e CRON_SCHEDULE= xserver-renew --once
 docker exec xserver-vps-renew ./entrypoint.sh --once
 ```
 
+## 官方维护（503 / 「一時停止のお知らせ」）
+
+Xserver 官方进行预防性安全措施时会暂停 `secure.xserver.ne.jp`（Xpanel），登录页返回 Apache 静态维护页（HTTP 503，约 11KB，标题含「一時停止のお知らせ」、正文含「メンテナンス」），页面没有 `#memberid` 登录表单。
+
+| 项 | 说明 |
+|----|------|
+| **现象** | 日志出现 `⏸️ 检测到官方维护（HTTP 503）`、`面板因官方维护暂停`；cron 日志出现 `⏸️ 官方维护，跳过（当日已续期）` 或 `⏸️ 官方维护，已发送维护提醒` |
+| **旧版表现** | 报 `No element found for selector: #memberid`（归类为「其他错误」），经 `MAX_RETRIES=3` 连发 3 条失败通知 |
+| **自动降级** | 当日已续期/已保障 → 记录跳过、**不发通知**、退出码 75；当日未续期 → 发送 1 条「官方维护提醒」（同日去重）、退出码 76。两种情况均**不重试、不计失败、不重置连续成功次数** |
+| **何时人工介入** | 维护持续且**到期日临近**（剩余 ≤ 12h 甚至更少）时，请关注「官方维护提醒」中的到期日；维护结束后若下一个 cron 周期仍失败，按常规故障排查；若已无法续期，及时手动登录官网处理 |
+
+维护判定阈值可配置（无需改代码）：
+
+- `MAINTENANCE_HTTP_CODES`（默认 `503,502,504`）
+- `MAINTENANCE_KEYWORDS`（默认 `メンテナンス,一時停止,保守`）
+- `TG_NOTIFY_MAINTENANCE`（默认 `true`，关闭则不推送维护提醒）
+
+> 判定要求「状态码命中维护码」**且**「命中关键词或页面无登录表单」，宁可漏判（走原失败流程）也不误判（吞掉真实故障）。纯代理超时 / DNS 失败不会触发维护降级。
+
 ## 定时任务一直「上一次执行仍在运行，跳过」
 
 | 现象 | 原因 | 处置 |
@@ -75,6 +94,7 @@ docker compose restart
 | `UA 不匹配` / `对齐 UA 失败` / 旧版 `setUserAgentOverride: Target closed` | 打码平台返回的 UA 与浏览器 DEFAULT_UA 不同；rebrowser 下改 UA 可能关掉 target | 新版本会**先注入 token 再改 UA**，UA 失败不阻断提交。若仍认证失败，优先查 Proxyless IP 不一致 |
 | `Turnstile 未通过，跳过提交` | API 求解/注入失败，脚本不再强行点提交 | 看 failover 是否切到下一家；检查 key/余额/网络；勿把「未提交」当成图形码识别错误 |
 | `Waiting for selector img[src^="data:…"]` 超时（重试中） | 直接打开裸 `/extend/conf` 或窗口拦截页，无 Base64 验证码图 | 新版本重试会回到 `index?id_vps=` 再进 conf。若仍超时：查是否未进 12h 窗口、会话是否掉线 |
+| 登录页 `No element found for selector: #memberid` / `503` / `一時停止のお知らせ` | 官方维护暂停面板（旧版会连发失败通知） | 升级到含「官方维护智能降级」的版本；维护期间无需重试，见上文「官方维护」条目 |
 | 长期 `无需续期` 后 VPS 被回收 | 调度过稀，错过 12h 窗口 | 4GB 最长 24h、剩余 ≤12h 才可续；确认 `CRON_SCHEDULE` 间隔 ≤6h（compose 默认 `27 */4 * * *`，每 4h 错峰 27 分） |
 
 ### Anti-Captcha 专项（域名代理 / Proxyless）

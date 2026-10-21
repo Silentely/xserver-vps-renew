@@ -34,6 +34,12 @@ import {
 import { waitForTurnstile, getTurnstileToken } from './turnstile-flow.mjs';
 import { isTurnstileOutageError } from './turnstile.mjs';
 import { recognizeCaptcha, saveCaptchaSample } from './captcha.mjs';
+import {
+  detectMaintenance,
+  isMaintenanceError,
+  parseMaintenanceHttpCodes,
+  parseMaintenanceKeywords,
+} from './maintenance.mjs';
 
 const RETRYABLE_LOGIN_NAVIGATION_ERRORS = [
   'net::err_timed_out',
@@ -91,15 +97,34 @@ export async function navigateToLoginPage(page, config, logger = NOOP_LOGGER) {
   const maxAttempts = Math.max(1, Number(config?.LOGIN_NAVIGATION_RETRIES) || 1);
   const retryDelayMs = Math.max(0, Number(config?.LOGIN_NAVIGATION_RETRY_DELAY_MS) || 0);
   const loginUrl = `${config.BASE_URL}${config.LOGIN_PATH}`;
+  // 维护判定阈值可配置：官方换文案/状态码时只需改环境变量，无需改代码
+  const maintenanceOpts = {
+    httpCodes: parseMaintenanceHttpCodes(config?.MAINTENANCE_HTTP_CODES) || undefined,
+    keywords: parseMaintenanceKeywords(config?.MAINTENANCE_KEYWORDS) || undefined,
+    logger,
+  };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await page.goto(loginUrl, {
+      const response = await page.goto(loginUrl, {
         waitUntil: 'domcontentloaded',
         timeout: config.NAVIGATION_TIMEOUT,
       });
+
+      // 维护检测趁早拦截：命中 503 维护页时抛专用异常，避免后续 #memberid 报错被归类为「其他错误」
+      const maintenance = await detectMaintenance({ response, page, ...maintenanceOpts });
+      if (maintenance) {
+        logger.warn?.(`⏸️ 检测到官方维护（HTTP ${maintenance.status}），不再尝试登录`);
+        logger.info?.(maintenance.error.message);
+        throw maintenance.error;
+      }
+
       return;
     } catch (error) {
+      // 维护态不可重试：维护不会在秒级内结束，重试只会重复刷日志/通知
+      if (isMaintenanceError(error)) {
+        throw error;
+      }
       if (!isRetryableLoginNavigationError(error) || attempt >= maxAttempts) {
         throw error;
       }
