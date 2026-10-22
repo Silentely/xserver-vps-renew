@@ -16,6 +16,8 @@ import {
   parseMaintenanceKeywords,
   matchMaintenanceKeyword,
   detectMaintenance,
+  isConnectionMaintenanceSuspect,
+  confirmMaintenanceViaMainSite,
   readMaintenanceNotice,
   recordMaintenanceNotice,
   shouldSendMaintenanceNotice,
@@ -43,6 +45,15 @@ function pageStub({ hasMemberId = false, url = 'https://secure.xserver.ne.jp/xap
     $: vi.fn().mockResolvedValue(hasMemberId ? { id: 'memberid' } : null),
     url: vi.fn().mockReturnValue(url),
   };
+}
+
+/** 命中主站的维护公告响应（可达 + 含维护关键词） */
+function flatMaintenance() {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: async () => '<title>一時停止のお知らせ</title><p>メンテナンス中です</p>',
+  });
 }
 
 describe('parseMaintenanceHttpCodes', () => {
@@ -98,6 +109,20 @@ describe('MaintenanceError', () => {
     const error = new MaintenanceError({ status: 502 });
     expect(error.keyword).toBeNull();
     expect(error.message).toContain('页面无登录表单');
+  });
+
+  it('连接层经主站确认：状态为字符串、理由为主站公告、可读无语义错误', () => {
+    const error = new MaintenanceError({
+      status: 'connection',
+      keyword: 'メンテナンス',
+      pageUrl: 'https://secure.xserver.ne.jp/xapanel/login/xvps/',
+      reason: '主站公告确认维护',
+    });
+    expect(error.code).toBe(MAINTENANCE_ERROR_CODE);
+    expect(error.status).toBe('connection');
+    expect(error.keyword).toBe('メンテナンス');
+    expect(error.message).toContain('连接层故障');
+    expect(error.message).toContain('主站公告确认维护');
   });
 
   it('普通错误不被识别为维护错误', () => {
@@ -161,6 +186,53 @@ describe('detectMaintenance（维护判定）', () => {
   });
 });
 
+describe('isConnectionMaintenanceSuspect', () => {
+  it('命中连接层故障错误判定为疑似维护', () => {
+    expect(isConnectionMaintenanceSuspect(new Error('net::ERR_TIMED_OUT'))).toBe(true);
+    expect(isConnectionMaintenanceSuspect(new Error('net::ERR_CONNECTION_TIMED_OUT'))).toBe(true);
+    expect(isConnectionMaintenanceSuspect('net::ERR_CONNECTION_REFUSED')).toBe(true);
+    expect(isConnectionMaintenanceSuspect('net::ERR_NAME_NOT_RESOLVED')).toBe(true);
+  });
+
+  it('非连接层错误（HTTP 类/其他网络态）不判为疑似维护', () => {
+    expect(isConnectionMaintenanceSuspect(new Error('No element found for selector: #memberid'))).toBe(false);
+    expect(isConnectionMaintenanceSuspect('net::ERR_ABORTED')).toBe(false);
+    expect(isConnectionMaintenanceSuspect(null)).toBe(false);
+    expect(isConnectionMaintenanceSuspect(undefined)).toBe(false);
+  });
+});
+
+describe('confirmMaintenanceViaMainSite（连接层故障交叉验证）', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('主站可达且含维护关键词 → 确认维护', async () => {
+    vi.stubGlobal('fetch', flatMaintenance());
+    const verdict = await confirmMaintenanceViaMainSite({});
+    expect(verdict).toEqual({ confirmed: true, keyword: 'メンテナンス', reason: 'main_site_keyword' });
+  });
+
+  it('主站可达但无维护关键词 → 未确认（网络问题）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<p>正常首页</p>' }));
+    const verdict = await confirmMaintenanceViaMainSite({});
+    expect(verdict.confirmed).toBe(false);
+    expect(verdict.reason).toBe('main_site_no_keyword');
+  });
+
+  it('主站不可达 → 未确认（本机/代理网络问题）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch failed')));
+    const verdict = await confirmMaintenanceViaMainSite({});
+    expect(verdict.confirmed).toBe(false);
+    expect(verdict.reason).toBe('main_site_unreachable');
+  });
+
+  it('支持自定义关键词', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => 'maintenance window' }));
+    const verdict = await confirmMaintenanceViaMainSite({ keywords: ['maintenance'] });
+    expect(verdict.confirmed).toBe(true);
+    expect(verdict.keyword).toBe('maintenance');
+  });
+});
+
 describe('navigateToLoginPage 维护拦截', () => {
   const baseConfig = {
     BASE_URL: 'https://secure.xserver.ne.jp',
@@ -169,24 +241,52 @@ describe('navigateToLoginPage 维护拦截', () => {
     LOGIN_NAVIGATION_RETRIES: 3,
     LOGIN_NAVIGATION_RETRY_DELAY_MS: 0,
   };
+  const silentLogger = () => ({ warn: vi.fn(), info: vi.fn(), debug: vi.fn() });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it('命中 503 维护时抛 MaintenanceError 且不重试', async () => {
     const page = pageStub();
     page.goto = vi.fn().mockResolvedValue(maintenanceResponse());
-    await expect(
-      navigateToLoginPage(page, baseConfig, { warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
-    ).rejects.toMatchObject({ code: MAINTENANCE_ERROR_CODE, status: 503 });
+    await expect(navigateToLoginPage(page, baseConfig, silentLogger())).rejects.toMatchObject({
+      code: MAINTENANCE_ERROR_CODE,
+      status: 503,
+    });
     expect(page.goto).toHaveBeenCalledTimes(1);
   });
 
-  it('非 503 的网络导航错误仍按原逻辑重试', async () => {
+  it('连接层故障 + 主站公告确认维护 → 升级为 MaintenanceError，不继续重试登录', async () => {
+    vi.stubGlobal('fetch', flatMaintenance());
+    const page = pageStub();
+    page.goto = vi.fn().mockRejectedValue(new Error('net::ERR_CONNECTION_REFUSED'));
+    await expect(navigateToLoginPage(page, baseConfig, silentLogger())).rejects.toMatchObject({
+      code: MAINTENANCE_ERROR_CODE,
+      status: 'connection',
+    });
+    // 已确认维护：即使 ERR_CONNECTION_REFUSED 不在原重试列表，也不再继续内层重试
+    expect(page.goto).toHaveBeenCalledTimes(1);
+  });
+
+  it('连接层故障 + 主站不可达 → 走原失败流程（不降级）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch failed')));
+    const error = new Error('net::ERR_CONNECTION_REFUSED');
+    const page = pageStub();
+    page.goto = vi.fn().mockRejectedValue(error);
+    await expect(navigateToLoginPage(page, baseConfig, silentLogger())).rejects.toBe(error);
+    // ERR_CONNECTION_REFUSED 不在原内层重试列表：直接抛原始错误（由外层 cron 重试）
+    expect(page.goto).toHaveBeenCalledTimes(1);
+  });
+
+  it('连接层故障（可重试类 ERR_TIMED_OUT）+ 主站未确认 → 按原逻辑重试', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<p>正常首页</p>' }));
     const page = pageStub();
     page.goto = vi
       .fn()
       .mockRejectedValueOnce(new Error('net::ERR_TIMED_OUT'))
       .mockResolvedValueOnce(maintenanceResponse({ status: 200, body: 'ok' }));
-    await navigateToLoginPage(page, baseConfig, { warn: vi.fn(), info: vi.fn(), debug: vi.fn() });
+    await navigateToLoginPage(page, baseConfig, silentLogger());
     expect(page.goto).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1); // 仅交叉验证一次
   });
 });
 
@@ -470,5 +570,15 @@ describe('buildMaintenanceNotifyMessage', () => {
     expect(text).toContain('下个周期自动重试');
     expect(text).toContain('2026-10-21 20:27:00');
     expect(text).toContain('host02-23');
+
+    // 连接层经主站确认的维护：标题标注「连接层故障」而非 HTTP 503
+    const connText = buildMaintenanceNotifyMessage({
+      executedAt: '2026-10-22 00:30:00',
+      expireDate: '2026-10-23',
+      nextRunAt: '2026-10-22 04:30:00',
+      statusLabel: '连接层故障',
+    });
+    expect(connText).toContain('连接层故障');
+    expect(connText).not.toContain('HTTP 503');
   });
 });

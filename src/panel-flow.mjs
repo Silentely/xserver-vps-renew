@@ -39,6 +39,9 @@ import {
   isMaintenanceError,
   parseMaintenanceHttpCodes,
   parseMaintenanceKeywords,
+  isConnectionMaintenanceSuspect,
+  confirmMaintenanceViaMainSite,
+  MaintenanceError,
 } from './maintenance.mjs';
 
 const RETRYABLE_LOGIN_NAVIGATION_ERRORS = [
@@ -125,6 +128,28 @@ export async function navigateToLoginPage(page, config, logger = NOOP_LOGGER) {
       if (isMaintenanceError(error)) {
         throw error;
       }
+
+      // 连接层故障 → 疑似维护（面板 TCP 不通，维护期常见）：交叉验证主站维护公告
+      if (isConnectionMaintenanceSuspect(error)) {
+        const probe = await confirmMaintenanceViaMainSite({
+          probeUrl: config?.MAINTENANCE_PROBE_URL || undefined,
+          timeoutMs: Math.max(5_000, Number(config?.MAINTENANCE_PROBE_TIMEOUT_MS) || 10_000),
+          keywords: maintenanceOpts.keywords,
+          logger,
+        });
+        // 主站可达且公告明确维护 → 升级为确认维护，走 MaintenanceError 分流（不重试）
+        if (probe.confirmed) {
+          logger.warn?.(`⏸️ 登录页连接异常 + 主站公告含维护，判定为官方维护，不再尝试登录`);
+          throw new MaintenanceError({
+            status: 'connection',
+            keyword: probe.keyword,
+            pageUrl: loginUrl,
+            reason: '主站公告确认维护',
+          });
+        }
+        // 主站不可达/无公告：本机或代理网络问题，按原有「超时/网络」失败流程继续
+      }
+
       if (!isRetryableLoginNavigationError(error) || attempt >= maxAttempts) {
         throw error;
       }

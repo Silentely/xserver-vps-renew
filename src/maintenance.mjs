@@ -13,7 +13,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { NOOP_LOGGER, getLocalDateString } from './utils.mjs';
+import { NOOP_LOGGER, getLocalDateString, fetchWithTimeout } from './utils.mjs';
 import { hasRenewedToday, hasTodaySkipCoverage } from './renewal-status.mjs';
 
 /** MaintenanceError 的专用 code（供主流程与 cron-run 识别） */
@@ -41,7 +41,22 @@ export const DEFAULT_MAINTENANCE_HTTP_CODES = [503, 502, 504];
 /** 默认维护关键词（命中其一即确认；官方换文案时可经 MAINTENANCE_KEYWORDS 免改代码） */
 export const DEFAULT_MAINTENANCE_KEYWORDS = ['メンテナンス', '一時停止', '保守'];
 
-/** 维护提醒去重文件默认路径（与 Chrome 用户数据同目录，便于 Docker 单卷持久化） */
+/**
+ * 连接层故障 → 疑似维护：登录页导航出现这些错误时，面板可能 TCP 不通（官方维护期常如此，
+ * 2026-10-22 实测：面板 ERR_TIMED_OUT 但主站可达并显示 503 维护公告）。
+ * 只作「疑似」标记，需经主站交叉验证升级为确认维护后才降级。
+ */
+export const CONNECTION_MAINTENANCE_SUSPECT_PATTERNS = [
+  'err_timed_out',
+  'err_connection_timed_out',
+  'err_connection_refused',
+  'err_name_not_resolved',
+];
+
+/** 维护交叉验证探测的主站默认地址（主站与面板分离部署，面板通不通与主站是否维护告警相互独立） */
+export const DEFAULT_MAINTENANCE_PROBE_URL = 'https://www.xserver.ne.jp/';
+
+/** 维护维护提醒去重文件默认路径（与 Chrome 用户数据同目录，便于 Docker 单卷持久化） */
 export const DEFAULT_MAINTENANCE_NOTICE_FILE = '/data/chrome-profile/maintenance-notice.json';
 
 /** 是否是维护专用异常 */
@@ -50,17 +65,19 @@ export function isMaintenanceError(error) {
 }
 
 /**
- * 官方维护专用错误：登录页命中 503 维护态，不可重试（cron 识别后直接结束本轮）。
+ * 官方维护专用错误：登录页命中 503 维护态或经主站交叉验证确认维护，不可重试（cron 识别后直接结束本轮）。
  * @param {object} opts
- * @param {number} opts.status - HTTP 状态码
- * @param {string|null} [opts.keyword] - 命中的维护关键词（未命中时为 null，表示靠无登录表单判定）
+ * @param {number|string} opts.status - HTTP 状态码；连接层经主站确认时为字符串标识（如 'connection'）
+ * @param {string|null} [opts.keyword] - 命中的维护关键词（未命中时为 null）
  * @param {string} [opts.pageUrl] - 命中时的页面 URL（便于 Telegram 诊断）
+ * @param {string} [opts.reason] - 覆盖默认确认理由（连接层场景用「主站公告确认维护」）
  */
 export class MaintenanceError extends Error {
-  constructor({ status, keyword = null, pageUrl = '' } = {}) {
-    const reason = keyword ? `关键词「${keyword}」` : '页面无登录表单';
+  constructor({ status, keyword = null, pageUrl = '', reason = null } = {}) {
+    const codeLabel = typeof status === 'number' ? `HTTP ${status}` : '连接层故障';
+    const reasonText = reason || (keyword ? `关键词「${keyword}」` : '页面无登录表单');
     const urlPart = pageUrl ? `（${pageUrl}）` : '';
-    super(`面板因官方维护暂停（HTTP ${status}，${reason}）${urlPart}`);
+    super(`面板因官方维护暂停（${codeLabel}，${reasonText}）${urlPart}`);
     this.name = 'MaintenanceError';
     this.code = MAINTENANCE_ERROR_CODE;
     this.status = status;
@@ -106,6 +123,54 @@ export function matchMaintenanceKeyword(text, keywords = DEFAULT_MAINTENANCE_KEY
   if (!text) return null;
   const list = Array.isArray(keywords) ? keywords : [];
   return list.find((k) => k && text.includes(k)) || null;
+}
+
+/**
+ * 是否为「连接层故障 → 疑似维护」（纯函数）
+ * 登录页导航错误命中 CONNECTION_MAINTENANCE_SUSPECT_PATTERNS 时，面板可能 TCP 不通（维护期常见）。
+ * 仅标记「疑似」，不直接降级；由 confirmMaintenanceViaMainSite 交叉验证后决定。
+ * @param {unknown} errorOrMessage - 错误对象或错误消息
+ * @returns {boolean}
+ */
+export function isConnectionMaintenanceSuspect(errorOrMessage) {
+  const message = String(errorOrMessage?.message ?? errorOrMessage ?? '').toLowerCase();
+  return CONNECTION_MAINTENANCE_SUSPECT_PATTERNS.some((p) => message.includes(p));
+}
+
+/**
+ * 交叉验证疑似维护：用主脚本网络栈探测主站
+ * - 主站可达且正文命中维护关键词 → 升级为「确认维护」（面板 TCP 不通 + 主站维护公告）
+ * - 主站不可达或无关键词 → 本机/代理网络问题，返回未确认（走原「超时/网络」失败流程）
+ * @param {object} opts
+ * @param {string} [opts.probeUrl=DEFAULT_MAINTENANCE_PROBE_URL] - 主站探测地址
+ * @param {number} [opts.timeoutMs=10000] - 探测超时（毫秒）
+ * @param {string[]} [opts.keywords=DEFAULT_MAINTENANCE_KEYWORDS] - 维护关键词
+ * @param {object} [opts.logger=NOOP_LOGGER]
+ * @returns {Promise<{ confirmed: boolean, keyword: string|null, reason: string }>}
+ */
+export async function confirmMaintenanceViaMainSite({
+  probeUrl = DEFAULT_MAINTENANCE_PROBE_URL,
+  timeoutMs = 10_000,
+  keywords = DEFAULT_MAINTENANCE_KEYWORDS,
+  logger = NOOP_LOGGER,
+} = {}) {
+  let response;
+  try {
+    response = await fetchWithTimeout(probeUrl, {}, timeoutMs);
+  } catch (error) {
+    logger.warn?.(`维护交叉验证：主站不可达（${error.message}），判定为本机/代理网络问题`);
+    return { confirmed: false, keyword: null, reason: 'main_site_unreachable' };
+  }
+
+  const kwList = Array.isArray(keywords) && keywords.length > 0 ? keywords : DEFAULT_MAINTENANCE_KEYWORDS;
+  const body = await response.text().catch(() => '');
+  const keyword = matchMaintenanceKeyword(body, kwList);
+  if (keyword) {
+    logger.warn?.(`维护交叉验证：主站可达且公告含「${keyword}」，确认官方维护`);
+    return { confirmed: true, keyword, reason: 'main_site_keyword' };
+  }
+  logger.warn?.(`维护交叉验证：主站可达但无维护公告，判定为本机/代理网络问题`);
+  return { confirmed: false, keyword: null, reason: 'main_site_no_keyword' };
 }
 
 /**

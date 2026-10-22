@@ -31,9 +31,21 @@ Xserver 官方进行预防性安全措施时会暂停 `secure.xserver.ne.jp`（X
 
 - `MAINTENANCE_HTTP_CODES`（默认 `503,502,504`）
 - `MAINTENANCE_KEYWORDS`（默认 `メンテナンス,一時停止,保守`）
+- `MAINTENANCE_PROBE_URL`（默认 `https://www.xserver.ne.jp/`）、`MAINTENANCE_PROBE_TIMEOUT_MS`（默认 `10000`）
 - `TG_NOTIFY_MAINTENANCE`（默认 `true`，关闭则不推送维护提醒）
 
 > 判定要求「状态码命中维护码」**且**「命中关键词或页面无登录表单」，宁可漏判（走原失败流程）也不误判（吞掉真实故障）。纯代理超时 / DNS 失败不会触发维护降级。
+
+### 连接层故障（面板 TCP 不通）的交叉验证
+
+登录页导航出现 `ERR_TIMED_OUT / ERR_CONNECTION_TIMED_OUT / ERR_CONNECTION_REFUSED / ERR_NAME_NOT_RESOLVED` 时，面板可能正处于维护（维护期面板 TCP 不通，但官方主站独立部署、仍可达并显示维护公告）：
+
+| 场景 | 判定 | 行为 |
+|------|------|------|
+| 连接异常 + **主站可达且公告含** `メンテナンス`/`一時停止` | 确认官方维护 | 走 MaintenanceError 分流（当日已续期静默跳过 / 未续期发维护提醒，同日去重），不重试 |
+| 连接异常 + 主站**也不可达** 或无维护公告 | 本机/代理网络问题 | 走原「超时/网络」失败流程，保持重试与失败通知 |
+
+交叉验证失败（主站探测异常）不会掩盖真实故障——仅「主站可达 + 明确维护公告」两者同时满足才升级为确认维护。
 
 ## 定时任务一直「上一次执行仍在运行，跳过」
 
@@ -95,6 +107,7 @@ docker compose restart
 | `Turnstile 未通过，跳过提交` | API 求解/注入失败，脚本不再强行点提交 | 看 failover 是否切到下一家；检查 key/余额/网络；勿把「未提交」当成图形码识别错误 |
 | `Waiting for selector img[src^="data:…"]` 超时（重试中） | 直接打开裸 `/extend/conf` 或窗口拦截页，无 Base64 验证码图 | 新版本重试会回到 `index?id_vps=` 再进 conf。若仍超时：查是否未进 12h 窗口、会话是否掉线 |
 | 登录页 `No element found for selector: #memberid` / `503` / `一時停止のお知らせ` | 官方维护暂停面板（旧版会连发失败通知） | 升级到含「官方维护智能降级」的版本；维护期间无需重试，见上文「官方维护」条目 |
+| 登录页 `ERR_TIMED_OUT` / `ERR_CONNECTION_REFUSED` 等连接层错误 | 面板 TCP 不通（维护期常见），或本机/代理网络问题 | 脚本会自动探测主站维护公告：主站可达且含维护关键词 → 判定官方维护（降级不重试）；主站也不可达 → 网络问题，保持重试与失败通知，见上文「连接层故障」条目 |
 | 长期 `无需续期` 后 VPS 被回收 | 调度过稀，错过 12h 窗口 | 4GB 最长 24h、剩余 ≤12h 才可续；确认 `CRON_SCHEDULE` 间隔 ≤6h（compose 默认 `27 */4 * * *`，每 4h 错峰 27 分） |
 
 ### Anti-Captcha 专项（域名代理 / Proxyless）

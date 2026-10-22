@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### 迭代（2026-10-22）
+- **官方维护智能降级：补充连接层故障交叉验证**：登录页导航出现 `ERR_TIMED_OUT / ERR_CONNECTION_TIMED_OUT / ERR_CONNECTION_REFUSED / ERR_NAME_NOT_RESOLVED` 时视为「疑似维护」，用主脚本网络栈探测官方主站维护公告（`MAINTENANCE_PROBE_URL`，默认 `www.xserver.ne.jp`）——主站可达且页面含维护关键词 → 升级为确认维护，走 MaintenanceError 分流（当日已续期静默跳过 / 未续期发维护提醒，同日去重）；主站也不可达或无公告 → 本机/代理网络问题，走原「超时/网络」失败与重试。交叉验证失败不吞真实故障（仅「主站可达 + 明确公告」同时满足才降级）。`MaintenanceError` 支持字符串 status（连接层经主站确认）；维护提醒按 `statusLabel` 展示「HTTP 503 / 连接层故障」。新增 `MAINTENANCE_PROBE_URL`、`MAINTENANCE_PROBE_TIMEOUT_MS`（默认 10000）；`.env.example` / README / RUNBOOK 同步
+- 验证：`npm test` 35 文件 / 620 用例全绿（新增连接层判定、交叉验证、navigate 拦截 9 用例；既有 ERR_TIMED_OUT 重试用例已 mock 主站探测保持确定）
+
 ### 迭代（2026-10-21）
 - **官方维护（503）智能降级**：登录页命中官方维护页时不再归类为「其他错误」并按 `MAX_RETRIES=3` 连发失败通知。新增 `src/maintenance.mjs`——`MaintenanceError`（`code='MAINTENANCE'`，不可重试）、`detectMaintenance`（状态码 ∈ `MAINTENANCE_HTTP_CODES` 且命中 `MAINTENANCE_KEYWORDS` 或页面无 `#memberid` 才降级）、`resolveMaintenanceOutcome`（按当日续期状态分流）与维护提醒去重；`navigateToLoginPage` 趁早拦截，`isRetryableLoginNavigationError` 之外单独排除维护错误。当日已续期/已保障（含当日仅有 `skipped` 记录）→ 记录跳过、无通知、退出码 75；当日未续期 → 发送一次「官方维护提醒」（同一自然日最多 1 次，受 `TG_NOTIFY_MAINTENANCE` 控制，不受 `TG_NOTIFY_SKIP`/compact 影响）、退出码 76。`entrypoint.sh` / 生成的 `cron-run.sh` 识别 75/76 后打印对应文案并结束本轮，不计失败、不重试。`hasRenewedToday` / `hasTodaySkipCoverage` 按容器本地时区（默认 Asia/Tokyo）归类 ISO UTC 记录；旧状态文件无新字段仍可读，升级后首轮即生效
 - 新增 4 个环境变量：`TG_NOTIFY_MAINTENANCE`（默认 true）、`MAINTENANCE_HTTP_CODES`（默认 `503,502,504`）、`MAINTENANCE_KEYWORDS`（默认 `メンテナンス,一時停止,保守`）、`MAINTENANCE_NOTICE_FILE`（默认 `/data/chrome-profile/maintenance-notice.json`）；README / RUNBOOK / `.env.example` 同步

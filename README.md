@@ -23,7 +23,7 @@
   - 单平台连续失败 N 次（默认 3）自动切换下一家；全部熔断 → Telegram **最高级删机风险告警**
   - **无密钥降级**：等待自然通过（Docker / 无头几乎不可用，**不建议**）
 - ✅ Telegram 通知：每次执行均推送（成功 / 失败 / **无需续期**）；`TG_NOTIFY_DETAIL` 可选完整/简洁摘要
-- ✅ **官方维护智能降级**：登录页命中 503 维护页（`一時停止のお知らせ` 等）时，当日已续期则静默跳过、未续期则发送一次「维护提醒」，不重试、不误报失败
+- ✅ **官方维护智能降级**：登录页命中 503 维护页（`一時停止のお知らせ` 等）或连接层故障经主站交叉验证确认维护时，当日已续期则静默跳过、未续期则发送一次「维护提醒」，不重试、不误报失败
 - ✅ Docker 部署，内置 supercronic 定时调度，开箱即用
 
 ## 🚀 快速开始
@@ -199,13 +199,15 @@ Anti-Captcha 适合作为 **CapSolver 等之后的异构备份**，单独作主�
 - **当日已续期/已保障**（含当日仅有「无需续期」跳过记录）：记录一条跳过记录，**不发任何通知**，退出码 75，cron 不重试；
 - **当日未续期**：发送一次**「官方维护提醒」**（区别于失败通知，含当前到期日与风险提示），同一自然日最多 1 次，退出码 76，cron 不重试。
 
-维护判定 = 状态码命中 `MAINTENANCE_HTTP_CODES` **且**（命中 `MAINTENANCE_KEYWORDS` **或** 页面无 `#memberid` 登录表单），宁可漏判走原失败流程，不误吞真实故障。
+维护判定 = 状态码命中 `MAINTENANCE_HTTP_CODES` **且**（命中 `MAINTENANCE_KEYWORDS` **或** 页面无 `#memberid` 登录表单），宁可漏判走原失败流程，不误吞真实故障。此外，登录页导航出现连接层故障（`ERR_TIMED_OUT / ERR_CONNECTION_TIMED_OUT / ERR_CONNECTION_REFUSED / ERR_NAME_NOT_RESOLVED`）时，脚本会用网络栈探测主站维护公告：主站可达且含维护关键词 → 判定官方维护（降级）；主站也不可达 → 本机/代理网络问题，走原「超时/网络」失败与重试。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `TG_NOTIFY_MAINTENANCE` | `true` | 是否推送「官方维护提醒」；不受 `TG_NOTIFY_SKIP=false` / `compact` 模式影响，仅受本开关控制 |
 | `MAINTENANCE_HTTP_CODES` | `503,502,504` | 视为官方维护的 HTTP 状态码（逗号分隔） |
 | `MAINTENANCE_KEYWORDS` | `メンテナンス,一時停止,保守` | 维护页关键词（逗号分隔）；官方更换文案时追加即可 |
+| `MAINTENANCE_PROBE_URL` | `https://www.xserver.ne.jp/` | 连接层故障时交叉验证的主站地址（默认探测官方主站维护公告） |
+| `MAINTENANCE_PROBE_TIMEOUT_MS` | `10000` | 主站交叉验证探测超时（毫秒） |
 | `MAINTENANCE_NOTICE_FILE` | `/data/chrome-profile/maintenance-notice.json` | 维护提醒「同一自然日最多 1 次」的去重记录文件 |
 
 ### 可选 - 代理配置

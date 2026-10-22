@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { handleLogin, navigateToLoginPage } from '../../src/panel-flow.mjs';
 
 const LOGGER = {
@@ -8,7 +8,11 @@ const LOGGER = {
 };
 
 describe('navigateToLoginPage', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('网络超时后有限重试并最终成功', async () => {
+    // ERR_TIMED_OUT 现会触发维护交叉验证：主站探测到「无维护公告」→ 走原重试路径
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '<p>正常首页</p>' }));
     const page = {
       goto: vi.fn().mockRejectedValueOnce(new Error('net::ERR_TIMED_OUT')).mockResolvedValueOnce(null),
     };

@@ -237,6 +237,9 @@ const CONFIG = {
   // 官方维护降级：HTTP 状态码与关键词可配置（默认 503,502,504 / メンテナンス,一時停止,保守）
   MAINTENANCE_HTTP_CODES: process.env.MAINTENANCE_HTTP_CODES || '',
   MAINTENANCE_KEYWORDS: process.env.MAINTENANCE_KEYWORDS || '',
+  // 连接层故障交叉验证：主站探测地址与超时（默认 www.xserver.ne.jp / 10s）
+  MAINTENANCE_PROBE_URL: process.env.MAINTENANCE_PROBE_URL || '',
+  MAINTENANCE_PROBE_TIMEOUT_MS: process.env.MAINTENANCE_PROBE_TIMEOUT_MS || '',
   // 维护提醒「同一自然日最多 1 次」的去重记录文件
   MAINTENANCE_NOTICE_FILE: process.env.MAINTENANCE_NOTICE_FILE || DEFAULT_MAINTENANCE_NOTICE_FILE,
 
@@ -568,10 +571,11 @@ async function main() {
    * @param {Error & { status?: number }} opts.error - MaintenanceError
    */
   const finishWithMaintenance = async ({ page, error }) => {
-    const status = error?.status || '5xx';
+    // status 为数字（HTTP）或字符串（连接层经主站确认）；统一成日志/通知可读标签
+    const statusLabel = typeof error?.status === 'number' ? `HTTP ${error.status}` : '连接层故障';
     runOutcome = 'skip';
     runOutcomeLabel = '官方维护，本轮跳过';
-    pushStep(`检测到官方维护（HTTP ${status}），面板暂停服务，提前结束`);
+    pushStep(`检测到官方维护（${statusLabel}），面板暂停服务，提前结束`);
     log(`⏸️ ${error.message}`);
 
     // 登录即失败，尚未来得及读面板：到期日/服务器名回退到上次记录，保证提醒可读
@@ -633,6 +637,7 @@ async function main() {
           expireDate,
           nextRunAt: resolveNextRun(),
           serverName,
+          statusLabel,
         }),
         // 维护提醒不受 compact / TG_NOTIFY_SKIP 影响，仅受 TG_NOTIFY_MAINTENANCE 控制
         { kind: 'maintenance' },
