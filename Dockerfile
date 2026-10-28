@@ -6,7 +6,7 @@ ARG SUPERCRONIC_VERSION=v0.2.48
 RUN CGO_ENABLED=0 go install -ldflags "-X main.Version=${SUPERCRONIC_VERSION}" \
         github.com/aptible/supercronic@${SUPERCRONIC_VERSION}
 
-FROM node:22-slim
+FROM node:26-slim
 
 # 元数据
 LABEL maintainer="adair"
