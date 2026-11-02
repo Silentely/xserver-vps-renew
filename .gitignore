@@ -6,6 +6,7 @@ npm-debug.log*
 .omc/
 .omx/
 .claude/
+skills/
 memory/
 .evolver/
 
