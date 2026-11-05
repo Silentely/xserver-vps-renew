@@ -1,7 +1,11 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 describe('依赖安全回归', () => {
   it('brace-expansion 使用 CVE-2026-102276/102277/102278 的 1.x 修复版且保持 CommonJS 兼容', () => {
@@ -24,5 +28,17 @@ describe('依赖安全回归', () => {
     const expand = require('brace-expansion');
 
     expect(expand('{a,b}{c,d}', { maxLength: 3 })).toEqual(['ac']);
+  });
+
+  it('deepmerge 固定在 CVE-2026-93753 影响范围之外的兼容版本', () => {
+    const lockfile = JSON.parse(
+      readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'),
+    );
+    const lockedVersions = Object.entries(lockfile.packages)
+      .filter(([path]) => path.endsWith('/deepmerge'))
+      .map(([, packageInfo]) => packageInfo.version);
+
+    expect(lockedVersions.length).toBeGreaterThan(0);
+    expect(lockedVersions).toEqual(['4.1.2', '4.1.2']);
   });
 });
