@@ -30,6 +30,13 @@
       "enabled": false
     },
     {
+      "description": "锁定 deepmerge 于无 prototype poisoning 修复版，等待上游发布修复版本",
+      "matchPackageNames": [
+        "deepmerge"
+      ],
+      "enabled": false
+    },
+    {
       "description": "暂不升级 eslint 至 v10，等待 eslint-plugin-import 等生态插件支持",
       "matchPackageNames": [
         "eslint",

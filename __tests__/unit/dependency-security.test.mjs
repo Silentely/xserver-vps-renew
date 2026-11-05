@@ -41,4 +41,15 @@ describe('依赖安全回归', () => {
     expect(lockedVersions.length).toBeGreaterThan(0);
     expect(lockedVersions).toEqual(['4.1.2', '4.1.2']);
   });
+
+  it('Renovate 不会覆盖 deepmerge 的安全版本锁定', () => {
+    const renovate = JSON.parse(
+      readFileSync(join(REPO_ROOT, 'renovate.json'), 'utf8'),
+    );
+    const deepmergeRule = renovate.packageRules.find((rule) =>
+      rule.matchPackageNames?.includes('deepmerge'),
+    );
+
+    expect(deepmergeRule?.enabled).toBe(false);
+  });
 });
