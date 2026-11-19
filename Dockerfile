@@ -35,15 +35,17 @@ VOLUME /data/chrome-profile
 
 WORKDIR /app
 
-# 先复制 package.json 安装依赖（利用 Docker 缓存层）
-# npm 仅构建期工具：ci 完成后整体移除（含 npx/corepack/yarn，node 基础镜像自带的
+# 先复制 package.json / pnpm-lock.yaml 安装依赖（利用 Docker 缓存层）
+# pnpm 仅构建期工具：安装完成后整体移除（含 corepack/pnpm/yarn，node 基础镜像自带的
 # 包管理器全部清掉），消除捆绑运行期依赖的 CVE 打地鼠（picomatch/sigstore/tar 皆源于此）；
 # 运行时仅需 node（entrypoint 直接执行 node 主脚本）
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev \
-    && npm cache clean --force \
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable \
+    && pnpm install --frozen-lockfile --prod \
+    && pnpm store prune \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
        /usr/local/lib/node_modules/corepack /usr/local/bin/corepack \
+       /usr/local/bin/pnpm /usr/local/bin/pnpx "$HOME/.cache/node/corepack" \
        /opt/yarn-v1.22.22 /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 # 复制项目文件

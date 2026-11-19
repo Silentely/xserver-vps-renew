@@ -25,11 +25,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -51,8 +54,8 @@ jobs:
             type=sha,prefix=sha-,format=short
 
       - name: Install dependencies
-        # 严格按 package-lock.json 安装，避免依赖升级类 PR 的 lock 解析被改写
-        run: npm ci
+        # 严格按 pnpm-lock.yaml 安装，避免依赖升级类 PR 的 lock 解析被改写
+        run: pnpm install --frozen-lockfile
 
       - name: Validate scripts
         run: |
@@ -66,10 +69,10 @@ jobs:
           shellcheck -S warning entrypoint.sh diagnostics.sh
 
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
 
       - name: Run tests with coverage gate
-        run: npm run test:coverage
+        run: pnpm run test:coverage
 
       - name: Build and push
         id: build

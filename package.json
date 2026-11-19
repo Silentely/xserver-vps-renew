@@ -9,11 +9,13 @@
   "description": "Xserver VPS 自动续期 - Puppeteer Stealth 版本",
   "license": "MIT",
   "author": "Silentely",
+  "packageManager": "pnpm@10.34.9",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Silentely/xserver-vps-renew.git"
   },
   "scripts": {
+    "clean": "rm -rf node_modules .mypy_cache htmlcov .coverage coverage.xml coverage dist playwright-report",
     "start": "node xserver-vps-renew.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -38,10 +40,12 @@
     "prettier": "^3.9.10",
     "vitest": "^5.0.0"
   },
-  "overrides": {
-    "brace-expansion": "1.1.21",
-    "@puppeteer/browsers": "3.2.6",
-    "nanoid": "6.0.2",
-    "deepmerge": "4.1.2"
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "1.1.21",
+      "@puppeteer/browsers": "3.2.6",
+      "nanoid": "6.0.2",
+      "deepmerge": "4.1.2"
+    }
   }
 }

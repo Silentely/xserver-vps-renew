@@ -31,15 +31,13 @@ describe('依赖安全回归', () => {
   });
 
   it('deepmerge 固定在 CVE-2026-93753 影响范围之外的兼容版本', () => {
-    const lockfile = JSON.parse(
-      readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'),
-    );
-    const lockedVersions = Object.entries(lockfile.packages)
-      .filter(([path]) => path.endsWith('/deepmerge'))
-      .map(([, packageInfo]) => packageInfo.version);
+    const lockfile = readFileSync(join(REPO_ROOT, 'pnpm-lock.yaml'), 'utf8');
+    const lockedVersions = [
+      ...lockfile.matchAll(/^ {2}'?deepmerge@([^():\s]+)(?:\([^)]*\))?'?:/gm),
+    ].map((match) => match[1]);
 
     expect(lockedVersions.length).toBeGreaterThan(0);
-    expect(lockedVersions).toEqual(['4.1.2', '4.1.2']);
+    expect(lockedVersions.every((version) => version === '4.1.2')).toBe(true);
   });
 
   it('Renovate 不会覆盖 deepmerge 的安全版本锁定', () => {

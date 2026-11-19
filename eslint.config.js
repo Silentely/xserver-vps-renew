@@ -16,7 +16,7 @@ export default [
       'data/**',
       'chrome-profile/**',
       'assets/**',
-      'package-lock.json',
+      'pnpm-lock.yaml',
       '**/*.md',
     ],
   },

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 // 测试必须使用确定的时间基准：读取真实时钟会让断言随运行时刻变化。
 // 历史上「今天到期的免费 VPS 返回 needed: true」用例在东京上午运行时误判为 not_due，
-// 导致 npm test 非零退出，docker-publish 工作流的镜像构建被阻断。
+// 导致 pnpm test 非零退出，docker-publish 工作流的镜像构建被阻断。
 //
 // 允许的写法（不产生时刻依赖）：
 //   固定时刻入参 —— new Date(fixedMs) / Date.parse(...) / Date.UTC(...)
