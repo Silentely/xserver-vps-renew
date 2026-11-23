@@ -9,7 +9,7 @@
   "description": "Xserver VPS 自动续期 - Puppeteer Stealth 版本",
   "license": "MIT",
   "author": "Silentely",
-  "packageManager": "pnpm@10.34.9",
+  "packageManager": "pnpm@12.23.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Silentely/xserver-vps-renew.git"
